@@ -4041,25 +4041,12 @@ textarea:focus {
   }
 }
 
-/* Mejoras Supervisor: Gantt móvil, porcentaje visible y detalle de salidas */
+/* Mejoras Supervisor: Gantt móvil y detalle de salidas */
 .gantt-track i.active,
 .gantt-day-track i.active {
   gap: 6px;
 }
 
-.gantt-track i.active em,
-.gantt-day-track i.active em {
-  margin-left: auto;
-  font-style: normal;
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  color: #111111;
-  white-space: nowrap;
-}
 
 .gantt-track i.active span,
 .gantt-day-track i.active span {

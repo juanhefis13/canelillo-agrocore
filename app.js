@@ -160,7 +160,7 @@ const seedState = {
 let state = normalizeState(loadState());
 let currentView = "dashboard";
 let programFilters = { seasonId: "Todas", program: "", species: "Todas", number: "Todos" };
-let reportFilters = { species: "Todas", programNumber: "Todos" };
+let reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
 let managerYear = String(new Date().getFullYear());
 let managerMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let managerOrdersMonth = "all";
@@ -208,7 +208,6 @@ const titles = {
   orders: "Ordenes de aplicacion",
   execution: "Ejecucion en terreno",
   inventory: "Bodega y stock",
-  prices: "Precios de productos",
   reports: "Reportes y ahorro",
   masters: "Maestros del campo"
 };
@@ -397,8 +396,8 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "orders", "execution", "masters"],
+    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "reports", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "reports", "orders", "execution", "masters"],
     bodeguero: ["warehouse", "inventory"],
     operador: ["execution"],
     lectura: ["dashboard", "reports"]
@@ -416,8 +415,8 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "prices", "reports"],
-    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "prices", "reports"],
+    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "reports"],
+    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "reports"],
     bodeguero: ["warehouse", "inventory"],
     operador: ["execution"],
     lectura: ["dashboard", "reports"]
@@ -1406,7 +1405,7 @@ function renderManager() {
         </div>
         <div class="gantt-head">
           <div>
-          <h3>Carta Gantt por potrero</h3>
+          <h3>Carta Gantt por especie y potrero</h3>
             <p>Planifica por dia o revisa el año completo. Un potrero puede tener varias órdenes en fechas distintas.</p>
           </div>
           <div class="gantt-controls">
@@ -1495,13 +1494,13 @@ function managerGantt(orders) {
   return `
     <div class="gantt-table">
       <div class="gantt-row gantt-months">
-        <span>Potrero</span>
+        <span>Especie / Potrero</span>
         <div class="gantt-month-grid">${months.map((month) => `<b>${month}</b>`).join("")}</div>
       </div>
       ${groups.map((group) => {
         return `
           <div class="gantt-row">
-            <span><strong>${group.potrero}</strong><small>Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
+            <span><strong>${group.potrero}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
             <div class="gantt-month-grid gantt-track">
               ${months.map((_, index) => {
                 const month = String(index + 1).padStart(2, "0");
@@ -1523,13 +1522,13 @@ function managerMonthGantt(orders) {
   return `
     <div class="gantt-table gantt-table-month">
       <div class="gantt-row gantt-month-detail gantt-month-header">
-        <span>Potrero</span>
+        <span>Especie / Potrero</span>
         <div class="gantt-day-grid" style="--days:${daysInMonth}">${days.map((day) => `<b>${day}</b>`).join("")}</div>
       </div>
       ${groups.map((group) => {
         return `
           <div class="gantt-row gantt-month-detail ${group.orders.some((order) => selectedGanttOrderId === order.id) ? "selected" : ""}">
-            <span><strong>${group.potrero}</strong><small>Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
+            <span><strong>${group.potrero}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
             <div class="gantt-day-grid gantt-day-track" style="--days:${daysInMonth};--rows:${Math.max(1, group.orders.filter((order) => orderOverlapsMonth(order, managerYear, managerMonth)).length)}">
               ${group.orders
                 .filter((order) => orderOverlapsMonth(order, managerYear, managerMonth))
@@ -1544,13 +1543,46 @@ function managerMonthGantt(orders) {
 }
 
 
+function ganttSpeciesLabel(order) {
+  return order.crop || order.cultivo || "Sin especie";
+}
+
+function potreroSortParts(potrero) {
+  const text = String(potrero || "Sin potrero").trim();
+  const numberMatch = text.match(/\d+(?:[\.,]\d+)?/);
+  return {
+    text,
+    number: numberMatch ? Number(numberMatch[0].replace(",", ".")) : Number.MAX_SAFE_INTEGER,
+    prefix: normalizeText(text.replace(/\d+(?:[\.,]\d+)?/, "")).replace(/\s+/g, " ")
+  };
+}
+
+function comparePotreroNatural(a, b) {
+  const pa = potreroSortParts(a);
+  const pb = potreroSortParts(b);
+  const prefixCompare = pa.prefix.localeCompare(pb.prefix, "es", { numeric: true, sensitivity: "base" });
+  if (prefixCompare) return prefixCompare;
+  if (pa.number !== pb.number) return pa.number - pb.number;
+  return pa.text.localeCompare(pb.text, "es", { numeric: true, sensitivity: "base" });
+}
+
+function compareGanttGroups(a, b) {
+  const speciesCompare = a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" });
+  if (speciesCompare) return speciesCompare;
+  return comparePotreroNatural(a.potrero, b.potrero);
+}
+
 function ganttGroupsByPotrero(orders) {
   return Object.values(orders.reduce((acc, order) => {
-    const key = order.potrero || "Sin potrero";
-    acc[key] ||= { potrero: key, orders: [] };
+    const potrero = order.potrero || "Sin potrero";
+    const species = ganttSpeciesLabel(order);
+    const key = `${species}__${potrero}`;
+    acc[key] ||= { species, potrero, orders: [] };
     acc[key].orders.push(order);
     return acc;
-  }, {})).map((group) => ({ ...group, orders: sortOrdersNewestFirst(group.orders) }));
+  }, {}))
+    .map((group) => ({ ...group, orders: sortOrdersNewestFirst(group.orders) }))
+    .sort(compareGanttGroups);
 }
 
 function groupPrograms(group) {
@@ -1586,7 +1618,7 @@ function ganttMarker(order, extraStyle = "") {
     "Productos:",
     productLines.length ? productLines.join("\n") : "-"
   ].join("\n");
-  return `<i class="active ${stateInfo.key}" data-action="select-gantt-order" data-id="${order.id}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span><em>${progressLabel}</em></i>`;
+  return `<i class="active ${stateInfo.key}" data-action="select-gantt-order" data-id="${order.id}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span></i>`;
 }
 
 function ganttRangeMarker(order, index, daysInMonth) {
@@ -3246,17 +3278,22 @@ function renderPrices() {
 }
 
 function renderReports() {
+  const seasons = ["Todas", ...state.seasons.map((season) => season.id).filter(Boolean)];
+  const seasonLabel = (seasonId) => seasonId === "Todas" ? "Todas" : getSeason(seasonId).name;
   const species = ["Todas", ...new Set(state.orders.map((order) => order.crop).filter(Boolean))];
   const programNumbers = ["Todos", ...new Set(state.orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber]).filter((value) => value !== "" && value !== undefined).map(String))].sort((a, b) => a === "Todos" ? -1 : Number(a) - Number(b));
   const orders = state.orders.filter((order) => {
+    const seasonOk = reportFilters.seasonId === "Todas" || order.seasonId === reportFilters.seasonId;
     const speciesOk = reportFilters.species === "Todas" || order.crop === reportFilters.species;
     const programOk = reportFilters.programNumber === "Todos" || (order.programNumbers?.length ? order.programNumbers.map(String).includes(String(reportFilters.programNumber)) : String(order.programNumber) === String(reportFilters.programNumber));
-    return speciesOk && programOk;
+    return seasonOk && speciesOk && programOk;
   });
   const productRows = reportProductRows(orders);
   const byProduct = reportByProduct(orders);
   const byProgram = reportByKey(orders, (order) => programLabel(order));
   const waterByProgram = reportWaterByProgram(orders);
+  const waterByOperator = reportWaterByOperator(orders);
+  const productHaByPotrero = reportProductHaByPotrero(orders);
   const monthly = reportByMonth(orders);
   const plannedWater = orders.reduce((sum, order) => sum + plannedLiters(order), 0);
   const dispatchedWater = orders.reduce((sum, order) => sum + dispatchedLiters(order), 0);
@@ -3274,6 +3311,9 @@ function renderReports() {
         <p>Avance, costos, mojamiento promedio por programa y tendencia de salidas.</p>
       </div>
       <div class="report-filters">
+        <label>Temporada
+          <select id="reportSeasonFilter">${seasons.map((item) => `<option value="${item}" ${item === reportFilters.seasonId ? "selected" : ""}>${seasonLabel(item)}</option>`).join("")}</select>
+        </label>
         <label>Especie
           <select id="reportSpeciesFilter">${species.map((item) => `<option value="${item}" ${item === reportFilters.species ? "selected" : ""}>${item}</option>`).join("")}</select>
         </label>
@@ -3291,12 +3331,18 @@ function renderReports() {
     </div>
     <div class="report-grid">
       ${chartPanel("Avance por programa", "Mojamiento salido vs planificado", byProgram.map((row) => progressBar(row.label, row.dispatchedWater, row.plannedWater, `${number(row.percent, 0)}%`)).join(""))}
+      ${chartPanel("Mojamiento por tractorista", "Ranking por litros netos salidos en la temporada/filtro", waterByOperator.map((row) => valueBar(row.label, row.water, waterByOperator[0]?.water || 0, `${number(row.water, 0)} L`)).join(""))}
+      ${chartPanel("Producto por hectarea por potrero", "Potreros con mayor cantidad neta de producto aplicado por ha", productHaByPotrero.map((row) => valueBar(row.label, row.productHa, productHaByPotrero[0]?.productHa || 0, `${number(row.productHa)} kg/L ha`)).join(""))}
       ${chartPanel("Costo por producto", "Valorizado con precio kg/L", byProduct.map((row) => valueBar(row.product.name, row.value, byProduct[0]?.value || 0, money(row.value))).join(""))}
       ${chartPanel("Stock utilizado por producto", "Total ingresado, usado y saldo disponible", stockUsageReport())}
       ${chartPanel("Mojamiento promedio por programa", "Despliega cada programa para ver potrero y bloque", waterByProgram.map(waterProgramDetails).join(""))}
       ${chartPanel("Tendencia mensual", "Mojamiento y costo por mes", monthly.map((row) => stackedMetric(row.label, row.water, Math.max(...monthly.map((item) => item.water), 1), `${number(row.water, 0)} L`, money(row.cost))).join(""))}
     </div>
   `;
+  document.getElementById("reportSeasonFilter")?.addEventListener("change", (event) => {
+    reportFilters.seasonId = event.target.value;
+    renderReports();
+  });
   document.getElementById("reportSpeciesFilter")?.addEventListener("change", (event) => {
     reportFilters.species = event.target.value;
     renderReports();
@@ -3329,6 +3375,42 @@ function reportByProduct(orders) {
     const actual = orders.reduce((sum, order) => sum + dispatchedProduct(order, product.id), 0);
     return { product, actual, value: actual * (product.cost || 0) };
   }).filter((row) => row.actual > 0).sort((a, b) => b.value - a.value);
+}
+
+function reportWaterByOperator(orders) {
+  const grouped = {};
+  orders.forEach((order) => {
+    (order.dispatches || []).forEach((dispatch) => {
+      const operatorKey = dispatch.operatorId || "Sin asignar";
+      const sign = dispatch.type === "devolucion" ? -1 : 1;
+      grouped[operatorKey] ||= { id: operatorKey, label: getOperator(operatorKey), water: 0, count: 0 };
+      grouped[operatorKey].water += sign * (Number(dispatch.liters) || 0);
+      if (dispatch.type !== "devolucion") grouped[operatorKey].count += 1;
+    });
+  });
+  return Object.values(grouped)
+    .filter((row) => row.water > 0)
+    .sort((a, b) => b.water - a.water);
+}
+
+function reportProductHaByPotrero(orders) {
+  const grouped = {};
+  orders.forEach((order) => {
+    const key = order.potrero || "Sin potrero";
+    grouped[key] ||= { label: key, hectares: 0, product: 0, orders: new Set() };
+    if (!grouped[key].orders.has(order.id)) {
+      grouped[key].orders.add(order.id);
+      grouped[key].hectares += Number(order.hectares) || 0;
+    }
+    (order.dispatches || []).forEach((dispatch) => {
+      const sign = dispatch.type === "devolucion" ? -1 : 1;
+      grouped[key].product += Object.values(dispatch.products || {}).reduce((sum, value) => sum + sign * (Number(value) || 0), 0);
+    });
+  });
+  return Object.values(grouped)
+    .map((row) => ({ ...row, productHa: row.hectares ? row.product / row.hectares : 0 }))
+    .filter((row) => row.productHa > 0)
+    .sort((a, b) => b.productHa - a.productHa);
 }
 
 function stockUsageRows() {
@@ -5175,7 +5257,7 @@ document.addEventListener("click", async (event) => {
     renderProgram();
   }
   if (action === "clear-report-filter") {
-    reportFilters = { species: "Todas", programNumber: "Todos" };
+    reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
     renderReports();
   }
   if (action === "clear-warehouse-filter") {
