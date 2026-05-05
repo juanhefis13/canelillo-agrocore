@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#1f6f4a">
+    <title>Canelillo AgroCore</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="canelilloIcon.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <section id="authGate" class="auth-gate">
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark"><img src="canelilloIcon.png" alt="Logo Canelillo" onerror="this.style.display='none'; this.parentElement.classList.add('logo-fallback');"></div>
+          <div>
+            <strong>Canelillo AgroCore</strong>
+            <span>Supabase · aplicaciones y bodega</span>
+          </div>
+        </div>
+        <div class="auth-tabs">
+          <button type="button" class="active" data-action="gate-tab" data-tab="login">Ingresar</button>
+          <button type="button" data-action="gate-tab" data-tab="register">Registrar</button>
+        </div>
+        <div id="gateStatus" class="auth-status" role="status" aria-live="polite"></div>
+        <form id="gateLoginForm" class="auth-pane active-auth-pane">
+          <label>Correo<input name="email" type="email" autocomplete="email" required></label>
+          <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary-button" type="button" id="gateLoginButton">Entrar</button>
+        </form>
+        <form id="gateRegisterForm" class="auth-pane">
+          <div class="form-grid">
+            <label>Nombre completo<input name="fullName" autocomplete="name" required></label>
+            <label>RUT<input name="rut" placeholder="12.345.678-9" required></label>
+            <label>Rol<select name="role"><option value="bodeguero">Bodeguero</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></label>
+            <label>Codigo de registro<input name="inviteCode" autocomplete="one-time-code" required></label>
+            <label class="full">Correo<input name="registerEmail" type="email" autocomplete="email" required></label>
+            <label>Contraseña<input name="registerPassword" type="password" autocomplete="new-password" required></label>
+            <label>Repetir contraseña<input name="registerPassword2" type="password" autocomplete="new-password" required></label>
+          </div>
+          <button class="primary-button" type="button" id="gateRegisterButton">Crear cuenta</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="app-shell locked">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"><img src="canelilloIcon.png" alt="Logo Canelillo" onerror="this.style.display='none'; this.parentElement.classList.add('logo-fallback');"></div>
+          <div>
+            <strong>Canelillo AgroCore</strong>
+            <span>Gestión agrícola en nube</span>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Principal">
+          <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="true">Aplicaciones</button>
+          <div class="nav-group open" id="applicationsMenu">
+            <button class="nav-item active" data-view="dashboard" title="Dashboard">Panel</button>
+            <button class="nav-item" data-view="program" title="Programa">Programa</button>
+            <button class="nav-item" data-view="manager" title="Supervisor">Supervisor</button>
+            <button class="nav-item" data-view="warehouse" title="Bodega">Bodega</button>
+            <button class="nav-item" data-view="inventory" title="Stock">Stock</button>
+            <button class="nav-item" data-view="prices" title="Precios">Precios</button>
+            <button class="nav-item" data-view="reports" title="Reportes">Reportes</button>
+          </div>
+        </nav>
+        <div class="sync-box sync-box--clean">
+          <span id="storageStatus">Solo Supabase</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Agricola El Canelillo</p>
+            <h1 id="viewTitle">Panel operativo</h1>
+          </div>
+        <div class="top-actions">
+            <button id="authButton" class="secondary-button">Cuenta</button>
+            <button id="resetDemo" class="secondary-button" hidden>Restaurar datos</button>
+            <button id="newOrderTop" class="primary-button" hidden>Nueva orden</button>
+          </div>
+        </header>
+
+        <section id="dashboard" class="view active-view"></section>
+        <section id="program" class="view"></section>
+        <section id="manager" class="view"></section>
+        <section id="warehouse" class="view"></section>
+        <section id="orders" class="view"></section>
+        <section id="execution" class="view"></section>
+        <section id="inventory" class="view"></section>
+        <section id="prices" class="view"></section>
+        <section id="reports" class="view"></section>
+        <section id="masters" class="view"></section>
+      </main>
+    </div>
+
+    <dialog id="orderDialog" class="modal"></dialog>
+    <dialog id="tankDialog" class="modal"></dialog>
+    <dialog id="dispatchDialog" class="modal"></dialog>
+    <dialog id="returnDialog" class="modal"></dialog>
+    <dialog id="movementDialog" class="modal"></dialog>
+    <dialog id="outputInfoDialog" class="modal"></dialog>
+    <dialog id="productDialog" class="modal"></dialog>
+    <dialog id="purchaseDialog" class="modal"></dialog>
+    <dialog id="authDialog" class="modal"></dialog>
+    <div id="printArea" class="print-area"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

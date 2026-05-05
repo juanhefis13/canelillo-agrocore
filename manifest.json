@@ -1,0 +1,15 @@
+{
+  "name": "Canelillo AgroCore",
+  "short_name": "AgroCore",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f3f7f5",
+  "theme_color": "#09233e",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%2309233e'/%3E%3Ccircle cx='142' cy='50' r='20' fill='%232f8a62'/%3E%3Ctext x='96' y='118' text-anchor='middle' font-family='Arial' font-size='58' font-weight='800' fill='white'%3EAC%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
