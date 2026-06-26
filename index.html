@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=75-palto-potrero-order">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -28,12 +28,26 @@
           <label>Correo<input name="email" type="email" autocomplete="email" required></label>
           <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
           <button class="primary-button" type="button" id="gateLoginButton">Entrar</button>
+          <button class="link-button" type="button" data-action="gate-tab" data-tab="recover">Recuperar contraseÃ±a</button>
+        </form>
+        <form id="gateRecoverForm" class="auth-pane">
+          <label>Correo<input name="recoverEmail" type="email" autocomplete="email" required></label>
+          <div class="auth-inline-actions">
+            <button class="secondary-button" type="button" data-action="gate-tab" data-tab="login">Volver</button>
+            <button class="primary-button" type="button" id="gateRecoverButton">Enviar enlace</button>
+          </div>
+        </form>
+        <form id="gateResetPasswordForm" class="auth-pane">
+          <label>Nueva contraseÃ±a<input name="newPassword" type="password" autocomplete="new-password" required></label>
+          <label>Repetir contraseÃ±a<input name="newPassword2" type="password" autocomplete="new-password" required></label>
+          <button class="primary-button" type="button" id="gateResetPasswordButton">Guardar contraseÃ±a</button>
         </form>
         <form id="gateRegisterForm" class="auth-pane">
           <div class="form-grid">
             <label>Nombre completo<input name="fullName" autocomplete="name" required></label>
             <label>RUT<input name="rut" placeholder="12.345.678-9" required></label>
             <label>Rol<select name="role"><option value="bodeguero">Bodeguero</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></label>
+            <label>Area/App<select name="area"><option value="todas">Todas las apps</option><option value="agrocore">AgroCore</option><option value="cosecha">Cosecha</option><option value="calicatas">Calicatas</option><option value="riego">Riego</option><option value="fertilizacion">Fertilizacion</option></select></label>
             <label>Codigo de registro<input name="inviteCode" autocomplete="one-time-code" required></label>
             <label class="full">Correo<input name="registerEmail" type="email" autocomplete="email" required></label>
             <label>Contraseña<input name="registerPassword" type="password" autocomplete="new-password" required></label>
@@ -54,14 +68,28 @@
           </div>
         </div>
         <nav class="nav" aria-label="Principal">
-          <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="true">Aplicaciones</button>
-          <div class="nav-group open" id="applicationsMenu">
-            <button class="nav-item active" data-view="dashboard" title="Dashboard">Panel</button>
+          <button class="nav-item active" data-view="dashboard" title="Inicio">Inicio</button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-irrigation-menu" aria-expanded="false">Riego</button>
+          <div class="nav-group" id="irrigationMenu">
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="gantt" title="Carta Gantt">Carta Gantt</button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="bandejas" title="Bandeja">Bandeja</button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="balance" title="Balance hidrico">Balance hidrico</button>
+            <button class="nav-item" data-view="calicatas" title="Calicatas">Calicatas</button>
+          </div>
+          <button class="nav-item" data-view="fertilizers" title="Fertilizantes">Fertilizantes</button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false">Aplicaciones</button>
+          <div class="nav-group" id="applicationsMenu">
+            <button class="nav-item" data-view="applicationDashboard" title="Panel principal">Panel principal</button>
             <button class="nav-item" data-view="program" title="Programa">Programa</button>
             <button class="nav-item" data-view="manager" title="Supervisor">Supervisor</button>
             <button class="nav-item" data-view="warehouse" title="Bodega">Bodega</button>
             <button class="nav-item" data-view="inventory" title="Stock">Stock</button>
             <button class="nav-item" data-view="reports" title="Reportes">Reportes</button>
+          </div>
+          <button class="nav-group-toggle" type="button" data-action="toggle-harvest-menu" aria-expanded="false">Cosecha</button>
+          <div class="nav-group" id="harvestMenu">
+            <button class="nav-item" data-view="harvestMap" title="Mapa cosecha">Mapa</button>
+            <button class="nav-item" data-view="harvestInfo" title="Informacion cosecha">Informacion</button>
           </div>
         </nav>
         <div class="sync-box sync-box--clean">
@@ -73,7 +101,7 @@
         <header class="topbar">
           <div>
             <p class="eyebrow">Agricola El Canelillo</p>
-            <h1 id="viewTitle">Panel operativo</h1>
+            <h1 id="viewTitle">Inicio</h1>
           </div>
         <div class="top-actions">
             <button id="authButton" class="secondary-button">Cuenta</button>
@@ -83,6 +111,10 @@
         </header>
 
         <section id="dashboard" class="view active-view"></section>
+        <section id="irrigation" class="view"></section>
+        <section id="calicatas" class="view"></section>
+        <section id="fertilizers" class="view"></section>
+        <section id="applicationDashboard" class="view"></section>
         <section id="program" class="view"></section>
         <section id="manager" class="view"></section>
         <section id="warehouse" class="view"></section>
@@ -91,6 +123,8 @@
         <section id="inventory" class="view"></section>
         <section id="prices" class="view"></section>
         <section id="reports" class="view"></section>
+        <section id="harvestMap" class="view"></section>
+        <section id="harvestInfo" class="view"></section>
         <section id="masters" class="view"></section>
       </main>
     </div>
@@ -104,10 +138,11 @@
     <dialog id="productDialog" class="modal"></dialog>
     <dialog id="purchaseDialog" class="modal"></dialog>
     <dialog id="authDialog" class="modal"></dialog>
+    <dialog id="irrigationProgramDialog" class="modal"></dialog>
     <div id="printArea" class="print-area"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=75-palto-potrero-order"></script>
   </body>
 </html>

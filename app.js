@@ -1,9 +1,13 @@
 const STORAGE_KEY = "agroaplicaciones.state.v1";
 const CLOUD_ONLY_MODE = true;
 const SESSION_KEY = "agroaplicaciones.supabase.session.v1";
+const IRRIGATION_DRAFT_KEY = "canelillo.irrigation.hours.v1";
+const IRRIGATION_PROGRAM_KEY = "canelillo.irrigation.program.hours.v1";
+const IRRIGATION_AUDIT_KEY = "canelillo.irrigation.audit.v1";
+const IRRIGATION_PROGRAM_AUDIT_KEY = "canelillo.irrigation.program.audit.v1";
 const SUPABASE_URL = "https://lhmifnsdydullldhmcsd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxobWlmbnNkeWR1bGxsZGhtY3NkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMzg4NTUsImV4cCI6MjA5MjgxNDg1NX0.TaFzWd_OQTdQMMnf3cMd3WejqGpHmWkJLwGRFS8ITtM";
-const REGISTRATION_CODE = "CANELILLO2026";
+const REGISTRATION_CODE = "Canelillo2026#";
 const GOOGLE_MAPS_API_KEY = "AIzaSyBFUloIJfR87F6vLQh4P7HH91LTOTYmCiM";
 
 function escapeHtml(value = "") {
@@ -166,6 +170,27 @@ let managerMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let managerOrdersMonth = "all";
 let managerGanttMode = "month";
 let managerGanttMobileOpen = false;
+let irrigationYear = String(new Date().getFullYear());
+let irrigationMonth = String(new Date().getMonth() + 1).padStart(2, "0");
+let irrigationSpeciesFilter = "Todas";
+let irrigationPotreroFilter = "Todos";
+let irrigationTab = "gantt";
+let irrigationStationFilter = "Todas";
+let irrigationBalancePotreroFilter = "Todos";
+let irrigationBalanceSelectedPotreros = new Set();
+let calicataYear = String(new Date().getFullYear());
+let calicataMonth = String(new Date().getMonth() + 1).padStart(2, "0");
+let calicataSpeciesFilter = "Todas";
+let calicataPotreroFilter = "Todos";
+let irrigationHours = loadIrrigationHours();
+let irrigationProgramHours = loadIrrigationProgramHours();
+let irrigationAudit = loadJsonMap(IRRIGATION_AUDIT_KEY);
+let irrigationProgramAudit = loadJsonMap(IRRIGATION_PROGRAM_AUDIT_KEY);
+let expandedCalicataKeys = new Set();
+let irrigationSaveTimers = new Map();
+let irrigationCloudAvailable = true;
+let irrigationProgramSaveTimers = new Map();
+let irrigationProgramCloudAvailable = true;
 let selectedGanttOrderId = "";
 let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
@@ -183,12 +208,58 @@ let googleMapsLoading = null;
 let dashboardMap = null;
 let dashboardMapElement = null;
 let dashboardMapOverlays = [];
+let harvestMap = null;
+let harvestMapElement = null;
+let harvestMapOverlays = [];
+let harvestInfoWindow = null;
+let irrigationCalicataBlockFilter = "Todos";
+let irrigationCalicataMap = null;
+let irrigationCalicataMapElement = null;
+let irrigationCalicataOverlays = [];
+let irrigationCalicataInfoWindow = null;
+let irrigationCalicataMarkers = new Map();
+let selectedHarvestBinId = "";
+let harvestDateFromFilter = "";
+let harvestDateToFilter = "";
+let harvestCrewFilter = "Todas";
+let harvestStatusFilter = "Todos";
+let harvestSdpFilter = "Todos";
+let irrigationEvaporationLoadedMonths = new Set();
+let irrigationEvaporationLoadingMonths = new Set();
 let supabaseSession = loadSession();
+let passwordRecoverySession = null;
 let currentProfile = null;
-let registerAttempts = Number(localStorage.getItem("agroaplicaciones.registerAttempts") || 0);
+const CHILE_HOLIDAYS_2026 = new Set([
+  "2026-01-01",
+  "2026-04-03",
+  "2026-04-04",
+  "2026-05-01",
+  "2026-05-21",
+  "2026-06-20",
+  "2026-06-29",
+  "2026-07-16",
+  "2026-08-15",
+  "2026-09-18",
+  "2026-09-19",
+  "2026-10-12",
+  "2026-10-31",
+  "2026-11-01",
+  "2026-12-08",
+  "2026-12-25"
+]);
+
+if (localStorage.getItem("canelillo.irrigation.program.cleared.v1") !== "true") {
+  localStorage.removeItem(IRRIGATION_PROGRAM_KEY);
+  irrigationProgramHours = {};
+  localStorage.setItem("canelillo.irrigation.program.cleared.v1", "true");
+}
 
 const views = {
   dashboard: document.getElementById("dashboard"),
+  irrigation: document.getElementById("irrigation"),
+  calicatas: document.getElementById("calicatas"),
+  fertilizers: document.getElementById("fertilizers"),
+  applicationDashboard: document.getElementById("applicationDashboard"),
   program: document.getElementById("program"),
   manager: document.getElementById("manager"),
   warehouse: document.getElementById("warehouse"),
@@ -197,11 +268,17 @@ const views = {
   inventory: document.getElementById("inventory"),
   prices: document.getElementById("prices"),
   reports: document.getElementById("reports"),
+  harvestMap: document.getElementById("harvestMap"),
+  harvestInfo: document.getElementById("harvestInfo"),
   masters: document.getElementById("masters")
 };
 
 const titles = {
-  dashboard: "Panel operativo",
+  dashboard: "Inicio",
+  irrigation: "Riegos",
+  calicatas: "Calicatas",
+  fertilizers: "Fertilizantes",
+  applicationDashboard: "Panel principal de aplicaciones",
   program: "Programa de aplicaciones",
   manager: "Panel supervisor encargado",
   warehouse: "Panel bodeguero",
@@ -209,6 +286,8 @@ const titles = {
   execution: "Ejecucion en terreno",
   inventory: "Bodega y stock",
   reports: "Reportes y ahorro",
+  harvestMap: "Mapa de cosecha",
+  harvestInfo: "Informacion de cosecha",
   masters: "Maestros del campo"
 };
 
@@ -270,6 +349,13 @@ function normalizeState(rawState) {
   next.vehicles ||= [];
   next.orders ||= [];
   next.inventoryMovements ||= [];
+  next.calicatas ||= [];
+  next.irrigationEvaporation ||= [];
+  next.irrigationRecords ||= [];
+  next.harvestRecords ||= [];
+  next.harvestOfficialRecords ||= [];
+  next.harvestCrewSchedule ||= [];
+  next.harvestJornales ||= [];
   const localEquipmentCode = (id) => next.equipment.find((item) => item.id === id)?.code || "";
   next.orders.forEach((order) => {
     order.seasonId ??= next.settings?.currentSeasonId || next.seasons[0]?.id || "";
@@ -378,6 +464,54 @@ function toDbRole(role) {
   return normalizeRole(role);
 }
 
+function normalizeRegistrationArea(area) {
+  const clean = String(area || "").trim().toLowerCase();
+  const map = {
+    all: "todas",
+    todo: "todas",
+    todos: "todas",
+    todas: "todas",
+    agro: "agrocore",
+    agrocore: "agrocore",
+    "agro core": "agrocore",
+    cosecha: "cosecha",
+    harvest: "cosecha",
+    canelillo_harvest: "cosecha",
+    calicata: "calicatas",
+    calicatas: "calicatas",
+    riego: "riego",
+    riegos: "riego",
+    fertilizante: "fertilizacion",
+    fertilizantes: "fertilizacion",
+    fertilizacion: "fertilizacion"
+  };
+  return map[clean] || "todas";
+}
+
+function areaLabel(area) {
+  const labels = {
+    todas: "Todas las apps",
+    agrocore: "AgroCore",
+    cosecha: "Cosecha",
+    calicatas: "Calicatas",
+    riego: "Riego",
+    fertilizacion: "Fertilizacion"
+  };
+  return labels[normalizeRegistrationArea(area)] || "Todas las apps";
+}
+
+function normalizeRutValue(rut) {
+  return String(rut || "").trim().replace(/\s+/g, "").toUpperCase();
+}
+
+function normalizeEmailValue(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
 function roleLabel(role) {
   const normalized = normalizeRole(role);
   const labels = { admin: "Admin", supervisor: "Jefe", bodeguero: "Bodeguero", operador: "Operador", lectura: "Solo lectura" };
@@ -396,18 +530,18 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "reports", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "reports", "orders", "execution", "masters"],
-    bodeguero: ["warehouse", "inventory"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
+    bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "reports"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "reports", "harvestMap", "harvestInfo"]
   };
   return (permissions[normalized] || []).includes(view);
 }
 
 function defaultViewForRole(role) {
   const normalized = normalizeRole(role);
-  if (normalized === "bodeguero") return "warehouse";
+  if (normalized === "bodeguero") return "dashboard";
   if (normalized === "operador") return "execution";
   return "dashboard";
 }
@@ -415,11 +549,11 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "program", "manager", "warehouse", "inventory", "reports"],
-    supervisor: ["dashboard", "program", "manager", "warehouse", "inventory", "reports"],
-    bodeguero: ["warehouse", "inventory"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
+    bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "reports"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "reports", "harvestMap", "harvestInfo"]
   };
   return new Set(viewsByRole[normalized] || [defaultViewForRole(normalized)]);
 }
@@ -451,6 +585,129 @@ function toDbOrderStatus(status) {
 
 async function sbSelect(table, query = "select=*") {
   return sbFetch(`/rest/v1/${table}?${query}`);
+}
+
+async function sbSelectAll(table, query = "select=*", pageSize = 1000) {
+  const rows = [];
+  for (let page = 0; page < 50; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const batch = await sbFetch(`/rest/v1/${table}?${query}`, {
+      headers: { Range: `${from}-${to}` }
+    });
+    rows.push(...(batch || []));
+    if (!batch || batch.length < pageSize) break;
+  }
+  return rows;
+}
+
+async function sbSelectPublic(table, query = "select=*") {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json"
+    }
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.message || data?.msg || text || response.statusText);
+  return data;
+}
+
+async function sbSelectAllPublic(table, query = "select=*", pageSize = 1000) {
+  const rows = [];
+  for (let page = 0; page < 50; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        Range: `${from}-${to}`
+      }
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!response.ok) throw new Error(data?.message || data?.msg || text || response.statusText);
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return rows;
+}
+
+function mapEvaporationRows(rows = []) {
+  return rows.map((item) => ({
+    date: String(item.fecha || "").slice(0, 10),
+    evaporation: item.evaporacion === null ? null : Number(item.evaporacion),
+    station: item.estacion === null || item.estacion === undefined ? "" : String(item.estacion)
+  })).filter((item) => item.date);
+}
+
+function mergeEvaporationRows(rows = []) {
+  const byDate = new Map((state.irrigationEvaporation || []).map((item) => [item.date, item]));
+  mapEvaporationRows(rows).forEach((item) => byDate.set(item.date, item));
+  state.irrigationEvaporation = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function ensureIrrigationEvaporationData(monthPrefix, daysInMonth) {
+  if (!monthPrefix || irrigationEvaporationLoadedMonths.has(monthPrefix) || irrigationEvaporationLoadingMonths.has(monthPrefix)) return;
+  irrigationEvaporationLoadingMonths.add(monthPrefix);
+  const start = `${monthPrefix}-01`;
+  const end = `${monthPrefix}-${String(daysInMonth).padStart(2, "0")}`;
+  const query = `select=fecha,evaporacion,estacion&fecha=gte.${start}&fecha=lte.${end}&order=fecha.asc`;
+  try {
+    const rows = await sbSelect("evaporacion_bandeja", query)
+      .then((items) => items?.length ? items : sbSelectPublic("evaporacion_bandeja", query))
+      .catch(() => sbSelectPublic("evaporacion_bandeja", query));
+    mergeEvaporationRows(rows);
+    irrigationEvaporationLoadedMonths.add(monthPrefix);
+    if (currentView === "irrigation" && `${irrigationYear}-${irrigationMonth}` === monthPrefix) renderIrrigation();
+  } catch (error) {
+    console.warn("No se pudo cargar evaporacion de bandeja del mes", error);
+  } finally {
+    irrigationEvaporationLoadingMonths.delete(monthPrefix);
+  }
+}
+
+async function saveIrrigationBandejaRecord() {
+  const form = document.getElementById("irrigationBandejaForm");
+  if (!form || !form.reportValidity()) return;
+  if (!supabaseSession) {
+    showToast("Inicia sesion para guardar bandeja");
+    return;
+  }
+  const data = Object.fromEntries(new FormData(form));
+  const date = String(data.fecha || "").slice(0, 10);
+  const evaporation = Number(data.evaporacion);
+  const station = String(data.estacion || "").trim();
+  if (!date || !Number.isFinite(evaporation) || evaporation < 0) {
+    showToast("Revisa fecha y evaporacion");
+    return;
+  }
+  try {
+    const saved = await sbFetch("/rest/v1/evaporacion_bandeja?select=fecha,evaporacion,estacion", {
+      method: "POST",
+      prefer: "return=representation",
+      body: JSON.stringify([{
+        fecha: date,
+        evaporacion: evaporation,
+        estacion: station || null
+      }])
+    });
+    const row = saved?.[0] || { fecha: date, evaporacion: evaporation, estacion: station };
+    mergeEvaporationRows([row]);
+    irrigationEvaporationLoadedMonths.add(date.slice(0, 7));
+    if (date.slice(0, 7) !== `${irrigationYear}-${irrigationMonth}`) {
+      irrigationYear = date.slice(0, 4);
+      irrigationMonth = date.slice(5, 7);
+    }
+    renderIrrigation();
+    showToast("Dato de bandeja guardado");
+  } catch (error) {
+    showToast(`No se guardo bandeja: ${error.message}`);
+  }
 }
 
 function money(value) {
@@ -533,11 +790,1435 @@ function fieldSummary(potrero) {
 function blocksForPotrero(potrero) {
   return state.blocks
     .filter((block) => block.potrero === potrero)
-    .sort((a, b) => String(a.block).localeCompare(String(b.block), undefined, { numeric: true }));
+    .sort(blockSort);
 }
 
 function uniquePotreros() {
-  return [...new Set(state.blocks.map((block) => block.potrero).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(state.blocks.map((block) => block.potrero).filter(Boolean))].sort(comparePotrero);
+}
+
+function loadIrrigationHours() {
+  try {
+    return JSON.parse(localStorage.getItem(IRRIGATION_DRAFT_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function loadIrrigationProgramHours() {
+  try {
+    return JSON.parse(localStorage.getItem(IRRIGATION_PROGRAM_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function loadJsonMap(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveIrrigationHours() {
+  localStorage.setItem(IRRIGATION_DRAFT_KEY, JSON.stringify(irrigationHours));
+}
+
+function saveIrrigationProgramHours() {
+  localStorage.setItem(IRRIGATION_PROGRAM_KEY, JSON.stringify(irrigationProgramHours));
+}
+
+function saveIrrigationAudit() {
+  localStorage.setItem(IRRIGATION_AUDIT_KEY, JSON.stringify(irrigationAudit));
+}
+
+function saveIrrigationProgramAudit() {
+  localStorage.setItem(IRRIGATION_PROGRAM_AUDIT_KEY, JSON.stringify(irrigationProgramAudit));
+}
+
+function irrigationKey(blockId, date) {
+  return `${blockId}__${date}`;
+}
+
+function pruneEmptyIrrigationAudits() {
+  let changedReal = false;
+  let changedProgram = false;
+  Object.keys(irrigationAudit).forEach((key) => {
+    if (Number(irrigationHours[key]) > 0) return;
+    delete irrigationAudit[key];
+    changedReal = true;
+  });
+  Object.keys(irrigationProgramAudit).forEach((key) => {
+    if (Number(irrigationProgramHours[key]) > 0) return;
+    delete irrigationProgramAudit[key];
+    changedProgram = true;
+  });
+  if (changedReal) saveIrrigationAudit();
+  if (changedProgram) saveIrrigationProgramAudit();
+}
+
+function currentAuditUser() {
+  return {
+    id: currentProfile?.id || supabaseSession?.user?.id || null,
+    name: currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || "Usuario",
+    email: supabaseSession?.user?.email || ""
+  };
+}
+
+function irrigationAuditEntry() {
+  const user = currentAuditUser();
+  return {
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function irrigationAuditTitle(kind, block, date, value) {
+  const key = irrigationKey(block.id, date);
+  const audit = kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
+  const base = `${kind === "program" ? "Programa" : "Riego real"} ${block.potrero} bloque ${block.block} - ${date}`;
+  const hours = value === "" || value === null || value === undefined ? "Sin horas" : `${value} hrs`;
+  if (!audit) return `${base}\n${hours}\nSin modificacion registrada`;
+  const when = audit.updatedAt ? new Date(audit.updatedAt).toLocaleString("es-CL") : "Sin fecha";
+  return `${base}\n${hours}\nModificado por: ${audit.userName || audit.userEmail || "Usuario"}\nFecha: ${when}`;
+}
+
+function setIrrigationCellAudit(kind, blockId, date) {
+  const key = irrigationKey(blockId, date);
+  const entry = irrigationAuditEntry();
+  if (kind === "program") {
+    irrigationProgramAudit[key] = entry;
+    saveIrrigationProgramAudit();
+  } else {
+    irrigationAudit[key] = entry;
+    saveIrrigationAudit();
+  }
+  return entry;
+}
+
+function clearIrrigationCellAudit(kind, blockId, date) {
+  const key = irrigationKey(blockId, date);
+  if (kind === "program") {
+    delete irrigationProgramAudit[key];
+    saveIrrigationProgramAudit();
+  } else {
+    delete irrigationAudit[key];
+    saveIrrigationAudit();
+  }
+}
+
+function irrigationAuditPayload(entry) {
+  return {
+    creado_por_nombre: entry.userName || null,
+    modificado_por: entry.userId,
+    modificado_por_nombre: entry.userName || null,
+    modificado_en: entry.updatedAt
+  };
+}
+
+function irrigationDayClass(date) {
+  const day = new Date(`${date}T12:00:00`);
+  const weekend = day.getDay() === 0 || day.getDay() === 6;
+  const holiday = CHILE_HOLIDAYS_2026.has(date);
+  return `${weekend ? "is-weekend" : ""} ${holiday ? "is-holiday" : ""}`.trim();
+}
+
+function irrigationDayTitle(date, base = "") {
+  const labels = [];
+  const day = new Date(`${date}T12:00:00`);
+  if (day.getDay() === 0 || day.getDay() === 6) labels.push("Fin de semana");
+  if (CHILE_HOLIDAYS_2026.has(date)) labels.push("Feriado");
+  return [base, ...labels].filter(Boolean).join(" · ");
+}
+
+function irrigationVolume(hours, flow) {
+  const h = Number(hours);
+  const f = Number(flow);
+  if (!Number.isFinite(h) || !Number.isFinite(f)) return 0;
+  return h * f;
+}
+
+function irrigationBlockSnapshot(block) {
+  return {
+    potrero: block?.potrero || "",
+    bloque: block?.block || "",
+    especie: block?.crop || "",
+    variedad: block?.variety || "",
+    hectareas: Number(block?.hectares) || 0,
+    precipitacion: block?.precipitation === null || block?.precipitation === undefined ? null : Number(block.precipitation),
+    caudal: block?.flow === null || block?.flow === undefined ? null : Number(block.flow)
+  };
+}
+
+function hasIrrigationBlockSnapshot(block) {
+  return Boolean(block?.id && block?.potrero && block?.block && block?.crop);
+}
+
+function missingSupabaseColumnName(error, columns) {
+  const message = String(error?.message || "").toLowerCase();
+  return columns.find((column) => message.includes(String(column).toLowerCase())) || "";
+}
+
+async function upsertSupabaseRowWithOptionalColumns(path, payload, optionalColumns) {
+  let body = { ...payload };
+  let remaining = [...optionalColumns];
+  while (true) {
+    try {
+      return await sbFetch(path, {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: JSON.stringify(body)
+      });
+    } catch (error) {
+      const missing = missingSupabaseColumnName(error, remaining);
+      if (!missing) throw error;
+      delete body[missing];
+      remaining = remaining.filter((column) => column !== missing);
+    }
+  }
+}
+
+function applyIrrigationRecords(rows = []) {
+  state.irrigationRecords = rows.map((item) => ({
+    id: item.id,
+    blockId: item.campo_id,
+    date: String(item.fecha || "").slice(0, 10),
+    hours: Number(item.horas_riego) || 0,
+    volume: Number(item.volumen) || 0,
+    modifiedByName: item.modificado_por_nombre || item.creado_por_nombre || "",
+    modifiedAt: item.modificado_en || item.actualizado_en || item.updated_at || ""
+  })).filter((item) => item.blockId && item.date);
+  state.irrigationRecords.forEach((item) => {
+    const key = irrigationKey(item.blockId, item.date);
+    if (item.hours > 0) irrigationHours[key] = item.hours;
+    else delete irrigationHours[key];
+    if (item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
+      irrigationAudit[key] = { userName: item.modifiedByName, updatedAt: item.modifiedAt };
+    } else if (item.hours <= 0) {
+      delete irrigationAudit[key];
+    }
+  });
+  saveIrrigationHours();
+  saveIrrigationAudit();
+}
+
+function applyIrrigationProgramRecords(rows = []) {
+  (rows || []).forEach((item) => {
+    const key = irrigationKey(item.campo_id, String(item.fecha || "").slice(0, 10));
+    const hours = Number(item.horas_programadas) || 0;
+    if (item.campo_id && item.fecha && hours > 0) irrigationProgramHours[key] = hours;
+    else delete irrigationProgramHours[key];
+    if (hours > 0 && (item.modificado_por_nombre || item.modificado_en || item.actualizado_en)) {
+      irrigationProgramAudit[key] = {
+        userName: item.modificado_por_nombre || item.creado_por_nombre || "",
+        updatedAt: item.modificado_en || item.actualizado_en || ""
+      };
+    } else if (hours <= 0) {
+      delete irrigationProgramAudit[key];
+    }
+  });
+  saveIrrigationProgramHours();
+  saveIrrigationProgramAudit();
+}
+
+async function saveIrrigationCell(blockId, date, hours) {
+  if (!supabaseSession || !irrigationCloudAvailable) return;
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block || !date) return;
+  const value = Number(hours);
+  const audit = irrigationAudit[irrigationKey(blockId, date)] || irrigationAuditEntry();
+  try {
+    if (!Number.isFinite(value) || value <= 0) {
+      await sbFetch(`/rest/v1/riego?campo_id=eq.${encodeURIComponent(blockId)}&fecha=eq.${encodeURIComponent(date)}`, {
+        method: "DELETE",
+        prefer: "return=minimal"
+      });
+      return;
+    }
+    if (!hasIrrigationBlockSnapshot(block)) {
+      showToast("No se guardo riego: faltan datos del bloque en campos");
+      return;
+    }
+    const payload = {
+      campo_id: blockId,
+      fecha: date,
+      horas_riego: value,
+      volumen: irrigationVolume(value, block.flow),
+      creado_por: audit.userId,
+      ...irrigationAuditPayload(audit),
+      ...irrigationBlockSnapshot(block)
+    };
+    await upsertSupabaseRowWithOptionalColumns(`/rest/v1/riego?on_conflict=campo_id,fecha`, payload, ["creado_por_nombre", "modificado_por", "modificado_por_nombre", "modificado_en"]);
+  } catch (error) {
+    irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
+    console.warn("No se pudo guardar riego en Supabase", error);
+    showToast("Riego guardado localmente; revisa tabla public.riego");
+  }
+}
+
+function scheduleIrrigationCellSave(blockId, date, hours) {
+  const key = irrigationKey(blockId, date);
+  clearTimeout(irrigationSaveTimers.get(key));
+  irrigationSaveTimers.set(key, setTimeout(() => {
+    irrigationSaveTimers.delete(key);
+    saveIrrigationCell(blockId, date, hours);
+  }, 650));
+}
+
+async function saveIrrigationProgramCell(blockId, date, hours) {
+  if (!supabaseSession || !irrigationProgramCloudAvailable) return;
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block || !date) return;
+  const value = Number(hours);
+  const audit = irrigationProgramAudit[irrigationKey(blockId, date)] || irrigationAuditEntry();
+  try {
+    if (!Number.isFinite(value) || value <= 0) {
+      await sbFetch(`/rest/v1/programa_riego?campo_id=eq.${encodeURIComponent(blockId)}&fecha=eq.${encodeURIComponent(date)}`, {
+        method: "DELETE",
+        prefer: "return=minimal"
+      });
+      return;
+    }
+    if (!hasIrrigationBlockSnapshot(block)) {
+      showToast("No se guardo programa: faltan datos del bloque en campos");
+      return;
+    }
+    const payload = {
+      campo_id: blockId,
+      fecha: date,
+      horas_programadas: value,
+      volumen_programado: irrigationVolume(value, block.flow),
+      creado_por: audit.userId,
+      ...irrigationAuditPayload(audit),
+      ...irrigationBlockSnapshot(block)
+    };
+    await upsertSupabaseRowWithOptionalColumns(`/rest/v1/programa_riego?on_conflict=campo_id,fecha`, payload, ["creado_por_nombre", "modificado_por", "modificado_por_nombre", "modificado_en"]);
+  } catch (error) {
+    irrigationProgramCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
+    console.warn("No se pudo guardar programa de riego en Supabase", error);
+    showToast("Programa guardado localmente; revisa tabla public.programa_riego");
+  }
+}
+
+function scheduleIrrigationProgramCellSave(blockId, date, hours) {
+  const key = irrigationKey(blockId, date);
+  clearTimeout(irrigationProgramSaveTimers.get(key));
+  irrigationProgramSaveTimers.set(key, setTimeout(() => {
+    irrigationProgramSaveTimers.delete(key);
+    saveIrrigationProgramCell(blockId, date, hours);
+  }, 650));
+}
+
+async function deleteCloudIrrigationMonth(blocks, year, month) {
+  if (!supabaseSession || !irrigationCloudAvailable) return;
+  const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+  const deletes = blocks.flatMap((block) => Array.from({ length: daysInMonth }, (_, index) => {
+    const date = `${year}-${month}-${String(index + 1).padStart(2, "0")}`;
+    return sbFetch(`/rest/v1/riego?campo_id=eq.${encodeURIComponent(block.id)}&fecha=eq.${encodeURIComponent(date)}`, {
+      method: "DELETE",
+      prefer: "return=minimal"
+    }).catch((error) => {
+      irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
+      console.warn("No se pudo eliminar riego en Supabase", error);
+    });
+  }));
+  await Promise.all(deletes);
+}
+
+function calicataBlockKey(potrero, block) {
+  return `${String(potrero || "").trim()}__${String(block || "").trim()}`;
+}
+
+function calicatasForBlock(block) {
+  const key = calicataBlockKey(block.potrero, block.block);
+  return (state.calicatas || []).filter((item) => calicataBlockKey(item.potrero, item.block) === key);
+}
+
+function calicataDate(item) {
+  return String(item.createdAt || "").slice(0, 10);
+}
+
+function average(values) {
+  const valid = values.map(Number).filter((value) => Number.isFinite(value));
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function mixColor(start, end, ratio) {
+  const clean = (hex) => hex.replace("#", "").match(/.{1,2}/g).map((part) => parseInt(part, 16));
+  const [sr, sg, sb] = clean(start);
+  const [er, eg, eb] = clean(end);
+  const t = clamp(ratio, 0, 1);
+  const toHex = (value) => Math.round(value).toString(16).padStart(2, "0");
+  return `#${toHex(sr + (er - sr) * t)}${toHex(sg + (eg - sg) * t)}${toHex(sb + (eb - sb) * t)}`;
+}
+
+function calicataValueColor(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "#94a3b8";
+  const clamped = clamp(numeric, 1, 5);
+  if (clamped <= 2.5) return mixColor("#dc2626", "#facc15", (clamped - 1) / 1.5);
+  return mixColor("#facc15", "#2563eb", (clamped - 2.5) / 2.5);
+}
+
+function calicataAverageValue(item) {
+  return average([item?.depth20, item?.depth40, item?.depth60, item?.depth80]);
+}
+
+function calicataColorStyle(value) {
+  const color = calicataValueColor(value);
+  return `--calicata-color:${color};--calicata-bg:${color}22;--calicata-border:${color}99;`;
+}
+
+function calicataSummary(calicatas) {
+  const active = calicatas.filter((item) => !item.empty);
+  const depth20 = average(active.map((item) => item.depth20));
+  const depth40 = average(active.map((item) => item.depth40));
+  const depth60 = average(active.map((item) => item.depth60));
+  const depth80 = average(active.map((item) => item.depth80));
+  const general = average([depth20, depth40, depth60, depth80]);
+  return { count: active.length, depth20, depth40, depth60, depth80, general };
+}
+
+function calicataDepthCell(calicatas, field) {
+  const value = average(calicatas.filter((item) => !item.empty).map((item) => item[field]));
+  return value === null ? "" : number(value);
+}
+
+function calicataTextCell(calicatas, field) {
+  const values = [...new Set(calicatas.map((item) => String(item[field] || "").trim()).filter(Boolean))];
+  if (!values.length) return "";
+  return values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0];
+}
+
+function calicataMonthMatches(item, monthPrefix) {
+  return !monthPrefix || calicataDate(item).slice(0, 7) === monthPrefix;
+}
+
+function irrigationCalicataOptions(blocks) {
+  const seen = new Map();
+  blocks.forEach((block) => {
+    const key = calicataBlockKey(block.potrero, block.block);
+    if (!seen.has(key)) seen.set(key, { key, label: `${block.potrero || "-"} / bloque ${block.block || "-"}` });
+  });
+  return [{ key: "Todos", label: "Todos" }, ...[...seen.values()].sort((a, b) => comparePotrero(a.label, b.label))];
+}
+
+function filteredIrrigationCalicatas(blocks, monthPrefix) {
+  const visibleKeys = new Set(blocks.map((block) => calicataBlockKey(block.potrero, block.block)));
+  return (state.calicatas || [])
+    .filter((item) => visibleKeys.has(calicataBlockKey(item.potrero, item.block)))
+    .filter((item) => irrigationCalicataBlockFilter === "Todos" || calicataBlockKey(item.potrero, item.block) === irrigationCalicataBlockFilter)
+    .filter((item) => calicataMonthMatches(item, monthPrefix))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+function calicataDepthList(item) {
+  return [
+    ["20", item.depth20],
+    ["40", item.depth40],
+    ["60", item.depth60],
+    ["80", item.depth80]
+  ].map(([depth, value]) => `${depth}: ${value === null || value === undefined || value === "" ? "-" : number(value)}`).join(" / ");
+}
+
+function irrigationStationLabel(value) {
+  const clean = String(value || "").trim();
+  return clean || "Sin estacion";
+}
+
+function irrigationEvaporationRowsForMonth(monthPrefix, station = "Todas") {
+  return (state.irrigationEvaporation || []).filter((item) => {
+    const dateOk = String(item.date || "").slice(0, 7) === monthPrefix;
+    const stationOk = station === "Todas" || irrigationStationLabel(item.station) === station;
+    return dateOk && stationOk;
+  });
+}
+
+function irrigationEvaporationRowsForMonthName(month, station = "Todas") {
+  return (state.irrigationEvaporation || []).filter((item) => {
+    const dateOk = String(item.date || "").slice(5, 7) === month;
+    const stationOk = station === "Todas" || irrigationStationLabel(item.station) === station;
+    return dateOk && stationOk;
+  });
+}
+
+function evaporationByDateMap(rows = state.irrigationEvaporation || []) {
+  const map = new Map();
+  const buckets = new Map();
+  (rows || []).forEach((item) => {
+    const value = Number(item.evaporation);
+    if (!item.date || !Number.isFinite(value)) return;
+    const bucket = buckets.get(item.date) || { sum: 0, count: 0, stations: new Set() };
+    bucket.sum += value;
+    bucket.count += 1;
+    bucket.stations.add(irrigationStationLabel(item.station));
+    buckets.set(item.date, bucket);
+  });
+  buckets.forEach((bucket, date) => {
+    map.set(date, {
+      date,
+      evaporation: bucket.sum / bucket.count,
+      station: [...bucket.stations].join(", "),
+      count: bucket.count
+    });
+  });
+  return map;
+}
+
+function historicalEvaporationByMonthDay(month, station = "Todas") {
+  const buckets = new Map();
+  irrigationEvaporationRowsForMonthName(month, station).forEach((item) => {
+    const date = String(item.date || "");
+    const value = Number(item.evaporation);
+    if (!date || date.slice(5, 7) !== month || !Number.isFinite(value)) return;
+    const day = date.slice(8, 10);
+    const bucket = buckets.get(day) || { sum: 0, count: 0 };
+    bucket.sum += value;
+    bucket.count += 1;
+    buckets.set(day, bucket);
+  });
+  const averages = new Map();
+  buckets.forEach((bucket, day) => {
+    if (bucket.count) averages.set(day, bucket.sum / bucket.count);
+  });
+  return averages;
+}
+
+function irrigationBandejaLabel(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? number(numeric, 1) : "-";
+}
+
+function irrigationReposicion(totalHours, precipitation, monthEvaporationTotal) {
+  const hours = Number(totalHours);
+  const precip = Number(precipitation);
+  const bandeja = Number(monthEvaporationTotal);
+  if (!Number.isFinite(hours) || !Number.isFinite(precip) || !Number.isFinite(bandeja) || bandeja <= 0) return null;
+  return hours * precip / bandeja;
+}
+
+function irrigationReposicionLabel(value) {
+  return value === null ? "-" : `${number(value * 100, 1)}%`;
+}
+
+function irrigationDifferencePercent(realValue, programValue) {
+  const real = Number(realValue) || 0;
+  const program = Number(programValue) || 0;
+  if (program > 0) return (real - program) / program;
+  if (real === 0) return 0;
+  return null;
+}
+
+function irrigationDifferenceLabel(value) {
+  if (value === null) return "-";
+  const percent = value * 100;
+  const sign = percent > 0 ? "+" : "";
+  return `${sign}${number(percent, 1)}%`;
+}
+
+function irrigationDifferenceClass(value) {
+  if (value === null) return "is-empty";
+  if (value > 0.005) return "is-over";
+  if (value < -0.005) return "is-under";
+  return "is-even";
+}
+
+function irrigationBlockMonthTotal(source, blockId, monthPrefix, daysInMonth) {
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return Number(source[irrigationKey(blockId, date)]) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+}
+
+function irrigationSourceHours(source, blockId, date) {
+  return Number(source[irrigationKey(blockId, date)]) || 0;
+}
+
+function irrigationBlockDayBalance(block, date) {
+  const programHours = irrigationSourceHours(irrigationProgramHours, block.id, date);
+  const realHours = irrigationSourceHours(irrigationHours, block.id, date);
+  const programVolume = irrigationVolume(programHours, block.flow);
+  const realVolume = irrigationVolume(realHours, block.flow);
+  return {
+    programHours,
+    realHours,
+    programVolume,
+    realVolume,
+    difference: realVolume - programVolume,
+    differencePercent: irrigationDifferencePercent(realVolume, programVolume)
+  };
+}
+
+function irrigationMonthDates(monthPrefix, daysInMonth) {
+  return Array.from({ length: daysInMonth }, (_, index) => `${monthPrefix}-${String(index + 1).padStart(2, "0")}`);
+}
+
+function irrigationBalanceDailyRows(blocks, monthPrefix, daysInMonth) {
+  return irrigationMonthDates(monthPrefix, daysInMonth).map((date) => {
+    const totals = blocks.reduce((acc, block) => {
+      const day = irrigationBlockDayBalance(block, date);
+      acc.programHours += day.programHours;
+      acc.realHours += day.realHours;
+      acc.programVolume += day.programVolume;
+      acc.realVolume += day.realVolume;
+      return acc;
+    }, { date, programHours: 0, realHours: 0, programVolume: 0, realVolume: 0 });
+    totals.difference = totals.realVolume - totals.programVolume;
+    totals.differencePercent = irrigationDifferencePercent(totals.realVolume, totals.programVolume);
+    return totals;
+  });
+}
+
+function irrigationBalanceBlockRows(blocks, monthPrefix, daysInMonth) {
+  return blocks.map((block) => {
+    const totals = irrigationMonthDates(monthPrefix, daysInMonth).reduce((acc, date) => {
+      const day = irrigationBlockDayBalance(block, date);
+      acc.programHours += day.programHours;
+      acc.realHours += day.realHours;
+      acc.programVolume += day.programVolume;
+      acc.realVolume += day.realVolume;
+      return acc;
+    }, {
+      block,
+      programHours: 0,
+      realHours: 0,
+      programVolume: 0,
+      realVolume: 0
+    });
+    totals.difference = totals.realVolume - totals.programVolume;
+    totals.differencePercent = irrigationDifferencePercent(totals.realVolume, totals.programVolume);
+    return totals;
+  }).sort((a, b) => blockSort(a.block, b.block));
+}
+
+function irrigationBalancePotreroRows(blockRows) {
+  return Object.values(blockRows.reduce((acc, row) => {
+    const potrero = row.block.potrero || "Sin potrero";
+    acc[potrero] ||= {
+      potrero,
+      programHours: 0,
+      realHours: 0,
+      programVolume: 0,
+      realVolume: 0,
+      blocks: 0
+    };
+    acc[potrero].programHours += row.programHours;
+    acc[potrero].realHours += row.realHours;
+    acc[potrero].programVolume += row.programVolume;
+    acc[potrero].realVolume += row.realVolume;
+    acc[potrero].blocks += 1;
+    return acc;
+  }, {})).map((row) => ({
+    ...row,
+    difference: row.realVolume - row.programVolume,
+    differencePercent: irrigationDifferencePercent(row.realVolume, row.programVolume)
+  })).sort((a, b) => comparePotrero(a.potrero, b.potrero));
+}
+
+function irrigationBandejaRows(monthPrefix, daysInMonth, evaporationMap, historicalEvaporationMap) {
+  return irrigationMonthDates(monthPrefix, daysInMonth).map((date) => {
+    const day = date.slice(8, 10);
+    const real = evaporationMap.get(date)?.evaporation;
+    const historical = historicalEvaporationMap.get(day);
+    return {
+      date,
+      day: Number(day),
+      real: Number.isFinite(Number(real)) ? Number(real) : null,
+      historical: Number.isFinite(Number(historical)) ? Number(historical) : null,
+      difference: Number.isFinite(Number(real)) && Number.isFinite(Number(historical)) ? Number(real) - Number(historical) : null
+    };
+  });
+}
+
+function irrigationStationBandejaRows(monthPrefix) {
+  const rows = irrigationEvaporationRowsForMonth(monthPrefix);
+  const overallAverage = irrigationAverage(rows.map((item) => item.evaporation));
+  const grouped = rows.reduce((acc, item) => {
+    const station = irrigationStationLabel(item.station);
+    const value = Number(item.evaporation);
+    if (!Number.isFinite(value)) return acc;
+    acc[station] ||= { station, sum: 0, count: 0 };
+    acc[station].sum += value;
+    acc[station].count += 1;
+    return acc;
+  }, {});
+  return Object.values(grouped).map((row) => {
+    const averageValue = row.count ? row.sum / row.count : null;
+    return {
+      station: row.station,
+      average: averageValue,
+      total: row.sum,
+      count: row.count,
+      difference: averageValue === null || overallAverage === null ? null : averageValue - overallAverage,
+      differencePercent: irrigationDifferencePercent(averageValue, overallAverage)
+    };
+  }).sort((a, b) => Math.abs(b.difference || 0) - Math.abs(a.difference || 0));
+}
+
+function irrigationBandejaDailyChart(rows) {
+  const max = Math.max(...rows.flatMap((row) => [row.real || 0, row.historical || 0]), 1);
+  return `
+    <div class="irrigation-bandeja-chart" aria-label="Bandeja diaria contra historico">
+      ${rows.map((row) => {
+        const realHeight = Math.max(2, (Number(row.real) || 0) / max * 100);
+        const historicalHeight = Math.max(2, (Number(row.historical) || 0) / max * 100);
+        return `
+          <div class="irrigation-bandeja-day" title="${row.date}: bandeja ${irrigationBandejaLabel(row.real)}, historico ${irrigationBandejaLabel(row.historical)}">
+            <div>
+              <i class="real" style="height:${realHeight}%"><em>${irrigationBandejaLabel(row.real)}</em></i>
+              <i class="historical" style="height:${historicalHeight}%"><em>${irrigationBandejaLabel(row.historical)}</em></i>
+            </div>
+            <span>${row.day}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+    <div class="irrigation-chart-legend">
+      <span><i class="real"></i> Bandeja</span>
+      <span><i class="historical"></i> Historico</span>
+    </div>
+  `;
+}
+
+function irrigationAverage(values) {
+  const valid = values.map(Number).filter((value) => Number.isFinite(value));
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+}
+
+function irrigationVolumeLabel(value) {
+  return `${number(Number(value) || 0, 0)} m3`;
+}
+
+function updateIrrigationComparisonCells(blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal) {
+  const block = state.blocks.find((item) => item.id === blockId);
+  if (!block) return;
+  const programTotal = irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth);
+  const realTotal = irrigationBlockMonthTotal(irrigationHours, blockId, monthPrefix, daysInMonth);
+  const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
+  const realReposition = irrigationReposicion(realTotal, block.precipitation, monthEvaporationTotal);
+  const hoursDiff = irrigationDifferencePercent(realTotal, programTotal);
+  const repositionDiff = irrigationDifferencePercent(realReposition, programReposition);
+  const hoursCell = views.irrigation?.querySelector(`[data-block-hours-diff="${CSS.escape(blockId)}"]`);
+  const repositionCell = views.irrigation?.querySelector(`[data-block-reposition-diff="${CSS.escape(blockId)}"]`);
+  if (hoursCell) {
+    hoursCell.textContent = irrigationDifferenceLabel(hoursDiff);
+    hoursCell.className = `irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}`;
+    hoursCell.title = `Horas reales ${number(realTotal)} vs programa ${number(programTotal)}`;
+  }
+  if (repositionCell) {
+    repositionCell.textContent = irrigationDifferenceLabel(repositionDiff);
+    repositionCell.className = `irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}`;
+    repositionCell.title = `Reposicion real ${irrigationReposicionLabel(realReposition)} vs programa ${irrigationReposicionLabel(programReposition)}`;
+  }
+}
+
+function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal }) {
+  const hoursInput = document.getElementById("programAutoHours");
+  const reposInput = document.getElementById("programAutoReposicion");
+  const skipInput = document.getElementById("programAutoSkipDays");
+  const hoursPerEvent = Number(hoursInput?.value);
+  const targetRepos = Number(reposInput?.value);
+  const skipText = String(skipInput?.value || "").trim();
+  const skipDays = skipText === "" ? NaN : Number(skipText);
+  if (!Number.isFinite(hoursPerEvent) || hoursPerEvent <= 0) {
+    showToast("Ingresa horas por riego validas");
+    return;
+  }
+  if (!Number.isFinite(targetRepos) || targetRepos <= 0) {
+    showToast("Ingresa reposicion objetivo");
+    return;
+  }
+  const selectedIds = new Set([...document.querySelectorAll("[data-program-auto-block]:checked")].map((input) => input.dataset.programAutoBlock));
+  const targetBlocks = blocks.filter((block) => selectedIds.has(block.id));
+  if (!targetBlocks.length) {
+    showToast("Selecciona al menos un bloque");
+    return;
+  }
+  targetBlocks.forEach((block) => {
+    const precipitation = Number(block.precipitation);
+    if (!Number.isFinite(precipitation) || precipitation <= 0 || !Number.isFinite(historicalEvaporationTotal) || historicalEvaporationTotal <= 0) return;
+    const requiredHours = targetRepos / 100 * historicalEvaporationTotal / precipitation;
+    const eventCount = Math.min(daysInMonth, Math.max(1, Math.ceil(requiredHours / hoursPerEvent)));
+    const dates = automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays);
+    for (let index = 1; index <= daysInMonth; index += 1) {
+      const date = `${monthPrefix}-${String(index).padStart(2, "0")}`;
+      const key = irrigationKey(block.id, date);
+      if (dates.includes(index)) {
+        irrigationProgramHours[key] = hoursPerEvent;
+        setIrrigationCellAudit("program", block.id, date);
+        scheduleIrrigationProgramCellSave(block.id, date, hoursPerEvent);
+      } else {
+        const hadValue = irrigationProgramHours[key] !== undefined || irrigationProgramAudit[key] !== undefined;
+        delete irrigationProgramHours[key];
+        clearIrrigationCellAudit("program", block.id, date);
+        if (hadValue) scheduleIrrigationProgramCellSave(block.id, date, "");
+      }
+    }
+    updateIrrigationComparisonCells(block.id, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+  });
+  saveIrrigationProgramHours();
+  saveIrrigationProgramAudit();
+  document.getElementById("irrigationProgramDialog")?.close();
+  renderIrrigation();
+  showToast("Programa generado");
+}
+
+function automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays) {
+  if (eventCount <= 1) return [1];
+  if (Number.isFinite(skipDays) && skipDays >= 0) {
+    const interval = Math.max(1, skipDays + 1);
+    const dates = [];
+    for (let day = 1; day <= daysInMonth && dates.length < eventCount; day += interval) {
+      dates.push(day);
+    }
+    let day = daysInMonth;
+    while (dates.length < eventCount && day >= 1) {
+      if (!dates.includes(day)) dates.push(day);
+      day -= interval;
+    }
+    return [...new Set(dates)].sort((a, b) => a - b).slice(0, eventCount);
+  }
+  const step = (daysInMonth - 1) / (eventCount - 1);
+  const dates = Array.from({ length: eventCount }, (_, index) => {
+    if (index === 0) return 1;
+    if (index === eventCount - 1) return daysInMonth;
+    return Math.floor(1 + step * index);
+  });
+  return [...new Set(dates)].sort((a, b) => a - b);
+}
+
+function irrigationVisibleBlocksForProgramDialog() {
+  return [...state.blocks]
+    .filter((block) => block.active !== false)
+    .filter((block) => irrigationSpeciesFilter === "Todas" || block.crop === irrigationSpeciesFilter)
+    .sort(blockSort);
+}
+
+function renderProgramDialogBlockOptions(blocks, selectedPotrero) {
+  const filtered = blocks.filter((block) => block.potrero === selectedPotrero);
+  return filtered.map((block) => `
+    <label class="program-block-chip" title="${htmlAttr(`${block.potrero} bloque ${block.block}`)}">
+      <input type="checkbox" data-program-auto-block="${htmlAttr(block.id)}" checked>
+      <span>${escapeHtml(block.block || "-")}</span>
+      <small>${number(block.hectares)} ha</small>
+    </label>
+  `).join("") || `<span class="empty">Sin bloques para este potrero.</span>`;
+}
+
+function openIrrigationProgramDialog() {
+  const dialog = document.getElementById("irrigationProgramDialog");
+  if (!dialog) return;
+  const blocks = irrigationVisibleBlocksForProgramDialog();
+  const potreros = [...new Set(blocks.map((block) => block.potrero).filter(Boolean))].sort(comparePotrero);
+  const selectedPotrero = irrigationPotreroFilter !== "Todos" && potreros.includes(irrigationPotreroFilter) ? irrigationPotreroFilter : potreros[0] || "";
+  dialog.innerHTML = `
+    <form method="dialog" class="dialog-card irrigation-program-dialog">
+      <div class="dialog-header">
+        <div>
+          <h3>Programa automatico</h3>
+          <p>${monthOptions().find((month) => month.value === irrigationMonth)?.label || irrigationMonth} ${irrigationYear}</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog">x</button>
+      </div>
+      <div class="program-dialog-summary">
+        <span>Selecciona potrero, bloques y objetivo de reposicion.</span>
+      </div>
+      <div class="irrigation-program-tool-controls">
+        <label>Potrero
+          <select id="programAutoPotrero">
+            ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === selectedPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Horas por riego
+          <input id="programAutoHours" type="number" min="0" step="0.5" inputmode="decimal" value="5">
+        </label>
+        <label>Reposicion objetivo %
+          <input id="programAutoReposicion" type="number" min="0" step="1" inputmode="decimal" placeholder="Ej. 65">
+        </label>
+        <label>Frecuencia
+          <input id="programAutoSkipDays" type="number" min="0" step="1" inputmode="numeric" placeholder="Auto">
+        </label>
+      </div>
+      <div>
+        <strong class="dialog-section-label">Bloques</strong>
+        <div id="programAutoBlocks" class="irrigation-program-blocks irrigation-program-blocks-dialog">
+          ${renderProgramDialogBlockOptions(blocks, selectedPotrero)}
+        </div>
+      </div>
+      <div id="programAutoPreview" class="program-auto-preview">
+        <span>Completa horas, reposicion y bloques para ver la distribucion.</span>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="button" data-action="apply-irrigation-program-auto">Aplicar programa</button>
+      </div>
+    </form>
+  `;
+  dialog.showModal();
+  updateIrrigationProgramDialogPreview();
+}
+
+function updateIrrigationProgramDialogBlocks() {
+  const container = document.getElementById("programAutoBlocks");
+  const potrero = document.getElementById("programAutoPotrero")?.value || "";
+  if (!container) return;
+  container.innerHTML = renderProgramDialogBlockOptions(irrigationVisibleBlocksForProgramDialog(), potrero);
+  updateIrrigationProgramDialogPreview();
+}
+
+function updateIrrigationProgramDialogPreview() {
+  const preview = document.getElementById("programAutoPreview");
+  if (!preview) return;
+  const hours = Number(document.getElementById("programAutoHours")?.value);
+  const targetRepos = Number(document.getElementById("programAutoReposicion")?.value);
+  const skipText = String(document.getElementById("programAutoSkipDays")?.value || "").trim();
+  const skipDays = skipText === "" ? NaN : Number(skipText);
+  const selectedIds = new Set([...document.querySelectorAll("[data-program-auto-block]:checked")].map((input) => input.dataset.programAutoBlock));
+  const blocks = irrigationVisibleBlocksForProgramDialog().filter((block) => selectedIds.has(block.id));
+  const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
+  const historicalMap = historicalEvaporationByMonthDay(irrigationMonth);
+  const historicalTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return Number(historicalMap.get(day)) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(hours) || hours <= 0 || !Number.isFinite(targetRepos) || targetRepos <= 0 || !blocks.length || historicalTotal <= 0) {
+    preview.innerHTML = `<span>Completa horas, reposicion y bloques para ver la distribucion.</span>`;
+    return;
+  }
+  const rows = blocks.slice(0, 4).map((block) => {
+    const precipitation = Number(block.precipitation);
+    if (!Number.isFinite(precipitation) || precipitation <= 0) return `<span>Bloque ${escapeHtml(block.block || "-")}: sin precipitacion</span>`;
+    const requiredHours = targetRepos / 100 * historicalTotal / precipitation;
+    const eventCount = Math.min(daysInMonth, Math.max(1, Math.ceil(requiredHours / hours)));
+    const dates = automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays);
+    const achieved = irrigationReposicion(eventCount * hours, precipitation, historicalTotal);
+    return `<span>Bloque ${escapeHtml(block.block || "-")}: dias ${dates.join(", ")} · repos. ${irrigationReposicionLabel(achieved)}</span>`;
+  });
+  const extra = blocks.length > 4 ? `<span>+${blocks.length - 4} bloques mas con el mismo criterio</span>` : "";
+  preview.innerHTML = `${rows.join("")}${extra}`;
+}
+
+function focusIrrigationCellFromKeyboard(input, key) {
+  const gridKind = input.dataset.gridKind;
+  const row = Number(input.dataset.rowIndex);
+  const day = Number(input.dataset.dayIndex);
+  if (!gridKind || !Number.isFinite(row) || !Number.isFinite(day)) return false;
+  const next = { row, day };
+  if (key === "ArrowLeft") next.day -= 1;
+  else if (key === "ArrowRight") next.day += 1;
+  else if (key === "ArrowUp") next.row -= 1;
+  else if (key === "ArrowDown") next.row += 1;
+  else return false;
+  const selector = `.irrigation-hour-input[data-grid-kind="${CSS.escape(gridKind)}"][data-row-index="${next.row}"][data-day-index="${next.day}"]`;
+  const target = views.irrigation?.querySelector(selector);
+  if (!target) return true;
+  target.focus({ preventScroll: false });
+  target.select?.();
+  return true;
+}
+
+function renderIrrigationBandejasPanel({ rows, stationRows, monthLabel, year, monthEvaporationTotal, historicalEvaporationTotal, selectedStation }) {
+  const realValues = rows.map((row) => row.real).filter((value) => value !== null);
+  const historicalValues = rows.map((row) => row.historical).filter((value) => value !== null);
+  const realAverage = irrigationAverage(realValues);
+  const historicalAverage = irrigationAverage(historicalValues);
+  const years = [...new Set((state.irrigationEvaporation || [])
+    .filter((item) => String(item.date || "").slice(5, 7) === irrigationMonth)
+    .map((item) => String(item.date || "").slice(0, 4))
+    .filter(Boolean))]
+    .sort();
+  const historicRecords = (state.irrigationEvaporation || [])
+    .filter((item) => String(item.date || "").slice(5, 7) === irrigationMonth)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .slice(0, 180);
+  const defaultDay = Math.min(new Date().getDate(), new Date(Number(year), Number(irrigationMonth), 0).getDate());
+  const defaultDate = `${year}-${irrigationMonth}-${String(defaultDay).padStart(2, "0")}`;
+  return `
+    <div class="irrigation-subpanel">
+      <section class="panel irrigation-bandeja-entry-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Nuevo dato de bandeja</h2>
+          </div>
+        </div>
+        <form id="irrigationBandejaForm" class="irrigation-bandeja-form">
+          <label>Fecha
+            <input name="fecha" type="date" required value="${defaultDate}">
+          </label>
+          <label>Evaporacion
+            <input name="evaporacion" type="number" min="0" step="0.01" inputmode="decimal" required placeholder="0.00">
+          </label>
+          <label>Estacion
+            <input name="estacion" type="text" placeholder="Nombre o codigo">
+          </label>
+          <button class="primary-button" type="button" data-action="save-irrigation-bandeja">Guardar</button>
+        </form>
+      </section>
+      <div class="irrigation-kpis">
+        ${kpi("Bandeja mes", irrigationBandejaLabel(realAverage), `${monthLabel} ${year}`)}
+        ${kpi("Total bandeja", irrigationBandejaLabel(monthEvaporationTotal), `${realValues.length} dias`)}
+        ${kpi("Promedio historico", irrigationBandejaLabel(historicalAverage), `${years.length} anos`)}
+        ${kpi("Total historico", irrigationBandejaLabel(historicalEvaporationTotal), monthLabel)}
+      </div>
+      <div class="irrigation-balance-charts irrigation-bandeja-charts">
+        ${chartPanel("Bandeja diaria", "Dato diario contra promedio historico del mismo dia", irrigationBandejaDailyChart(rows))}
+      </div>
+      <div class="irrigation-report-grid">
+        <section class="panel irrigation-report-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Bandeja diaria</h2>
+            </div>
+          </div>
+          <div class="compact-table irrigation-table-scroll">
+            <table>
+              <thead><tr><th>Dia</th><th>Fecha</th><th>Bandeja</th><th>Historico</th><th>Dif. hist.</th></tr></thead>
+              <tbody>
+                ${rows.map((row) => `
+                  <tr>
+                    <td>${row.day}</td>
+                    <td>${row.date}</td>
+                    <td>${irrigationBandejaLabel(row.real)}</td>
+                    <td>${irrigationBandejaLabel(row.historical)}</td>
+                    <td>${row.difference === null ? "-" : irrigationBandejaLabel(row.difference)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel irrigation-report-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Historico de bandejas</h2>
+            </div>
+          </div>
+          <div class="compact-table irrigation-table-scroll">
+            <table>
+              <thead><tr><th>Fecha</th><th>Evaporacion</th><th>Estacion</th><th>Dif. estacion</th></tr></thead>
+              <tbody>
+                ${historicRecords.map((item) => {
+                  const station = irrigationStationLabel(item.station);
+                  const stationValue = Number(item.station);
+                  const stationDiff = Number.isFinite(Number(item.evaporation)) && Number.isFinite(stationValue) ? Number(item.evaporation) - stationValue : null;
+                  return `
+                    <tr>
+                      <td>${escapeHtml(item.date || "-")}</td>
+                      <td>${irrigationBandejaLabel(item.evaporation)}</td>
+                      <td>${escapeHtml(station)}</td>
+                      <td>${stationDiff === null ? "-" : irrigationBandejaLabel(stationDiff)}</td>
+                    </tr>
+                  `;
+                }).join("") || `<tr><td colspan="4">No hay registros historicos para este mes.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function irrigationBalanceSelectionLabel(selectedPotreros) {
+  if (!selectedPotreros.size) return "Todos";
+  if (selectedPotreros.size === 1) return [...selectedPotreros][0];
+  return `${selectedPotreros.size} potreros`;
+}
+
+function irrigationBalancePotreroChart(rows, selectedPotreros) {
+  const visible = rows;
+  const max = Math.max(...visible.flatMap((row) => [row.programVolume, row.realVolume]), 1);
+  return `
+    <div class="irrigation-balance-chart" aria-label="Volumen real contra programa por potrero">
+      ${visible.map((row) => {
+        const programHeight = Math.max(3, row.programVolume / max * 100);
+        const realHeight = Math.max(3, row.realVolume / max * 100);
+        const active = selectedPotreros.has(row.potrero);
+        return `
+          <button class="irrigation-balance-potrero-bar ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${row.potrero}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
+            <div>
+              <i class="program" style="height:${programHeight}%"><em>${number(row.programVolume, 0)}</em></i>
+              <i class="real" style="height:${realHeight}%"><em>${number(row.realVolume, 0)}</em></i>
+            </div>
+            <strong>${escapeHtml(row.potrero)}</strong>
+            <span>${irrigationDifferenceLabel(row.differencePercent)}</span>
+          </button>
+        `;
+      }).join("") || `<div class="empty">Sin volumen para el filtro seleccionado.</div>`}
+    </div>
+    <div class="irrigation-chart-legend">
+      <span><i class="program"></i> Deberia llevar</span>
+      <span><i class="real"></i> Real</span>
+    </div>
+  `;
+}
+
+function irrigationBalanceBlockChart(rows) {
+  const visible = rows;
+  const max = Math.max(...visible.flatMap((row) => [row.programVolume, row.realVolume]), 1);
+  return `
+    <div class="irrigation-balance-block-chart" aria-label="Volumen por bloque">
+      ${visible.map((row) => {
+        const programHeight = Math.max(3, row.programVolume / max * 100);
+        const realHeight = Math.max(3, row.realVolume / max * 100);
+        return `
+          <div class="irrigation-block-chart-row">
+            <div>
+              <strong>${escapeHtml(row.block.potrero || "-")} / Bloque ${escapeHtml(row.block.block || "-")}</strong>
+              <span>Real ${irrigationVolumeLabel(row.realVolume)} · Prog ${irrigationVolumeLabel(row.programVolume)}</span>
+            </div>
+            <div class="irrigation-block-chart-bars">
+              <i class="program" style="height:${programHeight}%"><em>${number(row.programVolume, 0)}</em></i>
+              <i class="real" style="height:${realHeight}%"><em>${number(row.realVolume, 0)}</em></i>
+            </div>
+            <small>Real ${irrigationVolumeLabel(row.realVolume)} · Prog ${irrigationVolumeLabel(row.programVolume)}</small>
+          </div>
+        `;
+      }).join("") || `<div class="empty">Selecciona otro potrero o revisa programa/riego real.</div>`}
+    </div>
+  `;
+}
+
+function irrigationBalanceVolumeMatrix(rows, monthPrefix, daysInMonth) {
+  const sorted = [...rows].sort((a, b) => blockSort(a.block, b.block));
+  return `
+    <div class="irrigation-balance-matrix" style="--days:${daysInMonth}">
+      <div class="irrigation-balance-row irrigation-balance-row-head">
+        <div>Potrero / bloque</div>
+        <div class="irrigation-balance-days">
+          ${Array.from({ length: daysInMonth }, (_, index) => {
+            const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+            return `<b class="${irrigationDayClass(date)}">${index + 1}</b>`;
+          }).join("")}
+        </div>
+        <div>Total real</div>
+        <div>Deberia</div>
+        <div>Dif.</div>
+      </div>
+      ${sorted.map((row) => `
+        <div class="irrigation-balance-row">
+          <div class="irrigation-balance-block-label">
+            <strong>${escapeHtml(row.block.potrero || "-")} / ${escapeHtml(row.block.block || "-")}</strong>
+            <span>${irrigationBandejaLabel(row.block.flow)} caudal</span>
+          </div>
+          <div class="irrigation-balance-days">
+            ${Array.from({ length: daysInMonth }, (_, index) => {
+              const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+              const day = irrigationBlockDayBalance(row.block, date);
+              return `<span class="${irrigationDayClass(date)} ${day.realVolume > 0 ? "has-volume" : ""}" title="${htmlAttr(`${date}: ${irrigationVolumeLabel(day.realVolume)}`)}">${day.realVolume > 0 ? number(day.realVolume, 0) : ""}</span>`;
+            }).join("")}
+          </div>
+          <div class="irrigation-balance-total">${irrigationVolumeLabel(row.realVolume)}</div>
+          <div class="irrigation-balance-total">${irrigationVolumeLabel(row.programVolume)}</div>
+          <div class="irrigation-diff-pill ${irrigationDifferenceClass(row.differencePercent)}">${irrigationVolumeLabel(row.difference)}</div>
+        </div>
+      `).join("") || `<div class="empty">No hay bloques para mostrar.</div>`}
+    </div>
+  `;
+}
+
+function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, monthLabel, year }) {
+  const potreroRows = irrigationBalancePotreroRows(blockRows);
+  const potreroOptions = ["Todos", ...potreroRows.map((row) => row.potrero)];
+  if (!potreroOptions.includes(irrigationBalancePotreroFilter)) irrigationBalancePotreroFilter = "Todos";
+  irrigationBalanceSelectedPotreros = new Set([...irrigationBalanceSelectedPotreros].filter((potrero) => potreroOptions.includes(potrero)));
+  if (irrigationBalancePotreroFilter !== "Todos" && !irrigationBalanceSelectedPotreros.size) irrigationBalanceSelectedPotreros.add(irrigationBalancePotreroFilter);
+  const selectedPotreros = irrigationBalanceSelectedPotreros;
+  const selectedLabel = irrigationBalanceSelectionLabel(selectedPotreros);
+  const selectedBlockRows = selectedPotreros.size ? blockRows.filter((row) => selectedPotreros.has(row.block.potrero)) : blockRows;
+  const totals = blockRows.reduce((acc, row) => {
+    acc.programHours += row.programHours;
+    acc.realHours += row.realHours;
+    acc.programVolume += row.programVolume;
+    acc.realVolume += row.realVolume;
+    return acc;
+  }, { programHours: 0, realHours: 0, programVolume: 0, realVolume: 0 });
+  totals.difference = totals.realVolume - totals.programVolume;
+  totals.differencePercent = irrigationDifferencePercent(totals.realVolume, totals.programVolume);
+  const selectedTotals = selectedBlockRows.reduce((acc, row) => {
+    acc.programVolume += row.programVolume;
+    acc.realVolume += row.realVolume;
+    acc.blocks += 1;
+    return acc;
+  }, { programVolume: 0, realVolume: 0, blocks: 0 });
+  selectedTotals.difference = selectedTotals.realVolume - selectedTotals.programVolume;
+  selectedTotals.differencePercent = irrigationDifferencePercent(selectedTotals.realVolume, selectedTotals.programVolume);
+  return `
+    <div class="irrigation-subpanel">
+      <div class="irrigation-balance-toolbar">
+        <div>
+          <strong>Balance hidrico</strong>
+          <span>${monthLabel} ${year}</span>
+        </div>
+        <label>Potrero detalle
+          <select id="irrigationBalancePotreroFilter">
+            ${potreroOptions.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationBalancePotreroFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div class="irrigation-kpis irrigation-kpis-three">
+        ${kpi("Deberia llevar", irrigationVolumeLabel(totals.programVolume), `${number(totals.programHours)} hrs programadas`)}
+        ${kpi("Volumen real", irrigationVolumeLabel(totals.realVolume), `${number(totals.realHours)} hrs reales`)}
+        ${kpi("Diferencia", irrigationVolumeLabel(totals.difference), irrigationDifferenceLabel(totals.differencePercent))}
+      </div>
+      <div class="irrigation-balance-charts">
+        <section class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Volumen por potrero</h2>
+            </div>
+          </div>
+          ${irrigationBalancePotreroChart(potreroRows, selectedPotreros)}
+        </section>
+        <section class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Bloques ${selectedLabel === "Todos" ? "del filtro" : selectedLabel}</h2>
+              <p>${selectedTotals.blocks} bloque${selectedTotals.blocks === 1 ? "" : "s"} · real ${irrigationVolumeLabel(selectedTotals.realVolume)} · deberia ${irrigationVolumeLabel(selectedTotals.programVolume)}</p>
+            </div>
+          </div>
+          ${irrigationBalanceBlockChart(selectedBlockRows)}
+        </section>
+      </div>
+      <section class="panel irrigation-report-panel irrigation-balance-summary-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Resumen mensual de volumen real</h2>
+            <p>m3 reales por dia, con total real, deberia llevar y diferencia mensual.</p>
+          </div>
+        </div>
+        ${irrigationBalanceVolumeMatrix(selectedBlockRows, monthPrefix, daysInMonth)}
+      </section>
+    </div>
+  `;
+}
+
+function renderIrrigationProgramTool(blocks, monthLabel) {
+  return "";
+}
+
+function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = irrigationYear) {
+  const options = irrigationCalicataOptions(blocks);
+  if (!options.some((item) => item.key === irrigationCalicataBlockFilter)) irrigationCalicataBlockFilter = "Todos";
+  const records = filteredIrrigationCalicatas(blocks, monthPrefix);
+  const mappedRecords = records.filter((item) => Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude)));
+  return `
+    <section class="irrigation-calicatas-panel">
+      <div class="irrigation-calicatas-head">
+        <div>
+          <strong>Calicatas</strong>
+          <span>${monthLabel} ${year} · ${records.length} registro${records.length === 1 ? "" : "s"} · ${mappedRecords.length} con ubicacion</span>
+        </div>
+        <label>Bloque
+          <select id="irrigationCalicataBlockFilter">
+            ${options.map((item) => `<option value="${htmlAttr(item.key)}" ${item.key === irrigationCalicataBlockFilter ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div class="irrigation-calicatas-layout">
+        <div id="irrigationCalicataMap" class="geo-map irrigation-calicata-map">
+          <span>Cargando mapa de calicatas...</span>
+        </div>
+        <aside class="irrigation-calicata-history" aria-label="Historial de calicatas">
+          <div class="irrigation-calicata-history-title">
+            <strong>Historial</strong>
+            <span>${records.length ? "Ultimos registros filtrados" : "Sin registros para el filtro"}</span>
+          </div>
+          ${records.slice(0, 14).map((item) => `
+            <button class="irrigation-calicata-card" type="button" data-action="focus-calicata" data-calicata-id="${htmlAttr(item.id)}">
+              <span>${escapeHtml(calicataDate(item) || "Sin fecha")}</span>
+              <strong>${escapeHtml(item.potrero || "-")} · bloque ${escapeHtml(item.block || "-")}</strong>
+              <small>${escapeHtml(item.workerName || "Sin trabajador")} · ${escapeHtml(calicataDepthList(item))}</small>
+              ${item.observation ? `<em>${escapeHtml(item.observation)}</em>` : ""}
+            </button>
+          `).join("") || `<div class="empty-state compact-empty"><strong>No hay calicatas en este mes.</strong><p>Cambia potrero, bloque o mes para revisar otros registros.</p></div>`}
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+const PALTO_POTRERO_ORDER = [
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I",
+  "J",
+  "5",
+  "6",
+  "19",
+  "23",
+  "Mirador 1",
+  "Mirador 2",
+  "Los pinos Paltos",
+  "Parque 1",
+  "Parque 2",
+  "Parque 3",
+  "Parque 4"
+];
+
+function normalizePotreroOrderName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*\/.*$/, "")
+    .replace(/\s+bloque\s+.*$/i, "")
+    .replace(/^el parque\b/i, "Parque")
+    .toLowerCase();
+}
+
+function paltoPotreroRank(value) {
+  const normalized = normalizePotreroOrderName(value);
+  const index = PALTO_POTRERO_ORDER.findIndex((item) => normalizePotreroOrderName(item) === normalized);
+  return index >= 0 ? index : null;
+}
+
+function comparePotrero(a, b) {
+  const paltoA = paltoPotreroRank(a);
+  const paltoB = paltoPotreroRank(b);
+  if (paltoA !== null && paltoB !== null && paltoA !== paltoB) return paltoA - paltoB;
+  return String(a || "").localeCompare(String(b || ""), "es", { numeric: true, sensitivity: "base" });
+}
+
+function blockNumber(block) {
+  const text = String(block?.block ?? block ?? "");
+  const numeric = text.match(/\d+/)?.[0];
+  return numeric ? Number(numeric) : Number.POSITIVE_INFINITY;
+}
+
+function blockSort(a, b) {
+  return comparePotrero(a.potrero, b.potrero)
+    || blockNumber(a) - blockNumber(b)
+    || String(a.block || "").localeCompare(String(b.block || ""), "es", { numeric: true, sensitivity: "base" });
+}
+
+function harvestBinKey(record) {
+  return String(record.numBin || record.localCode || record.id || "").trim();
+}
+
+function firstHarvestDateValue(item, keys) {
+  for (const key of keys) {
+    const value = item?.[key];
+    const text = value === null || value === undefined ? "" : String(value).trim();
+    if (text && text.toLowerCase() !== "null") return text;
+  }
+  return "";
+}
+
+function harvestScanDateFromItem(item) {
+  return firstHarvestDateValue(item, [
+    "fecha_escaneo",
+    "fecha_escaneo_local",
+    "fecha_escaneo_cosecha",
+    "fecha_recepcion"
+  ]);
+}
+
+function harvestRecordDate(record) {
+  return String(record.scanDate || "").slice(0, 10);
+}
+
+function todayChileIso() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function harvestRecordStatus(record) {
+  return record.type === "tarja_despachada" || record.truckPlate ? "despachado" : "terreno";
+}
+
+function uniqueHarvestRecords(records = state.harvestRecords || []) {
+  const byBin = new Map();
+  records.forEach((record) => {
+    const key = harvestBinKey(record);
+    if (!key) return;
+    const prev = byBin.get(key);
+    if (!prev || String(record.scanDate || record.createdAt || "") > String(prev.scanDate || prev.createdAt || "")) byBin.set(key, record);
+  });
+  return [...byBin.values()];
+}
+
+function filteredHarvestRecords(records = state.harvestRecords || []) {
+  const filtered = records.filter((record) => {
+    const date = harvestRecordDate(record);
+    if (harvestDateFromFilter && (!date || date < harvestDateFromFilter)) return false;
+    if (harvestDateToFilter && (!date || date > harvestDateToFilter)) return false;
+    if (harvestCrewFilter !== "Todas" && (record.crew || "Sin cuadrilla") !== harvestCrewFilter) return false;
+    if (harvestStatusFilter !== "Todos" && harvestRecordStatus(record) !== harvestStatusFilter) return false;
+    if (harvestSdpFilter !== "Todos" && (record.sdp || "Sin SDP") !== harvestSdpFilter) return false;
+    return true;
+  });
+  return uniqueHarvestRecords(filtered);
+}
+
+function harvestCrewValue(record) {
+  return String(record.crew || "").trim() || "Sin cuadrilla";
+}
+
+function harvestStats(records = filteredHarvestRecords()) {
+  const unique = uniqueHarvestRecords(records);
+  const crews = new Set(unique.map(harvestCrewValue).filter(Boolean));
+  const contractors = new Set(unique.map((record) => record.contractor || "Sin contratista"));
+  const days = new Set(unique.map(harvestRecordDate).filter(Boolean));
+  const today = todayChileIso();
+  const todayScannedCrews = new Set(uniqueHarvestRecords((state.harvestRecords || []).filter((record) => harvestRecordDate(record) === today)).map(harvestCrewValue).filter(Boolean));
+  const scheduledToday = state.harvestCrewSchedule.filter((item) => {
+    const date = String(item.date || "").slice(0, 10);
+    if (date !== today) return false;
+    if (harvestCrewFilter !== "Todas" && (item.crew || "Sin cuadrilla") !== harvestCrewFilter) return false;
+    return true;
+  });
+  const scheduledCrews = new Set(scheduledToday.map((item) => item.crew).filter(Boolean));
+  const missingCrews = [...scheduledCrews].filter((crew) => !todayScannedCrews.has(crew));
+  return { total: unique.length, crews, contractors, days, scheduledCrews, missingCrews, today, todayScannedCrews };
+}
+
+function harvestJornalDate(item) {
+  return String(item.date || "").slice(0, 10);
+}
+
+function filteredHarvestJornales(items = state.harvestJornales || []) {
+  return items.filter((item) => {
+    const date = harvestJornalDate(item);
+    if (harvestDateFromFilter && (!date || date < harvestDateFromFilter)) return false;
+    if (harvestDateToFilter && (!date || date > harvestDateToFilter)) return false;
+    if (harvestCrewFilter !== "Todas" && (item.crew || "Sin cuadrilla") !== harvestCrewFilter) return false;
+    return true;
+  });
+}
+
+function harvestBinsPerJornalRows(records = filteredHarvestRecords()) {
+  const jornales = filteredHarvestJornales();
+  const jornalCounts = new Map();
+  jornales.forEach((item) => {
+    const key = `${item.contractor || "Sin contratista"}__${item.crew || "Sin cuadrilla"}`;
+    jornalCounts.set(key, (jornalCounts.get(key) || 0) + 1);
+  });
+  const bins = groupCount(records, (record) => `${record.contractor || "Sin contratista"}__${record.crew || "Sin cuadrilla"}`);
+  return bins.map((row) => {
+    const jornalesCount = jornalCounts.get(row.label) || 0;
+    const [contractor, crew] = row.label.split("__");
+    return {
+      label: `${crew || "Sin cuadrilla"} - ${contractor || "Sin contratista"}`,
+      value: jornalesCount ? row.value / jornalesCount : 0,
+      detail: `${row.value} bins / ${jornalesCount || 0} jornales`
+    };
+  }).filter((row) => row.value > 0).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
 }
 
 function classificationOptions(selected) {
@@ -658,6 +2339,10 @@ function htmlAttr(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function escapeHtml(value) {
+  return htmlAttr(value).replaceAll("'", "&#039;");
 }
 
 function orderSortTimestamp(order) {
@@ -827,8 +2512,9 @@ function setGateStatus(message, type = "info") {
 
 function showGateTab(tab) {
   document.querySelectorAll("#authGate .auth-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
-  document.getElementById("gateLoginForm").classList.toggle("active-auth-pane", tab === "login");
-  document.getElementById("gateRegisterForm").classList.toggle("active-auth-pane", tab === "register");
+  ["login", "register", "recover", "resetPassword"].forEach((name) => {
+    document.getElementById(`gate${name[0].toUpperCase()}${name.slice(1)}Form`)?.classList.toggle("active-auth-pane", tab === name);
+  });
 }
 
 function clearRegistrationForm() {
@@ -851,7 +2537,7 @@ function openAuthDialog() {
           <h2>Supabase conectado</h2>
           <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
         </div>
-        <p>Usuario: ${currentProfile?.full_name || supabaseSession.user?.email || "Sesion activa"}<br>Rol: ${roleLabel(currentProfile?.rol || currentProfile?.role)}</p>
+        <p>Usuario: ${currentProfile?.full_name || supabaseSession.user?.email || "Sesion activa"}<br>Rol: ${roleLabel(currentProfile?.rol || currentProfile?.role)}<br>Area: ${areaLabel(currentProfile?.area)}</p>
         <div class="modal-actions">
           <button class="secondary-button" type="button" data-action="close-dialog">Cerrar</button>
           <button class="danger-button" type="button" data-action="logout">Cerrar sesion</button>
@@ -886,6 +2572,7 @@ function openAuthDialog() {
           <label>Nombre completo<input name="fullName" autocomplete="name"></label>
           <label>RUT<input name="rut" placeholder="12.345.678-9"></label>
           <label>Rol<select name="role"><option value="bodeguero">Bodeguero</option><option value="supervisor">Jefe</option><option value="admin">Admin</option></select></label>
+          <label>Area/App<select name="area"><option value="todas">Todas las apps</option><option value="agrocore">AgroCore</option><option value="cosecha">Cosecha</option><option value="calicatas">Calicatas</option><option value="riego">Riego</option><option value="fertilizacion">Fertilizacion</option></select></label>
           <label>Codigo de registro<input name="inviteCode" autocomplete="one-time-code"></label>
           <label class="full">Correo<input name="registerEmail" type="email" autocomplete="email"></label>
           <label>Contraseña<input name="registerPassword" type="password" autocomplete="new-password"></label>
@@ -906,14 +2593,16 @@ function openAuthDialog() {
 async function loginSupabase() {
   const form = document.getElementById("authForm") || document.getElementById("gateLoginForm");
   const data = Object.fromEntries(new FormData(form));
-  if (!data.email || !data.password) {
+  const email = normalizeEmailValue(data.email);
+  const password = String(data.password || "");
+  if (!email || !password) {
     setGateStatus("Ingresa correo y contraseña.", "error");
     showToast("Ingresa correo y contraseña");
     return;
   }
   try {
     setGateStatus("Verificando credenciales...", "info");
-    const session = await sbAuthPassword(data.email, data.password);
+    const session = await sbAuthPassword(email, password);
     saveSession(session);
     await loadCloudData();
     startCloudSync();
@@ -930,44 +2619,45 @@ async function loginSupabase() {
 async function registerSupabase() {
   const form = document.getElementById("authForm") || document.getElementById("gateRegisterForm");
   const data = Object.fromEntries(new FormData(form));
-  if (registerAttempts >= 2) {
-    setGateStatus("Registro bloqueado por 2 intentos fallidos. Recarga solo si el administrador lo permite.", "error");
-    return;
-  }
-  if (!data.fullName || !data.rut || !data.registerEmail || !data.registerPassword || !data.registerPassword2 || !data.inviteCode) {
+  const fullName = String(data.fullName || "").trim();
+  const rut = normalizeRutValue(data.rut);
+  const email = normalizeEmailValue(data.registerEmail);
+  const role = toDbRole(data.role);
+  const area = normalizeRegistrationArea(data.area);
+  const inviteCode = String(data.inviteCode || "").trim();
+  const password = String(data.registerPassword || "");
+  const password2 = String(data.registerPassword2 || "");
+  if (!fullName || !rut || !email || !password || !password2 || !inviteCode) {
     setGateStatus("Completa todos los datos de registro.", "error");
     showToast("Completa todos los datos de registro");
     return;
   }
-  if (data.inviteCode.trim() !== REGISTRATION_CODE) {
-    registerAttempts += 1;
-    localStorage.setItem("agroaplicaciones.registerAttempts", String(registerAttempts));
-    setGateStatus(`Codigo incorrecto. Intentos restantes: ${Math.max(0, 2 - registerAttempts)}.`, "error");
+  if (!isValidEmail(email)) {
+    setGateStatus("Ingresa un correo valido.", "error");
+    showToast("Correo invalido");
+    return;
+  }
+  if (inviteCode !== REGISTRATION_CODE) {
+    setGateStatus("Codigo de registro incorrecto.", "error");
     showToast("Codigo de registro incorrecto");
     return;
   }
-  if (data.registerPassword !== data.registerPassword2) {
+  if (password !== password2) {
     setGateStatus("Las contraseñas no coinciden.", "error");
     showToast("Las contraseñas no coinciden");
     return;
   }
-  if (data.registerPassword.length < 6) {
+  if (password.length < 6) {
     setGateStatus("La contraseña debe tener al menos 6 caracteres.", "error");
     showToast("La contraseña debe tener al menos 6 caracteres");
     return;
   }
   try {
     setGateStatus("Creando cuenta en Supabase...", "info");
-    const signup = await sbSignUp(data.registerEmail, data.registerPassword, {
-      full_name: data.fullName,
-      rut: data.rut,
-      role: data.role
-    });
+    const signup = await sbSignUp(email, password, userRegistrationMetadata(fullName, rut, role, area));
     if (signup?.access_token) {
-      await createProfileWithSession(signup, data.fullName, data.rut, data.role);
+      await createProfileWithSession(signup, fullName, rut, role, area);
     }
-    registerAttempts = 0;
-    localStorage.setItem("agroaplicaciones.registerAttempts", "0");
     clearRegistrationForm();
     showGateTab("login");
     setGateStatus(signup?.access_token
@@ -996,6 +2686,21 @@ async function sbAuthPassword(email, password) {
   return data;
 }
 
+function userRegistrationMetadata(fullName, rut, role, area) {
+  const dbRole = toDbRole(role);
+  const appArea = normalizeRegistrationArea(area);
+  return {
+    full_name: fullName,
+    nombre_completo: fullName,
+    rut,
+    role: dbRole,
+    rol: dbRole,
+    area: appArea,
+    app_origen: "agrocore",
+    apps: appArea === "todas" ? ["agrocore", "cosecha", "calicatas", "riego", "fertilizacion"] : [appArea]
+  };
+}
+
 async function sbSignUp(email, password, metadata) {
   const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
     method: "POST",
@@ -1010,7 +2715,105 @@ async function sbSignUp(email, password, metadata) {
   return data;
 }
 
-async function createOwnProfile(fullName, rut, role) {
+async function sbRecoverPassword(email) {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      email,
+      redirect_to: `${window.location.origin}${window.location.pathname}`
+    })
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.error_description || data?.msg || data?.message || text || "No se pudo enviar recuperacion");
+  return data;
+}
+
+async function sbUpdatePassword(accessToken, password) {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ password })
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.error_description || data?.msg || data?.message || text || "No se pudo actualizar contrasena");
+  return data;
+}
+
+function readRecoverySessionFromUrl() {
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (params.get("type") !== "recovery" || !params.get("access_token")) return null;
+  return {
+    access_token: params.get("access_token"),
+    refresh_token: params.get("refresh_token") || "",
+    token_type: params.get("token_type") || "bearer",
+    expires_in: Number(params.get("expires_in") || 0)
+  };
+}
+
+async function recoverSupabasePassword() {
+  const form = document.getElementById("gateRecoverForm");
+  const data = Object.fromEntries(new FormData(form));
+  const email = normalizeEmailValue(data.recoverEmail);
+  if (!email || !isValidEmail(email)) {
+    setGateStatus("Ingresa un correo valido para recuperar.", "error");
+    showToast("Correo invalido");
+    return;
+  }
+  try {
+    setGateStatus("Enviando enlace de recuperacion...", "info");
+    await sbRecoverPassword(email);
+    setGateStatus("Si el correo existe, Supabase enviara un enlace para crear una nueva contrasena.", "success");
+    showToast("Revisa tu correo");
+    showGateTab("login");
+  } catch (error) {
+    setGateStatus(`No se pudo enviar recuperacion: ${error.message}`, "error");
+    showToast("No se pudo enviar recuperacion");
+  }
+}
+
+async function resetSupabasePassword() {
+  const form = document.getElementById("gateResetPasswordForm");
+  const data = Object.fromEntries(new FormData(form));
+  const password = String(data.newPassword || "");
+  const password2 = String(data.newPassword2 || "");
+  if (!passwordRecoverySession?.access_token) {
+    setGateStatus("El enlace de recuperacion no es valido o expiro.", "error");
+    return;
+  }
+  if (password !== password2) {
+    setGateStatus("Las contrasenas no coinciden.", "error");
+    return;
+  }
+  if (password.length < 6) {
+    setGateStatus("La contrasena debe tener al menos 6 caracteres.", "error");
+    return;
+  }
+  try {
+    setGateStatus("Actualizando contrasena...", "info");
+    await sbUpdatePassword(passwordRecoverySession.access_token, password);
+    passwordRecoverySession = null;
+    window.history.replaceState({}, document.title, window.location.pathname);
+    form.reset();
+    showGateTab("login");
+    setGateStatus("Contrasena actualizada. Ingresa con tu nueva contrasena.", "success");
+    showToast("Contrasena actualizada");
+  } catch (error) {
+    setGateStatus(`No se pudo actualizar: ${error.message}`, "error");
+    showToast("No se pudo actualizar contrasena");
+  }
+}
+
+async function createOwnProfile(fullName, rut, role, area = "todas") {
   await sbFetch("/rest/v1/usuarios", {
     method: "POST",
     prefer: "resolution=merge-duplicates,return=minimal",
@@ -1018,12 +2821,13 @@ async function createOwnProfile(fullName, rut, role) {
       id: supabaseSession.user?.id,
       nombre_completo: fullName,
       rut,
-      rol: toDbRole(role)
+      rol: toDbRole(role),
+      area: normalizeRegistrationArea(area)
     }])
   });
 }
 
-async function createProfileWithSession(session, fullName, rut, role) {
+async function createProfileWithSession(session, fullName, rut, role, area = "todas") {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/usuarios`, {
     method: "POST",
     headers: {
@@ -1036,7 +2840,8 @@ async function createProfileWithSession(session, fullName, rut, role) {
       id: session.user?.id,
       nombre_completo: fullName,
       rut,
-      rol: toDbRole(role)
+      rol: toDbRole(role),
+      area: normalizeRegistrationArea(area)
     }])
   });
   const text = await response.text();
@@ -1127,42 +2932,96 @@ function switchView(view) {
     showToast(`Tu rol ${roleLabel(role)} no tiene acceso a ese modulo`);
   }
   currentView = view;
-  document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    const sameView = button.dataset.view === view;
+    const sameIrrigationTab = view !== "irrigation" || !button.dataset.irrigationMenuTab || button.dataset.irrigationMenuTab === irrigationTab;
+    button.classList.toggle("active", sameView && sameIrrigationTab);
+  });
   Object.entries(views).forEach(([key, element]) => element.classList.toggle("active-view", key === view));
   document.getElementById("viewTitle").textContent = titles[view];
   render();
 }
 
 function render() {
-  renderDashboard();
-  renderProgram();
-  renderManager();
-  renderWarehouse();
-  renderOrders();
-  renderExecution();
-  renderInventory();
-  renderPrices();
-  renderReports();
-  renderMasters();
+  const renderers = {
+    dashboard: renderDashboard,
+    irrigation: renderIrrigation,
+    calicatas: renderCalicatas,
+    fertilizers: renderFertilizers,
+    applicationDashboard: renderApplicationDashboard,
+    program: renderProgram,
+    manager: renderManager,
+    warehouse: renderWarehouse,
+    orders: renderOrders,
+    execution: renderExecution,
+    inventory: renderInventory,
+    prices: renderPrices,
+    reports: renderReports,
+    harvestMap: renderHarvestMap,
+    harvestInfo: renderHarvestInfo,
+    masters: renderMasters
+  };
+  renderers[currentView]?.();
+}
+
+function operationalSummary() {
+  const orders = state.orders || [];
+  const activeOrders = orders.filter((order) => effectiveOrderStatus(order) !== "closed").length;
+  const finishedOrders = orders.filter((order) => effectiveOrderStatus(order) === "closed").length;
+  const cost = orders.reduce((sum, order) => sum + dispatchCost(order), 0);
+  const lowStock = state.products.filter((product) => Number(product.stock) <= Number(product.minStock || 0)).length;
+  const activeProducts = state.products.length;
+  return { orders, activeOrders, finishedOrders, cost, lowStock, activeProducts };
+}
+
+function coreModuleCard(view, label, value, hint, meta) {
+  return `
+    <button class="module-card" type="button" data-view="${view}">
+      <span>${label}</span>
+      <strong>${value}</strong>
+      <small>${hint}</small>
+      <em>${meta}</em>
+    </button>
+  `;
 }
 
 function renderDashboard() {
-  const activeOrders = state.orders.filter((order) => effectiveOrderStatus(order) !== "closed").length;
-  const finishedOrders = state.orders.filter((order) => effectiveOrderStatus(order) === "closed").length;
+  views.dashboard.innerHTML = `
+    <section class="panel empty-module home-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Inicio</h2>
+          <p>Selecciona un modulo para trabajar.</p>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderApplicationDashboard() {
+  const summary = operationalSummary();
   const applicationAlerts = overApplicationAlerts(state.orders).slice(0, 8);
   const warehouseAlertRows = warehouseAlerts();
 
-  views.dashboard.innerHTML = `
+  views.applicationDashboard.innerHTML = `
     <div class="kpi-grid">
-      ${kpi("Ordenes pendientes", activeOrders, "Pendientes o en proceso")}
-      ${kpi("Ordenes finalizadas", finishedOrders, "Cerradas por mojamiento o supervisor")}
+      ${kpi("Aplicaciones activas", summary.activeOrders, "Pendientes o en proceso")}
+      ${kpi("Aplicaciones finalizadas", summary.finishedOrders, "Ordenes cerradas")}
+      ${kpi("Costo aplicaciones", money(summary.cost), "Segun salidas de bodega")}
+      ${kpi("Alertas bodega", summary.lowStock, `${summary.activeProducts} productos activos`)}
     </div>
+    <section class="core-overview">
+      ${coreModuleCard("program", "Programa", `${summary.activeOrders} activas`, `${summary.finishedOrders} finalizadas`, "Planificacion")}
+      ${coreModuleCard("manager", "Supervisor", "Control", "Gantt y cierre", "Aplicaciones")}
+      ${coreModuleCard("warehouse", "Bodega", `${summary.lowStock} alertas`, `${summary.activeProducts} productos activos`, "Stock")}
+      ${coreModuleCard("reports", "Control", money(summary.cost), "Reportes y costos", "Auditoria")}
+    </section>
     <div class="dashboard-ops">
       <section class="panel map-panel">
         <div class="panel-header">
           <div>
-            <h2>Mapa operativo por bloques</h2>
-            <p>Google Maps con potreros padre y bloques hijo desde GeoJSON.</p>
+            <h2>Mapa del campo</h2>
+            <p>Vista territorial para cruzar potreros, bloques y ordenes.</p>
           </div>
         </div>
         <div id="geoJsonMap" class="geo-map"><span>Cargando Google Maps...</span></div>
@@ -1196,6 +3055,658 @@ function renderDashboard() {
     </div>
   `;
   renderGeoJsonMap();
+}
+
+function renderIrrigation() {
+  pruneEmptyIrrigationAudits();
+  const allBlocks = [...state.blocks].filter((block) => block.active !== false).sort(blockSort);
+  const species = ["Todas", ...new Set(allBlocks.map((block) => block.crop).filter(Boolean))].sort((a, b) => a === "Todas" ? -1 : a.localeCompare(b));
+  const speciesScoped = allBlocks.filter((block) => irrigationSpeciesFilter === "Todas" || block.crop === irrigationSpeciesFilter);
+  const potreros = ["Todos", ...new Set(speciesScoped.map((block) => block.potrero).filter(Boolean))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : comparePotrero(a, b));
+  if (irrigationPotreroFilter !== "Todos" && !potreros.includes(irrigationPotreroFilter)) irrigationPotreroFilter = "Todos";
+  const filteredBlocks = speciesScoped
+    .filter((block) => irrigationPotreroFilter === "Todos" || block.potrero === irrigationPotreroFilter)
+    .sort(blockSort);
+  const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
+  const monthLabel = monthOptions().find((item) => item.value === irrigationMonth)?.label || irrigationMonth;
+  const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+  ensureIrrigationEvaporationData(monthPrefix, daysInMonth);
+  const stationRows = irrigationStationBandejaRows(monthPrefix);
+  irrigationStationFilter = "Todas";
+  const monthEvaporationRows = irrigationEvaporationRowsForMonth(monthPrefix);
+  const bandejaEvaporationRows = monthEvaporationRows;
+  const evaporationMap = evaporationByDateMap(monthEvaporationRows);
+  const bandejaEvaporationMap = evaporationByDateMap(bandejaEvaporationRows);
+  const historicalEvaporationMap = historicalEvaporationByMonthDay(irrigationMonth);
+  const bandejaHistoricalEvaporationMap = historicalEvaporationMap;
+  const historicalEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return Number(historicalEvaporationMap.get(day)) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  const bandejaHistoricalEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return Number(bandejaHistoricalEvaporationMap.get(day)) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  const monthEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return Number(evaporationMap.get(date)?.evaporation) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  const bandejaMonthEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return Number(bandejaEvaporationMap.get(date)?.evaporation) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  const blockGroups = Object.values(filteredBlocks.reduce((acc, block) => {
+    acc[block.potrero] ||= { potrero: block.potrero, blocks: [] };
+    acc[block.potrero].blocks.push(block);
+    return acc;
+  }, {})).sort((a, b) => comparePotrero(a.potrero, b.potrero));
+  const blockRowIndexMap = new Map(filteredBlocks.map((block, index) => [block.id, index]));
+  const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
+  const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
+
+  views.irrigation.innerHTML = `
+    <section class="panel irrigation-panel">
+      <div class="panel-header irrigation-panel-header">
+        <div>
+          <h2>Riego</h2>
+          <p>${monthLabel} ${irrigationYear} · bandeja sobre cada fecha.</p>
+        </div>
+        <div class="program-filters irrigation-filters">
+          <label>Especie
+            <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+          </label>
+          <label>Potrero
+            <select id="irrigationPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+          </label>
+          <label>Mes
+            <select id="irrigationMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
+          </label>
+          <label>Ano
+            <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
+          </label>
+          <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
+          <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>
+        </div>
+      </div>
+      ${irrigationTab === "bandejas" ? renderIrrigationBandejasPanel({
+        rows: bandejaRows,
+        stationRows,
+        monthLabel,
+        year: irrigationYear,
+        monthEvaporationTotal: bandejaMonthEvaporationTotal,
+        historicalEvaporationTotal: bandejaHistoricalEvaporationTotal,
+        selectedStation: irrigationStationFilter
+      }) : irrigationTab === "balance" ? renderIrrigationBalancePanel({
+        blockRows: balanceBlockRows,
+        monthPrefix,
+        daysInMonth,
+        monthLabel,
+        year: irrigationYear
+      }) : `
+      ${renderIrrigationProgramTool(filteredBlocks, monthLabel)}
+      <div class="irrigation-compare-wrap">
+        <div class="irrigation-section-title">
+          <strong>Programa</strong>
+          <span>Bandeja historica promedio ${monthLabel.toLowerCase()} · total ${irrigationBandejaLabel(historicalEvaporationTotal)}</span>
+        </div>
+        <div class="irrigation-gantt irrigation-gantt-program" style="--days:${daysInMonth}">
+          <div class="irrigation-row irrigation-row-head">
+            <div class="irrigation-block-head">Bloque</div>
+            <div class="irrigation-days">
+              ${Array.from({ length: daysInMonth }, (_, index) => {
+                const day = String(index + 1).padStart(2, "0");
+                const date = `${monthPrefix}-${day}`;
+                const bandeja = historicalEvaporationMap.get(day);
+                return `<b class="irrigation-date-cell ${irrigationDayClass(date)}" title="${htmlAttr(irrigationDayTitle(date, `Promedio historico ${monthLabel} dia ${index + 1}: ${irrigationBandejaLabel(bandeja)}`))}">
+                  <em>${index + 1}</em>
+                  <span>${irrigationBandejaLabel(bandeja)}</span>
+                </b>`;
+              }).join("")}
+            </div>
+            <div class="irrigation-total-head">Total</div>
+            <div class="irrigation-reposition-head" title="Reposicion programada con bandeja historica promedio">Repos. %</div>
+            <div class="irrigation-difference-head irrigation-difference-hours">Dif. hrs</div>
+            <div class="irrigation-difference-head irrigation-difference-reposition">Dif. repos.</div>
+          </div>
+          ${blockGroups.map((group) => `
+            <div class="irrigation-potrero-group irrigation-potrero-group-compact">
+              <strong>Potrero ${group.potrero}</strong>
+              <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
+            </div>
+            ${group.blocks.map((block) => {
+              const programmedValues = Array.from({ length: daysInMonth }, (_, index) => {
+                const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                return irrigationProgramHours[irrigationKey(block.id, date)] ?? "";
+              });
+              const programTotal = programmedValues.reduce((sum, value) => sum + (Number(value) || 0), 0);
+              const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
+              const calicataKey = calicataBlockKey(block.potrero, block.block);
+              const expanded = expandedCalicataKeys.has(calicataKey);
+              const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
+              return `
+                <div class="irrigation-row irrigation-program-row">
+                  <div class="irrigation-block-label">
+                    <strong>${block.block}</strong>
+                    <span>${number(block.hectares)} ha</span>
+                    <div class="irrigation-block-data">
+                      <small>${block.crop || "-"}${block.variety ? ` · ${block.variety}` : ""}</small>
+                      <small class="irrigation-block-metric">
+                        <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
+                        <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
+                      </small>
+                    </div>
+                  </div>
+                  <div class="irrigation-days irrigation-program-days">
+                    ${programmedValues.map((value, index) => {
+                      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                      const auditClass = Number(value) > 0 && irrigationProgramAudit[irrigationKey(block.id, date)] ? "has-audit" : "";
+                      return `<input class="irrigation-hour-input irrigation-program-input ${irrigationDayClass(date)} ${auditClass} ${Number(value) > 0 ? "has-hours" : ""}" type="number" min="0" step="0.5" inputmode="decimal" aria-label="Programa ${block.potrero} bloque ${block.block} dia ${index + 1}" title="${htmlAttr(irrigationAuditTitle("program", block, date, value))}" data-grid-kind="program" data-row-index="${rowIndex}" data-day-index="${index}" data-program-block-id="${block.id}" data-date="${date}" value="${value}">`;
+                    }).join("")}
+                  </div>
+                  <div class="irrigation-total" data-program-total="${block.id}">${number(programTotal)}</div>
+                  <div class="irrigation-reposition" data-program-reposition="${block.id}">${irrigationReposicionLabel(programReposition)}</div>
+                  <div class="irrigation-difference irrigation-difference-hours irrigation-difference-base">Base</div>
+                  <div class="irrigation-difference irrigation-difference-reposition irrigation-difference-base">Base</div>
+                </div>
+                <div class="irrigation-row calicata-row irrigation-program-spacer-row">
+                  <div class="irrigation-block-label calicata-label">
+                    <strong>Calicatas</strong>
+                    <span>Referencia real</span>
+                  </div>
+                  <div class="irrigation-days calicata-days">
+                    ${Array.from({ length: daysInMonth }, (_, index) => {
+                      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                      return `<span class="calicata-day-cell ${irrigationDayClass(date)}"></span>`;
+                    }).join("")}
+                  </div>
+                  <div class="irrigation-total calicata-label"></div>
+                  <div class="irrigation-reposition calicata-label"></div>
+                  <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
+                  <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
+                </div>
+                ${[
+                  ["20 cm"], ["40 cm"], ["60 cm"], ["80 cm"], ["Trab."], ["Obs."]
+                ].map(([label]) => `
+                  <div class="irrigation-row calicata-detail-row irrigation-program-spacer-row ${expanded ? "" : "is-hidden"}" data-calicata-detail="${htmlAttr(calicataKey)}">
+                    <div class="irrigation-block-label calicata-label">
+                      <strong>${label}</strong>
+                    </div>
+                    <div class="irrigation-days calicata-detail-days">
+                      ${Array.from({ length: daysInMonth }, (_, index) => {
+                        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                        return `<span class="calicata-detail-cell ${irrigationDayClass(date)}"></span>`;
+                      }).join("")}
+                    </div>
+                    <div class="irrigation-total calicata-label"></div>
+                    <div class="irrigation-reposition calicata-label"></div>
+                    <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
+                    <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
+                  </div>
+                `).join("")}
+              `;
+            }).join("")}
+          `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
+        </div>
+      </div>
+      <div class="irrigation-section-title">
+        <strong>Riegos reales</strong>
+        <span>Bandeja registrada ${monthLabel.toLowerCase()} ${irrigationYear} · total ${irrigationBandejaLabel(monthEvaporationTotal)}</span>
+      </div>
+      <div class="irrigation-gantt irrigation-gantt-real" style="--days:${daysInMonth}">
+        <div class="irrigation-row irrigation-row-head">
+          <div class="irrigation-block-head">Bloque</div>
+          <div class="irrigation-days">
+            ${Array.from({ length: daysInMonth }, (_, index) => {
+              const day = String(index + 1).padStart(2, "0");
+              const date = `${monthPrefix}-${day}`;
+              const bandeja = evaporationMap.get(date)?.evaporation;
+              return `<b class="irrigation-date-cell ${irrigationDayClass(date)}" title="${htmlAttr(irrigationDayTitle(date, `${date} · Bandeja ${irrigationBandejaLabel(bandeja)}`))}">
+                <em>${index + 1}</em>
+                <span>${irrigationBandejaLabel(bandeja)}</span>
+              </b>`;
+            }).join("")}
+          </div>
+          <div class="irrigation-total-head">Total</div>
+          <div class="irrigation-reposition-head" title="((Total horas bloque x precipitacion bloque) / suma bandeja mensual) x 100">Repos. %</div>
+          <div class="irrigation-difference-head irrigation-difference-hours" title="(Horas reales - horas programa) / horas programa">Dif. hrs</div>
+          <div class="irrigation-difference-head irrigation-difference-reposition" title="(Reposicion real - reposicion programa) / reposicion programa">Dif. repos.</div>
+        </div>
+        ${blockGroups.map((group) => `
+          <div class="irrigation-potrero-group">
+            <strong>Potrero ${group.potrero}</strong>
+            <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
+          </div>
+          ${group.blocks.map((block) => {
+          const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
+            const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+            return Number(irrigationHours[irrigationKey(block.id, date)]) || 0;
+          }).reduce((sum, value) => sum + value, 0);
+          const programTotal = irrigationBlockMonthTotal(irrigationProgramHours, block.id, monthPrefix, daysInMonth);
+          const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
+          const reposition = irrigationReposicion(blockTotal, block.precipitation, monthEvaporationTotal);
+          const hoursDiff = irrigationDifferencePercent(blockTotal, programTotal);
+          const repositionDiff = irrigationDifferencePercent(reposition, programReposition);
+          const calicatas = calicatasForBlock(block);
+          const calicata = calicataSummary(calicatas);
+          const calicataKey = calicataBlockKey(block.potrero, block.block);
+          const expanded = expandedCalicataKeys.has(calicataKey);
+          const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
+          return `
+            <div class="irrigation-row">
+              <div class="irrigation-block-label">
+                <strong>${block.block}</strong>
+                <span>${number(block.hectares)} ha</span>
+                <div class="irrigation-block-data">
+                  <small>${block.crop || "-"}${block.variety ? ` · ${block.variety}` : ""}</small>
+                  <small class="irrigation-block-metric">
+                    <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
+                    <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
+                  </small>
+                </div>
+              </div>
+              <div class="irrigation-days">
+                ${Array.from({ length: daysInMonth }, (_, index) => {
+                const day = String(index + 1).padStart(2, "0");
+                const date = `${monthPrefix}-${day}`;
+                const key = irrigationKey(block.id, date);
+                const value = irrigationHours[key] ?? "";
+                const auditClass = Number(value) > 0 && irrigationAudit[key] ? "has-audit" : "";
+                return `<input class="irrigation-hour-input ${irrigationDayClass(date)} ${auditClass} ${Number(value) > 0 ? "has-hours" : ""}" type="number" min="0" step="0.5" inputmode="decimal" aria-label="${block.potrero} bloque ${block.block} dia ${index + 1}" title="${htmlAttr(irrigationAuditTitle("real", block, date, value))}" data-grid-kind="real" data-row-index="${rowIndex}" data-day-index="${index}" data-block-id="${block.id}" data-date="${date}" value="${value}">`;
+                }).join("")}
+              </div>
+              <div class="irrigation-total" data-block-total="${block.id}">${number(blockTotal)}</div>
+              <div class="irrigation-reposition" data-block-reposition="${block.id}" title="Precipitacion ${irrigationBandejaLabel(block.precipitation)} / Bandeja mes ${irrigationBandejaLabel(monthEvaporationTotal)}">${irrigationReposicionLabel(reposition)}</div>
+              <div class="irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}" data-block-hours-diff="${block.id}" title="Horas reales ${number(blockTotal)} vs programa ${number(programTotal)}">${irrigationDifferenceLabel(hoursDiff)}</div>
+              <div class="irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}" data-block-reposition-diff="${block.id}" title="Reposicion real ${irrigationReposicionLabel(reposition)} vs programa ${irrigationReposicionLabel(programReposition)}">${irrigationDifferenceLabel(repositionDiff)}</div>
+            </div>
+            <div class="irrigation-row calicata-row">
+              <div class="irrigation-block-label calicata-label">
+                <strong>Calicatas</strong>
+                <span>${calicata.general === null ? "Promedio -" : `Promedio ${number(calicata.general)}`}</span>
+              </div>
+              <div class="irrigation-days calicata-days">
+                ${Array.from({ length: daysInMonth }, (_, index) => {
+                  const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                  const dayCalicatas = calicatas.filter((item) => calicataDate(item) === date);
+                  if (!dayCalicatas.length) return `<span class="calicata-day-cell ${irrigationDayClass(date)}"></span>`;
+                  const daySummary = calicataSummary(dayCalicatas);
+                  const label = daySummary.general === null ? dayCalicatas.length : number(daySummary.general);
+                  const style = daySummary.general === null ? "" : ` style="${htmlAttr(calicataColorStyle(daySummary.general))}"`;
+                  return `<span class="calicata-day-cell ${irrigationDayClass(date)} has-calicata"${style} title="${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</span>`;
+                }).join("")}
+              </div>
+              <button class="icon-button calicata-toggle" type="button" data-action="toggle-calicatas" data-key="${htmlAttr(calicataKey)}" aria-expanded="${expanded}" title="${expanded ? "Ocultar calicatas" : "Ver calicatas"}">${expanded ? "^" : "v"}</button>
+              <div class="irrigation-reposition calicata-label"></div>
+              <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
+              <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
+            </div>
+            ${[
+                ["20 cm", "depth20", "depth"],
+                ["40 cm", "depth40", "depth"],
+                ["60 cm", "depth60", "depth"],
+                ["80 cm", "depth80", "depth"],
+                ["Trab.", "workerName", "text"],
+                ["Obs.", "observation", "text"]
+              ].map(([label, field, type]) => `
+                <div class="irrigation-row calicata-detail-row ${expanded ? "" : "is-hidden"}" data-calicata-detail="${htmlAttr(calicataKey)}">
+                  <div class="irrigation-block-label calicata-label">
+                    <strong>${label}</strong>
+                  </div>
+                  <div class="irrigation-days calicata-detail-days">
+                    ${Array.from({ length: daysInMonth }, (_, index) => {
+                      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+                      const dayCalicatas = calicatas.filter((item) => calicataDate(item) === date);
+                      const value = type === "depth" ? calicataDepthCell(dayCalicatas, field) : calicataTextCell(dayCalicatas, field);
+                      return `<span class="calicata-detail-cell ${irrigationDayClass(date)} ${value ? "has-calicata" : ""}" title="${htmlAttr(value || "")}">${escapeHtml(value)}</span>`;
+                    }).join("")}
+                  </div>
+                  <div class="irrigation-total calicata-label"></div>
+                  <div class="irrigation-reposition calicata-label"></div>
+                  <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
+                  <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
+                </div>
+              `).join("")}
+          `;
+          }).join("")}
+        `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
+      </div>
+      `}
+    </section>
+  `;
+  document.getElementById("irrigationBalancePotreroFilter")?.addEventListener("change", (event) => {
+    irrigationBalancePotreroFilter = event.target.value || "Todos";
+    irrigationBalanceSelectedPotreros = irrigationBalancePotreroFilter === "Todos" ? new Set() : new Set([irrigationBalancePotreroFilter]);
+    renderIrrigation();
+  });
+  document.getElementById("irrigationSpeciesFilter")?.addEventListener("change", (event) => {
+    irrigationSpeciesFilter = event.target.value;
+    irrigationPotreroFilter = "Todos";
+    irrigationBalancePotreroFilter = "Todos";
+    irrigationBalanceSelectedPotreros = new Set();
+    renderIrrigation();
+  });
+  document.getElementById("irrigationPotreroFilter")?.addEventListener("change", (event) => {
+    irrigationPotreroFilter = event.target.value;
+    irrigationBalancePotreroFilter = "Todos";
+    irrigationBalanceSelectedPotreros = new Set();
+    renderIrrigation();
+  });
+  document.getElementById("irrigationMonthFilter")?.addEventListener("change", (event) => {
+    irrigationMonth = event.target.value;
+    renderIrrigation();
+  });
+  document.getElementById("irrigationYearFilter")?.addEventListener("change", (event) => {
+    irrigationYear = String(event.target.value || new Date().getFullYear());
+    renderIrrigation();
+  });
+  views.irrigation.querySelectorAll(".irrigation-hour-input").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      if (focusIrrigationCellFromKeyboard(event.currentTarget, event.key)) event.preventDefault();
+    });
+  });
+  views.irrigation.querySelectorAll(".irrigation-program-input").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const target = event.target;
+      const key = irrigationKey(target.dataset.programBlockId, target.dataset.date);
+      const value = Number(target.value);
+      const block = state.blocks.find((item) => item.id === target.dataset.programBlockId);
+      if (target.value === "" || value <= 0) {
+        delete irrigationProgramHours[key];
+        clearIrrigationCellAudit("program", target.dataset.programBlockId, target.dataset.date);
+      } else {
+        irrigationProgramHours[key] = value;
+        setIrrigationCellAudit("program", target.dataset.programBlockId, target.dataset.date);
+      }
+      target.title = irrigationAuditTitle("program", block || { id: target.dataset.programBlockId, potrero: "", block: "" }, target.dataset.date, target.value);
+      target.classList.toggle("has-hours", Boolean(irrigationProgramHours[key]));
+      target.classList.toggle("has-audit", Boolean(irrigationProgramAudit[key]));
+      saveIrrigationProgramHours();
+      const programTotal = Array.from({ length: daysInMonth }, (_, index) => {
+        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+        return Number(irrigationProgramHours[irrigationKey(target.dataset.programBlockId, date)]) || 0;
+      }).reduce((sum, item) => sum + item, 0);
+      const reposition = irrigationReposicion(programTotal, block?.precipitation, historicalEvaporationTotal);
+      const totalCell = views.irrigation.querySelector(`[data-program-total="${CSS.escape(target.dataset.programBlockId)}"]`);
+      const repositionCell = views.irrigation.querySelector(`[data-program-reposition="${CSS.escape(target.dataset.programBlockId)}"]`);
+      if (totalCell) totalCell.textContent = number(programTotal);
+      if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
+      updateIrrigationComparisonCells(target.dataset.programBlockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+      scheduleIrrigationProgramCellSave(target.dataset.programBlockId, target.dataset.date, target.value);
+    });
+  });
+  views.irrigation.querySelectorAll(".irrigation-hour-input").forEach((input) => {
+    if (input.classList.contains("irrigation-program-input")) return;
+    input.addEventListener("input", (event) => {
+      const target = event.target;
+      const key = irrigationKey(target.dataset.blockId, target.dataset.date);
+      const value = Number(target.value);
+      const block = state.blocks.find((item) => item.id === target.dataset.blockId);
+      if (target.value === "" || value <= 0) {
+        delete irrigationHours[key];
+        clearIrrigationCellAudit("real", target.dataset.blockId, target.dataset.date);
+      } else {
+        irrigationHours[key] = value;
+        setIrrigationCellAudit("real", target.dataset.blockId, target.dataset.date);
+      }
+      target.title = irrigationAuditTitle("real", block || { id: target.dataset.blockId, potrero: "", block: "" }, target.dataset.date, target.value);
+      target.classList.toggle("has-hours", Boolean(irrigationHours[key]));
+      target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
+      saveIrrigationHours();
+      scheduleIrrigationCellSave(target.dataset.blockId, target.dataset.date, target.value);
+      const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
+        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+        return Number(irrigationHours[irrigationKey(target.dataset.blockId, date)]) || 0;
+      }).reduce((sum, item) => sum + item, 0);
+      views.irrigation.querySelector(`[data-block-total="${target.dataset.blockId}"]`).textContent = number(blockTotal);
+      const reposition = irrigationReposicion(blockTotal, block?.precipitation, monthEvaporationTotal);
+      const repositionCell = views.irrigation.querySelector(`[data-block-reposition="${target.dataset.blockId}"]`);
+      if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
+      updateIrrigationComparisonCells(target.dataset.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+    });
+  });
+  syncIrrigationGanttScroll();
+}
+
+function renderCalicatas() {
+  const allBlocks = [...state.blocks].filter((block) => block.active !== false).sort(blockSort);
+  const species = ["Todas", ...new Set(allBlocks.map((block) => block.crop).filter(Boolean))].sort((a, b) => a === "Todas" ? -1 : a.localeCompare(b));
+  const speciesScoped = allBlocks.filter((block) => calicataSpeciesFilter === "Todas" || block.crop === calicataSpeciesFilter);
+  const potreros = ["Todos", ...new Set(speciesScoped.map((block) => block.potrero).filter(Boolean))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : comparePotrero(a, b));
+  if (calicataPotreroFilter !== "Todos" && !potreros.includes(calicataPotreroFilter)) calicataPotreroFilter = "Todos";
+  const filteredBlocks = speciesScoped
+    .filter((block) => calicataPotreroFilter === "Todos" || block.potrero === calicataPotreroFilter)
+    .sort(blockSort);
+  const monthLabel = monthOptions().find((item) => item.value === calicataMonth)?.label || calicataMonth;
+  const monthPrefix = `${calicataYear}-${calicataMonth}`;
+  views.calicatas.innerHTML = `
+    <section class="panel calicatas-panel">
+      <div class="panel-header calicatas-panel-header">
+        <div>
+          <h2>Calicatas</h2>
+          <p>Mapa e historial de registros de humedad por potrero y bloque.</p>
+        </div>
+        <div class="program-filters calicatas-filters">
+          <label>Especie
+            <select id="calicataSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === calicataSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+          </label>
+          <label>Potrero
+            <select id="calicataPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === calicataPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+          </label>
+          <label>Mes
+            <select id="calicataMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === calicataMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
+          </label>
+          <label>Ano
+            <input id="calicataYearFilter" type="number" min="2020" max="2100" step="1" value="${calicataYear}">
+          </label>
+        </div>
+      </div>
+      ${renderIrrigationCalicatasPanel(filteredBlocks, monthPrefix, monthLabel, calicataYear)}
+    </section>
+  `;
+  document.getElementById("calicataSpeciesFilter")?.addEventListener("change", (event) => {
+    calicataSpeciesFilter = event.target.value;
+    calicataPotreroFilter = "Todos";
+    irrigationCalicataBlockFilter = "Todos";
+    renderCalicatas();
+  });
+  document.getElementById("calicataPotreroFilter")?.addEventListener("change", (event) => {
+    calicataPotreroFilter = event.target.value;
+    irrigationCalicataBlockFilter = "Todos";
+    renderCalicatas();
+  });
+  document.getElementById("calicataMonthFilter")?.addEventListener("change", (event) => {
+    calicataMonth = event.target.value;
+    renderCalicatas();
+  });
+  document.getElementById("calicataYearFilter")?.addEventListener("change", (event) => {
+    calicataYear = String(event.target.value || new Date().getFullYear());
+    renderCalicatas();
+  });
+  document.getElementById("irrigationCalicataBlockFilter")?.addEventListener("change", (event) => {
+    irrigationCalicataBlockFilter = event.target.value || "Todos";
+    renderCalicatas();
+  });
+  if (currentView === "calicatas") renderIrrigationCalicatasMap(filteredBlocks, monthPrefix);
+}
+
+function syncIrrigationGanttScroll() {
+  const program = views.irrigation.querySelector(".irrigation-gantt-program");
+  const real = views.irrigation.querySelector(".irrigation-gantt-real");
+  if (!program || !real) return;
+  let syncing = false;
+  const sync = (source, target) => {
+    if (syncing) return;
+    syncing = true;
+    target.scrollLeft = source.scrollLeft;
+    target.scrollTop = source.scrollTop;
+    requestAnimationFrame(() => { syncing = false; });
+  };
+  program.addEventListener("scroll", () => sync(program, real), { passive: true });
+  real.addEventListener("scroll", () => sync(real, program), { passive: true });
+}
+
+function renderFertilizers() {
+  views.fertilizers.innerHTML = `
+    <div class="kpi-grid">
+      ${kpi("Planes fertilizacion", 0, "")}
+      ${kpi("Aplicaciones fertirriego", 0, "")}
+      ${kpi("Nutrientes registrados", 0, "")}
+      ${kpi("Alertas fertilizante", 0, "")}
+    </div>
+    <section class="panel empty-module">
+      <div class="panel-header">
+        <div>
+          <h2>Fertilizantes</h2>
+        </div>
+      </div>
+      <div class="empty-state">
+        <strong>Sin registros disponibles.</strong>
+      </div>
+    </section>
+  `;
+}
+
+function harvestFilterControls() {
+  const crews = ["Todas", ...new Set(uniqueHarvestRecords().map(harvestCrewValue))].sort((a, b) => a === "Todas" ? -1 : b === "Todas" ? 1 : a.localeCompare(b, "es", { numeric: true }));
+  const sdps = ["Todos", ...new Set(uniqueHarvestRecords().map((record) => record.sdp || "Sin SDP"))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : a.localeCompare(b, "es", { numeric: true }));
+  if (harvestCrewFilter !== "Todas" && !crews.includes(harvestCrewFilter)) harvestCrewFilter = "Todas";
+  if (harvestSdpFilter !== "Todos" && !sdps.includes(harvestSdpFilter)) harvestSdpFilter = "Todos";
+  return `
+    <div class="program-filters harvest-filters">
+      <label class="harvest-date-range">Rango fechas
+        <span>
+          <input data-harvest-filter="from" type="date" value="${harvestDateFromFilter}" title="Fecha inicio">
+          <input data-harvest-filter="to" type="date" value="${harvestDateToFilter}" title="Fecha termino">
+        </span>
+      </label>
+      <label>Cuadrilla<select data-harvest-filter="crew">${crews.map((crew) => `<option value="${htmlAttr(crew)}" ${crew === harvestCrewFilter ? "selected" : ""}>${crew}</option>`).join("")}</select></label>
+      <label>SDP<select data-harvest-filter="sdp">${sdps.map((sdp) => `<option value="${htmlAttr(sdp)}" ${sdp === harvestSdpFilter ? "selected" : ""}>${sdp}</option>`).join("")}</select></label>
+      <label>Estado<select data-harvest-filter="status">
+        <option value="Todos" ${harvestStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
+        <option value="terreno" ${harvestStatusFilter === "terreno" ? "selected" : ""}>En terreno</option>
+        <option value="despachado" ${harvestStatusFilter === "despachado" ? "selected" : ""}>Despachados</option>
+      </select></label>
+      <button class="secondary-button" type="button" data-action="clear-harvest-filter">Limpiar</button>
+    </div>
+  `;
+}
+
+function wireHarvestFilters() {
+  document.querySelectorAll("[data-harvest-filter]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.dataset.harvestFilter === "from") harvestDateFromFilter = target.value;
+      if (target.dataset.harvestFilter === "to") harvestDateToFilter = target.value;
+      if (target.dataset.harvestFilter === "crew") harvestCrewFilter = target.value;
+      if (target.dataset.harvestFilter === "sdp") harvestSdpFilter = target.value;
+      if (target.dataset.harvestFilter === "status") harvestStatusFilter = target.value;
+      selectedHarvestBinId = "";
+      renderHarvestMap();
+      renderHarvestInfo();
+    });
+  });
+}
+
+function renderHarvestMap() {
+  const records = filteredHarvestRecords();
+  const stats = harvestStats(records);
+  views.harvestMap.innerHTML = `
+    <div class="kpi-grid">
+      ${kpi("Bines filtrados", stats.total, "Con ubicacion y filtros aplicados")}
+      ${kpi("Cuadrillas", stats.crews.size, "Han escaneado bins")}
+      ${kpi("Despachados", records.filter((record) => harvestRecordStatus(record) === "despachado").length, "Con trazabilidad camion")}
+      ${kpi("Pendientes", records.filter((record) => harvestRecordStatus(record) !== "despachado").length, "En terreno")}
+    </div>
+    <section class="panel harvest-map-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Mapa de bines</h2>
+          <p>Ubicaciones de escaneo desde cosecha, sobre el mapa de potreros y bloques.</p>
+        </div>
+      </div>
+      ${harvestFilterControls()}
+      <div id="harvestGeoMap" class="geo-map harvest-map"><span>Cargando mapa de cosecha...</span></div>
+    </section>
+  `;
+  wireHarvestFilters();
+  renderHarvestGeoMap();
+}
+
+function renderHarvestInfo() {
+  const records = filteredHarvestRecords();
+  const stats = harvestStats(records);
+  const byDay = groupCount(records, (record) => harvestRecordDate(record) || "Sin fecha");
+  const byCrew = groupCount(records, harvestCrewValue);
+  const byContractor = groupCount(records, (record) => record.contractor || "Sin contratista");
+  const byField = groupCount(records, (record) => `${record.field || "Sin cuartel"} / ${record.block || "Sin bloque"}`);
+  const bySdpFieldBlock = groupCount(records, (record) => `${record.sdp || "Sin SDP"} - ${record.sdpField || "Sin potrero SDP"} / ${record.sdpBlock || "Sin bloque SDP"}`);
+  const byJornales = harvestBinsPerJornalRows(records);
+  const avgDaily = stats.days.size ? stats.total / stats.days.size : 0;
+  views.harvestInfo.innerHTML = `
+    <div class="kpi-grid">
+      ${kpi("Total bines", stats.total, "Bines unicos escaneados")}
+      ${kpi("Dias activos", stats.days.size, `${number(avgDaily)} bins/dia`)}
+      ${kpi("Cuadrillas faltan hoy", stats.missingCrews.length, `${stats.scheduledCrews.size} programadas hoy`)}
+      ${kpi("Jornales filtrados", filteredHarvestJornales().length, "Segun rango y cuadrilla")}
+    </div>
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Informacion de cosecha</h2>
+          <p>Dashboard basado en los datos usados para el Excel de cosecha.</p>
+        </div>
+      </div>
+      <div class="harvest-missing-compact">
+        <strong>Sin escaneo hoy</strong>
+        <span class="badge warning">${stats.today}</span>
+        <div>
+          ${stats.missingCrews.map((crew) => `<span class="harvest-missing-chip">${escapeHtml(crew)}</span>`).join("") || `<span class="empty">No hay cuadrillas programadas faltantes para hoy.</span>`}
+        </div>
+      </div>
+      ${harvestFilterControls()}
+      <div class="harvest-dashboard-grid">
+        ${harvestRanking("Bines por dia", byDay, "Fecha")}
+        ${harvestRanking("Ranking por cuadrilla", byCrew, "Cuadrilla")}
+        ${harvestRanking("Ranking por contratista", byContractor, "Contratista")}
+        ${harvestRanking("Detalle SDP / potrero / bloque", bySdpFieldBlock, "SDP / sector")}
+        ${harvestRanking("Bines por cuartel/bloque", byField, "Sector")}
+        ${harvestRanking("Bines por jornal", byJornales, "Jornal", { decimals: 1 })}
+      </div>
+    </section>
+  `;
+  wireHarvestFilters();
+}
+
+function groupCount(records, getKey) {
+  const map = new Map();
+  records.forEach((record) => {
+    const key = getKey(record) || "Sin dato";
+    const set = map.get(key) || new Set();
+    set.add(harvestBinKey(record));
+    map.set(key, set);
+  });
+  return [...map.entries()].map(([label, bins]) => ({ label, value: bins.size })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
+}
+
+function harvestRanking(title, rows, label, options = {}) {
+  const top = rows.slice(0, 10);
+  const max = Math.max(1, ...top.map((row) => row.value));
+  const decimals = options.decimals ?? 0;
+  return `
+    <article class="panel harvest-ranking">
+      <div class="panel-header"><h2>${escapeHtml(title)}</h2></div>
+      <div class="harvest-rank-list">
+        ${top.map((row) => `
+          <div class="harvest-rank-row">
+            <span title="${htmlAttr(row.detail || row.label)}">${escapeHtml(row.label)}</span>
+            <div><i style="width:${Math.max(4, row.value / max * 100)}%"></i></div>
+            <strong>${number(row.value, decimals)}</strong>
+          </div>
+        `).join("") || `<div class="empty">Sin datos para ${escapeHtml(label.toLowerCase())}.</div>`}
+      </div>
+    </article>
+  `;
 }
 
 function renderProgram() {
@@ -1236,7 +3747,7 @@ function renderProgram() {
     acc[key].cost += dispatchCost(order);
     acc[key].orders.push(order.number);
     return acc;
-  }, {})).sort((a, b) => a.potrero.localeCompare(b.potrero));
+  }, {})).sort((a, b) => comparePotrero(a.potrero, b.potrero));
   const totals = grouped.reduce((acc, row) => {
     acc.hectares += row.hectares;
     acc.plannedWater += row.plannedWater;
@@ -1334,7 +3845,7 @@ function renderManager() {
   const availableYears = [...new Set(state.orders.flatMap((order) => [String(orderStartDate(order).slice(0, 4)), String(orderEndDate(order).slice(0, 4))]).filter(Boolean))].sort();
   if (!availableYears.includes(managerYear)) availableYears.push(managerYear);
   const orderPotreros = state.orders.flatMap((order) => String(order.potrero || "").split(",").map((item) => item.trim()).filter(Boolean));
-  const managerPotreros = ["Todos", ...new Set([...uniquePotreros(), ...orderPotreros])].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : a.localeCompare(b, undefined, { numeric: true }));
+  const managerPotreros = ["Todos", ...new Set([...uniquePotreros(), ...orderPotreros])].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : comparePotrero(a, b));
   const managerSpecies = ["Todas", ...new Set(state.orders.map((order) => order.crop).filter(Boolean))].sort((a, b) => a === "Todas" ? -1 : b === "Todas" ? 1 : a.localeCompare(b));
   if (!managerPotreros.includes(managerPotreroFilter)) managerPotreroFilter = "Todos";
   if (![...managerSpeciesFilters].some((item) => managerSpecies.includes(item))) managerSpeciesFilters = new Set(["Todas"]);
@@ -1861,11 +4372,16 @@ async function loadCloudData(options = {}) {
     currentProfile = null;
     throw new Error("Tu usuario no existe en public.usuarios. Revisa que el ID sea igual al usuario de Authentication y que tenga rol admin/supervisor/bodeguero.");
   }
+  if (profile.activo === false) {
+    currentProfile = null;
+    throw new Error("Tu usuario esta desactivado. Solicita activacion a un administrador.");
+  }
 
   const normalizedProfileRole = normalizeRole(profile.rol || profile.role);
   currentProfile = {
     ...profile,
     full_name: profile.nombre_completo,
+    area: normalizeRegistrationArea(profile.area),
     role: normalizedProfileRole,
     rol: normalizedProfileRole
   };
@@ -1889,7 +4405,7 @@ async function loadCloudData(options = {}) {
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles] = await Promise.all([
+  const [seasons, programs, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, evaporationRows, harvestRecords, harvestOfficialRecords, harvestCrewSchedule, harvestJornales] = await Promise.all([
     canSeePlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve([]),
     canSeePlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve([]),
     sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc"),
@@ -1901,6 +4417,55 @@ async function loadCloudData(options = {}) {
     sbSelect("movimientos_stock", "select=*&order=fecha.asc"),
     sbSelect("vehiculos", "select=*&order=codigo.asc").catch((error) => {
       console.warn("Tabla vehiculos no disponible. Ejecuta supabase_vehiculos.sql", error);
+      return [];
+    }),
+    sbSelect("calicatas", "select=*&order=created_at.desc").catch((error) => {
+      console.warn("No se pudieron cargar calicatas", error);
+      return [];
+    }),
+    sbSelect("riego", "select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at&order=fecha.asc")
+      .catch((error) => {
+        if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
+        return sbSelect("riego", "select=id,campo_id,fecha,horas_riego,volumen&order=fecha.asc");
+      })
+      .catch((error) => {
+        console.warn("No se pudieron cargar registros de riego", error);
+        irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
+        return [];
+      }),
+    sbSelect("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en&order=fecha.asc")
+      .catch((error) => {
+        if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en"])) throw error;
+        return sbSelect("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado&order=fecha.asc");
+      })
+      .catch((error) => {
+        console.warn("No se pudo cargar programa de riego", error);
+        irrigationProgramCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
+        return [];
+      }),
+    sbSelectAll("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc")
+      .then((rows) => rows?.length ? rows : sbSelectAllPublic("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc"))
+      .catch((error) => {
+        console.warn("No se pudo cargar evaporacion de bandeja con sesion, probando lectura publica", error);
+        return sbSelectAllPublic("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc").catch((publicError) => {
+          console.warn("No se pudo cargar evaporacion de bandeja", publicError);
+          return [];
+        });
+      }),
+    sbSelectAll("registros_trazabilidad", "select=*&order=id.desc").catch((error) => {
+      console.warn("No se pudieron cargar registros de cosecha", error);
+      return [];
+    }),
+    sbSelectAll("registros_trazabilidad_oficial", "select=*&order=id.desc").catch((error) => {
+      console.warn("No se pudieron cargar registros oficiales de cosecha", error);
+      return [];
+    }),
+    sbSelect("v_programacion_cuadrillas_dia", "select=*").catch((error) => {
+      console.warn("No se pudo cargar programacion de cuadrillas", error);
+      return [];
+    }),
+    sbSelect("v_jornales_cuadrilla_dia", "select=*").catch((error) => {
+      console.warn("No se pudieron cargar jornales de cosecha", error);
       return [];
     })
   ]);
@@ -1928,10 +4493,81 @@ async function loadCloudData(options = {}) {
     id: field.id,
     potrero: field.potrero,
     block: field.bloque,
-    crop: field.cultivo,
+    crop: field.especie || field.cultivo,
     variety: field.variedad,
-    hectares: Number(field.hectareas) || 0
+    hectares: Number(field.hectareas) || 0,
+    precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
+    flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
+    active: field.activo !== false,
+    plants: Number(field.plantas) || 0,
+    plantsPerHa: Number(field.plantas_por_ha) || 0
   }));
+  state.calicatas = calicatas.map((item) => ({
+    id: item.id,
+    workerId: item.trabajador_id || "",
+    workerName: item.trabajador_nombre || "",
+    potrero: item.potrero || "",
+    block: item.bloque || "",
+    depth20: item.profundidad_20 === null ? null : Number(item.profundidad_20),
+    depth40: item.profundidad_40 === null ? null : Number(item.profundidad_40),
+    depth60: item.profundidad_60 === null ? null : Number(item.profundidad_60),
+    depth80: item.profundidad_80 === null ? null : Number(item.profundidad_80),
+    latitude: item.latitud,
+    longitude: item.longitud,
+    photoUrl: item.foto_url || "",
+    createdAt: item.created_at || "",
+    empty: Boolean(item.vacio),
+    observation: item.observacion || ""
+  }));
+  applyIrrigationRecords(irrigationRows);
+  applyIrrigationProgramRecords(irrigationProgramRows);
+  state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
+  const mapHarvestRecord = (item, source = "operativo") => {
+    const scanDate = harvestScanDateFromItem(item);
+    return {
+      id: `${source}-${item.id || item.num_bin || item.codigo_local}`,
+      source,
+      type: item.tipo_registro || "",
+      numBin: item.num_bin || "",
+      localCode: item.codigo_local || "",
+      contractor: item.contratista || "",
+      crew: item.cuadrilla || "",
+      field: item.cuartel || item.cuartel_sdp || "",
+      block: item.bloque || item.bloque_sdp || "",
+      realField: item.cuartel || "",
+      realBlock: item.bloque || "",
+      sdpField: item.cuartel_sdp || "",
+      sdpBlock: item.bloque_sdp || "",
+      sdp: item.sdp || "",
+      crop: item.especie || "",
+      variety: item.variedad || "",
+      harvestDate: item.fecha_cosecha || "",
+      scanDate,
+      truckPlate: item.patente || "",
+      driverName: item.conductor_nombre || "",
+      dispatchDate: item.fecha_despacho_camion || "",
+      latitude: item.latitud === null || item.latitud === undefined ? null : Number(item.latitud),
+      longitude: item.longitud === null || item.longitud === undefined ? null : Number(item.longitud),
+      createdAt: firstHarvestDateValue(item, ["creado_en", "created_at", "fecha_sincronizacion", "ultima_sincronizacion", "actualizado_en"])
+    };
+  };
+  state.harvestRecords = harvestRecords.map((item) => mapHarvestRecord(item, "operativo"));
+  state.harvestOfficialRecords = harvestOfficialRecords.map((item) => mapHarvestRecord({ ...item, tipo_registro: "tarja_despachada" }, "oficial"));
+  state.harvestCrewSchedule = harvestCrewSchedule.map((item) => ({
+    date: item.fecha || item.fecha_cosecha || "",
+    contractor: item.nombre_empresa || item.contratista || "",
+    crew: item.codigo_cuadrilla || item.cuadrilla || ""
+  }));
+  state.harvestJornales = harvestJornales.map((item) => ({
+    id: item.id,
+    date: item.fecha || "",
+    workerName: `${item.nombre_jornal || ""} ${item.apellido_jornal || ""}`.trim(),
+    workerRut: item.rut_jornal || "",
+    capachoCode: item.codigo_capacho || "",
+    contractor: item.nombre_empresa || item.contratista || "",
+    crew: item.codigo_cuadrilla || item.cuadrilla || "",
+    active: item.activo !== false
+  })).filter((item) => item.active);
   state.products = products.map((product) => ({
     id: product.id,
     name: product.nombre,
@@ -2090,6 +4726,13 @@ function startCloudSync() {
   stopCloudSync();
 
   const realtimeTables = [
+    "campos",
+    "calicatas",
+    "riego",
+    "programa_riego",
+    "evaporacion_bandeja",
+    "registros_trazabilidad",
+    "registros_trazabilidad_oficial",
     "ordenes_aplicacion",
     "orden_productos",
     "despachos",
@@ -2680,7 +5323,7 @@ function kpi(label, value, hint) {
     <article class="kpi">
       <span>${label}</span>
       <strong>${value}</strong>
-      <small>${hint}</small>
+      ${hint ? `<small>${hint}</small>` : ""}
     </article>
   `;
 }
@@ -2917,6 +5560,275 @@ function createMapLabelOverlay(maps, position, text, className) {
     }
   }
   return new LabelOverlay();
+}
+
+async function renderHarvestGeoMap() {
+  const el = document.getElementById("harvestGeoMap");
+  if (!el) return;
+  try {
+    geoJsonCache ||= await loadGeoJson();
+    await renderGoogleHarvestMap(el, geoJsonCache);
+  } catch (error) {
+    el.innerHTML = `<span>No se pudo cargar Google Maps para cosecha.</span>`;
+  }
+}
+
+async function renderGoogleHarvestMap(el, layers) {
+  const maps = await loadGoogleMaps();
+  const records = filteredHarvestRecords().filter((record) => Number.isFinite(record.latitude) && Number.isFinite(record.longitude));
+  if (harvestMapElement !== el) {
+    harvestMap = null;
+    harvestMapElement = el;
+  }
+  harvestMapOverlays.forEach((overlay) => overlay.setMap?.(null));
+  harvestMapOverlays = [];
+  harvestInfoWindow?.close();
+  if (!harvestMap) {
+    harvestMap = new maps.Map(el, {
+      mapTypeId: "satellite",
+      disableDefaultUI: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      mapTypeControl: true,
+      tilt: 0
+    });
+  }
+  const bounds = new maps.LatLngBounds();
+  const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
+  const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
+  blockRings.forEach((item, index) => {
+    item.rings.forEach((ring) => {
+      const polygon = new maps.Polygon({
+        paths: ring.map(([lng, lat]) => ({ lat, lng })),
+        strokeColor: ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
+        strokeOpacity: 0.95,
+        strokeWeight: 1.9,
+        fillColor: "#dfe8dc",
+        fillOpacity: 0.18,
+        zIndex: 4
+      });
+      polygon.setMap(harvestMap);
+      harvestMapOverlays.push(polygon);
+      ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
+    });
+    const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
+    label.setMap(harvestMap);
+    harvestMapOverlays.push(label);
+  });
+  potreroRings.forEach((item, index) => {
+    item.rings.forEach((ring) => {
+      const polygon = new maps.Polygon({
+        paths: ring.map(([lng, lat]) => ({ lat, lng })),
+        strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
+        strokeOpacity: 1,
+        strokeWeight: 3,
+        fillOpacity: 0,
+        zIndex: 2
+      });
+      polygon.setMap(harvestMap);
+      harvestMapOverlays.push(polygon);
+    });
+    const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+    label.setMap(harvestMap);
+    harvestMapOverlays.push(label);
+  });
+  records.forEach((record) => {
+    const marker = new maps.Marker({
+      position: { lat: record.latitude, lng: record.longitude },
+      map: harvestMap,
+      label: { text: harvestCrewMarkerLabel(record), color: "#ffffff", fontSize: "10px", fontWeight: "800" },
+      icon: {
+        path: maps.SymbolPath.CIRCLE,
+        scale: 15,
+        fillColor: harvestRecordStatus(record) === "despachado" ? "#237847" : "#b42318",
+        fillOpacity: 0.95,
+        strokeColor: "#ffffff",
+        strokeWeight: 2
+      },
+      title: `${record.crew || "Sin cuadrilla"} - BIN ${record.numBin || record.localCode || "S/N"}`
+    });
+    marker.addListener("click", () => {
+      selectedHarvestBinId = record.id;
+      renderHarvestBinDetail(record, marker, maps);
+    });
+    harvestMapOverlays.push(marker);
+    bounds.extend({ lat: record.latitude, lng: record.longitude });
+  });
+  if (!bounds.isEmpty()) harvestMap.fitBounds(bounds, 24);
+  const selected = records.find((record) => record.id === selectedHarvestBinId);
+  if (selected) {
+    const marker = harvestMapOverlays.find((overlay) => overlay?.getTitle?.() === `${selected.crew || "Sin cuadrilla"} - BIN ${selected.numBin || selected.localCode || "S/N"}`);
+    if (marker) renderHarvestBinDetail(selected, marker, maps);
+  }
+}
+
+function harvestCrewMarkerLabel(record) {
+  const label = String(record.crew || "S/C").trim() || "S/C";
+  return label.length > 8 ? `${label.slice(0, 7)}.` : label;
+}
+
+function renderHarvestBinDetail(record, marker, maps) {
+  if (!record || !marker || !maps || !harvestMap) return;
+  harvestInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
+  harvestInfoWindow.setContent(`
+    <div class="harvest-map-info">
+      <div class="harvest-map-info-head">
+        <strong>BIN ${escapeHtml(record.numBin || record.localCode || "S/N")}</strong>
+        <span>${harvestRecordStatus(record) === "despachado" ? "Despachado" : "Terreno"}</span>
+      </div>
+      <div class="harvest-map-info-grid">
+        ${harvestInfoField("Escaneo", harvestRecordDate(record) || "Sin fecha")}
+        ${harvestInfoField("SDP", record.sdp || "Sin SDP")}
+        ${harvestInfoField("Potrero SDP", record.sdpField || "Sin potrero SDP")}
+        ${harvestInfoField("Bloque SDP", record.sdpBlock || "Sin bloque SDP")}
+        ${harvestInfoField("Potrero real", record.realField || "Sin potrero real")}
+        ${harvestInfoField("Bloque real", record.realBlock || "Sin bloque real")}
+        ${harvestInfoField("Contratista", record.contractor || "Sin contratista")}
+        ${harvestInfoField("Cuadrilla", record.crew || "Sin cuadrilla")}
+      </div>
+    </div>
+  `);
+  harvestInfoWindow.open({ map: harvestMap, anchor: marker });
+}
+
+function harvestInfoField(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
+  const el = document.getElementById("irrigationCalicataMap");
+  if (!el) return;
+  try {
+    geoJsonCache ||= await loadGeoJson();
+    const maps = await loadGoogleMaps();
+    const records = filteredIrrigationCalicatas(blocks, monthPrefix)
+      .filter((item) => Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude)));
+    if (irrigationCalicataMapElement !== el) {
+      irrigationCalicataMap = null;
+      irrigationCalicataMapElement = el;
+    }
+    irrigationCalicataOverlays.forEach((overlay) => overlay.setMap?.(null));
+    irrigationCalicataOverlays = [];
+    irrigationCalicataMarkers = new Map();
+    irrigationCalicataInfoWindow?.close();
+    if (!irrigationCalicataMap) {
+      irrigationCalicataMap = new maps.Map(el, {
+        mapTypeId: "satellite",
+        disableDefaultUI: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        mapTypeControl: true,
+        tilt: 0
+      });
+    }
+    const bounds = new maps.LatLngBounds();
+    const visibleKeys = new Set(blocks.map((block) => `${block.potrero}:${block.block}`));
+    const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
+    const potreroRings = geoFeaturesToRings(geoJsonCache?.potreros?.features || []);
+    blockRings.forEach((item, index) => {
+      const key = blockFeatureKey(item.feature);
+      const active = visibleKeys.has(key);
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: active ? "#1f6f4a" : ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
+          strokeOpacity: active ? 1 : 0.72,
+          strokeWeight: active ? 2.2 : 1.3,
+          fillColor: active ? "#7cc79a" : "#dfe8dc",
+          fillOpacity: active ? 0.28 : 0.12,
+          zIndex: active ? 4 : 1
+        });
+        polygon.setMap(irrigationCalicataMap);
+        irrigationCalicataOverlays.push(polygon);
+        ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
+      });
+      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), blockFeatureName(item.feature), "map-label-block-google");
+      label.setMap(irrigationCalicataMap);
+      irrigationCalicataOverlays.push(label);
+    });
+    potreroRings.forEach((item, index) => {
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
+          strokeOpacity: 1,
+          strokeWeight: 3,
+          fillOpacity: 0,
+          zIndex: 2
+        });
+        polygon.setMap(irrigationCalicataMap);
+        irrigationCalicataOverlays.push(polygon);
+      });
+      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+      label.setMap(irrigationCalicataMap);
+      irrigationCalicataOverlays.push(label);
+    });
+    records.forEach((item) => {
+      const position = { lat: Number(item.latitude), lng: Number(item.longitude) };
+      const averageValue = calicataAverageValue(item);
+      const icon = irrigationCalicataMarkerIcon(maps, calicataValueColor(averageValue));
+      const marker = new maps.Marker({
+        position,
+        map: irrigationCalicataMap,
+        icon,
+        title: `Calicata ${item.potrero || "-"} bloque ${item.block || "-"} · promedio ${averageValue === null ? "-" : number(averageValue)}`
+      });
+      marker.addListener("click", () => showIrrigationCalicataInfo(item, marker, maps));
+      irrigationCalicataMarkers.set(String(item.id), { marker, item });
+      irrigationCalicataOverlays.push(marker);
+      bounds.extend(position);
+    });
+    if (!bounds.isEmpty()) irrigationCalicataMap.fitBounds(bounds, 24);
+  } catch (error) {
+    el.innerHTML = `<span>No se pudo cargar el mapa de calicatas.</span>`;
+  }
+}
+
+function irrigationCalicataMarkerIcon(maps, color = "#1f6f4a") {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
+      <circle cx="17" cy="17" r="15" fill="${color}" stroke="#ffffff" stroke-width="3"/>
+      <path d="M20.8 8.5l4.5 4.5-2.2 2.2-1.2-1.2-8.4 8.4 1.6 1.6-4.8 1.8-2.6-2.6 1.8-4.8 1.6 1.6 8.4-8.4-1.1-1.1 1.9-2z" fill="#ffffff"/>
+    </svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new maps.Size(30, 30),
+    anchor: new maps.Point(15, 15)
+  };
+}
+
+function showIrrigationCalicataInfo(item, marker, maps) {
+  if (!item || !marker || !maps || !irrigationCalicataMap) return;
+  irrigationCalicataInfoWindow ||= new maps.InfoWindow({ maxWidth: 310 });
+  const averageValue = calicataAverageValue(item);
+  irrigationCalicataInfoWindow.setContent(`
+    <div class="harvest-map-info irrigation-calicata-info">
+      <div class="harvest-map-info-head">
+        <strong>${escapeHtml(item.potrero || "-")} · Bloque ${escapeHtml(item.block || "-")}</strong>
+        <span>${escapeHtml(calicataDate(item) || "Sin fecha")}</span>
+      </div>
+      ${item.photoUrl ? `<img class="irrigation-calicata-photo" src="${htmlAttr(item.photoUrl)}" alt="Foto calicata" loading="lazy">` : ""}
+      <div class="harvest-map-info-grid">
+        ${harvestInfoField("Trabajador", item.workerName || "Sin trabajador")}
+        ${harvestInfoField("20 cm", item.depth20 === null ? "-" : number(item.depth20))}
+        ${harvestInfoField("40 cm", item.depth40 === null ? "-" : number(item.depth40))}
+        ${harvestInfoField("60 cm", item.depth60 === null ? "-" : number(item.depth60))}
+        ${harvestInfoField("80 cm", item.depth80 === null ? "-" : number(item.depth80))}
+        ${harvestInfoField("Promedio", averageValue === null ? "-" : number(averageValue))}
+        ${harvestInfoField("Estado", item.empty ? "Vacia" : "Con lectura")}
+      </div>
+      ${item.observation ? `<p class="irrigation-calicata-observation">${escapeHtml(item.observation)}</p>` : ""}
+    </div>
+  `);
+  irrigationCalicataInfoWindow.open({ map: irrigationCalicataMap, anchor: marker });
+}
+
+function focusIrrigationCalicataById(id) {
+  const entry = irrigationCalicataMarkers.get(String(id));
+  if (!entry || !irrigationCalicataMap || !window.google?.maps) return;
+  irrigationCalicataMap.panTo(entry.marker.getPosition());
+  irrigationCalicataMap.setZoom(Math.max(irrigationCalicataMap.getZoom() || 0, 18));
+  showIrrigationCalicataInfo(entry.item, entry.marker, window.google.maps);
 }
 
 async function loadGeoJson() {
@@ -3810,8 +6722,7 @@ function renderOrderBlockPicker(selectedBlocks = []) {
   const potrero = form.potrero.value;
   const isMultiPotrero = form.classification.value === "P";
   document.getElementById("potreroSelectLabel").firstChild.textContent = isMultiPotrero ? "Potrero a agregar " : "Potrero base ";
-  const allAvailable = (isMultiPotrero ? state.blocks : blocksForPotrero(potrero))
-    .sort((a, b) => `${a.potrero}-${a.block}`.localeCompare(`${b.potrero}-${b.block}`, undefined, { numeric: true }));
+  const allAvailable = (isMultiPotrero ? state.blocks : blocksForPotrero(potrero)).sort(blockSort);
   const pickerAvailable = blocksForPotrero(potrero);
   const selected = selectedBlocks
     .map(String)
@@ -5225,6 +8136,11 @@ function importData(event) {
 
 document.addEventListener("click", async (event) => {
   const actionTarget = event.target.closest?.("[data-action]") || event.target;
+  const viewTarget = event.target.closest?.("[data-view]");
+  if (viewTarget && !viewTarget.classList.contains("nav-item") && !viewTarget.dataset?.action) {
+    switchView(viewTarget.dataset.view);
+    return;
+  }
   const action = actionTarget.dataset?.action;
   const id = actionTarget.dataset?.id;
   if (action === "auth-tab") {
@@ -5237,6 +8153,18 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "toggle-applications-menu") {
     const menu = document.getElementById("applicationsMenu");
+    const open = !menu.classList.contains("open");
+    menu.classList.toggle("open", open);
+    actionTarget.setAttribute("aria-expanded", String(open));
+  }
+  if (action === "toggle-irrigation-menu") {
+    const menu = document.getElementById("irrigationMenu");
+    const open = !menu.classList.contains("open");
+    menu.classList.toggle("open", open);
+    actionTarget.setAttribute("aria-expanded", String(open));
+  }
+  if (action === "toggle-harvest-menu") {
+    const menu = document.getElementById("harvestMenu");
     const open = !menu.classList.contains("open");
     menu.classList.toggle("open", open);
     actionTarget.setAttribute("aria-expanded", String(open));
@@ -5259,6 +8187,82 @@ document.addEventListener("click", async (event) => {
   if (action === "clear-report-filter") {
     reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
     renderReports();
+  }
+  if (action === "clear-harvest-filter") {
+    harvestDateFromFilter = "";
+    harvestDateToFilter = "";
+    harvestCrewFilter = "Todas";
+    harvestStatusFilter = "Todos";
+    harvestSdpFilter = "Todos";
+    selectedHarvestBinId = "";
+    renderHarvestMap();
+    renderHarvestInfo();
+  }
+  if (action === "clear-irrigation-hours") {
+    if (!confirm(`Limpiar las horas de riego visibles para ${irrigationMonth}/${irrigationYear}?`)) return;
+    const allBlocks = [...state.blocks].filter((block) => block.active !== false).sort(blockSort);
+    const visibleBlocks = allBlocks
+      .filter((block) => irrigationSpeciesFilter === "Todas" || block.crop === irrigationSpeciesFilter)
+      .filter((block) => irrigationPotreroFilter === "Todos" || block.potrero === irrigationPotreroFilter);
+    const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
+    visibleBlocks.forEach((block) => {
+      Array.from({ length: daysInMonth }, (_, index) => {
+        const date = `${irrigationYear}-${irrigationMonth}-${String(index + 1).padStart(2, "0")}`;
+        delete irrigationHours[irrigationKey(block.id, date)];
+      });
+    });
+    saveIrrigationHours();
+    deleteCloudIrrigationMonth(visibleBlocks, irrigationYear, irrigationMonth);
+    renderIrrigation();
+    showToast("Horas de riego limpiadas");
+  }
+  if (action === "open-irrigation-program-dialog") {
+    openIrrigationProgramDialog();
+  }
+  if (action === "apply-irrigation-program-auto") {
+    const allBlocks = irrigationVisibleBlocksForProgramDialog();
+    const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
+    const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+    const historicalEvaporationMap = historicalEvaporationByMonthDay(irrigationMonth);
+    const monthEvaporationRows = irrigationEvaporationRowsForMonth(monthPrefix);
+    const evaporationMap = evaporationByDateMap(monthEvaporationRows);
+    const historicalEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+      const day = String(index + 1).padStart(2, "0");
+      return Number(historicalEvaporationMap.get(day)) || 0;
+    }).reduce((sum, value) => sum + value, 0);
+    const monthEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+      return Number(evaporationMap.get(date)?.evaporation) || 0;
+    }).reduce((sum, value) => sum + value, 0);
+    applyAutomaticIrrigationProgram({ blocks: allBlocks, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal });
+  }
+  if (action === "save-irrigation-bandeja") {
+    await saveIrrigationBandejaRecord();
+  }
+  if (action === "toggle-calicatas") {
+    const key = actionTarget.dataset.key;
+    const expanded = !expandedCalicataKeys.has(key);
+    if (expanded) expandedCalicataKeys.add(key);
+    else expandedCalicataKeys.delete(key);
+    actionTarget.setAttribute("aria-expanded", String(expanded));
+    actionTarget.setAttribute("title", expanded ? "Ocultar calicatas" : "Ver calicatas");
+    actionTarget.textContent = expanded ? "^" : "v";
+    document.querySelectorAll(`[data-calicata-detail="${CSS.escape(key)}"]`).forEach((row) => row.classList.toggle("is-hidden", !expanded));
+  }
+  if (action === "focus-calicata") {
+    focusIrrigationCalicataById(actionTarget.dataset.calicataId);
+  }
+  if (action === "select-irrigation-balance-potrero") {
+    const potrero = actionTarget.dataset.potrero || "";
+    if (event.ctrlKey || event.metaKey) {
+      if (irrigationBalanceSelectedPotreros.has(potrero)) irrigationBalanceSelectedPotreros.delete(potrero);
+      else if (potrero) irrigationBalanceSelectedPotreros.add(potrero);
+      irrigationBalancePotreroFilter = irrigationBalanceSelectedPotreros.size === 1 ? [...irrigationBalanceSelectedPotreros][0] : "Todos";
+    } else {
+      irrigationBalanceSelectedPotreros = potrero ? new Set([potrero]) : new Set();
+      irrigationBalancePotreroFilter = potrero || "Todos";
+    }
+    renderIrrigation();
   }
   if (action === "clear-warehouse-filter") {
     warehouseStatusFilter = "in_progress";
@@ -5314,6 +8318,14 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target?.id === "programAutoPotrero") {
+    updateIrrigationProgramDialogBlocks();
+    return;
+  }
+  if (event.target?.matches?.("[data-program-auto-block]")) {
+    updateIrrigationProgramDialogPreview();
+    return;
+  }
   const action = event.target.dataset.action;
   const id = event.target.dataset.id;
   if (action !== "quick-planned-date" && action !== "quick-program") return;
@@ -5348,14 +8360,25 @@ document.addEventListener("change", async (event) => {
   showToast("Planificacion actualizada en Supabase");
 });
 
+document.addEventListener("input", (event) => {
+  if (["programAutoHours", "programAutoReposicion", "programAutoSkipDays"].includes(event.target?.id)) {
+    updateIrrigationProgramDialogPreview();
+  }
+});
+
 document.querySelectorAll(".nav-item").forEach((button) => {
-  button.addEventListener("click", () => switchView(button.dataset.view));
+  button.addEventListener("click", () => {
+    if (button.dataset.irrigationMenuTab) irrigationTab = button.dataset.irrigationMenuTab;
+    switchView(button.dataset.view);
+  });
 });
 
 document.getElementById("newOrderTop").addEventListener("click", () => openOrderDialog());
 document.getElementById("authButton").addEventListener("click", openAuthDialog);
 document.getElementById("gateLoginButton").addEventListener("click", loginSupabase);
 document.getElementById("gateRegisterButton").addEventListener("click", registerSupabase);
+document.getElementById("gateRecoverButton").addEventListener("click", recoverSupabasePassword);
+document.getElementById("gateResetPasswordButton").addEventListener("click", resetSupabasePassword);
 document.getElementById("gateLoginForm").addEventListener("submit", (event) => {
   event.preventDefault();
   loginSupabase();
@@ -5363,6 +8386,14 @@ document.getElementById("gateLoginForm").addEventListener("submit", (event) => {
 document.getElementById("gateRegisterForm").addEventListener("submit", (event) => {
   event.preventDefault();
   registerSupabase();
+});
+document.getElementById("gateRecoverForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  recoverSupabasePassword();
+});
+document.getElementById("gateResetPasswordForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  resetSupabasePassword();
 });
 const exportBackupButton = document.getElementById("exportData");
 const importBackupInput = document.getElementById("importData");
@@ -5392,6 +8423,14 @@ if ("serviceWorker" in navigator) {
 }
 
 async function initApp() {
+  passwordRecoverySession = readRecoverySessionFromUrl();
+  if (passwordRecoverySession?.access_token) {
+    saveSession(null);
+    setAuthGate(true);
+    showGateTab("resetPassword");
+    setGateStatus("Ingresa una nueva contrasena para completar la recuperacion.", "info");
+    return;
+  }
   if (supabaseSession) {
     try {
       setAuthGate(true);
@@ -5409,4 +8448,3 @@ async function initApp() {
 }
 
 initApp();
-

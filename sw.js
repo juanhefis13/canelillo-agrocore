@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v3-realtime";
+const CACHE = "canelillo-agrocore-v75-palto-potrero-order";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {

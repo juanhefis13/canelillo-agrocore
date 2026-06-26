@@ -1,19 +1,19 @@
 :root {
   color-scheme: light;
-  --bg: #f5f7f2;
+  --bg: #eef7f4;
   --surface: #ffffff;
-  --surface-2: #edf2eb;
-  --ink: #17211b;
-  --muted: #667267;
-  --line: #d9e1d7;
-  --brand: #1f6f4a;
-  --brand-2: #2f8a62;
-  --accent: #b86f2d;
-  --warn: #a86500;
+  --surface-2: #e7f3ee;
+  --ink: #10251f;
+  --muted: #5d6f69;
+  --line: #cfe0d9;
+  --brand: #047857;
+  --brand-2: #10b981;
+  --accent: #f59e0b;
+  --warn: #b86b00;
   --danger: #b42318;
-  --ok: #237847;
+  --ok: #0f9f6e;
   --info: #2563a8;
-  --shadow: 0 18px 42px rgba(32, 51, 38, 0.12);
+  --shadow: 0 18px 42px rgba(10, 54, 42, 0.13);
 }
 
 * {
@@ -86,7 +86,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 236px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -96,22 +96,22 @@ button {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 26px;
-  padding: 24px;
+  gap: 14px;
+  padding: 14px;
   background: #173925;
   color: #f7fff8;
 }
 
 .brand {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
 }
 
 .brand-mark {
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   border-radius: 8px;
   background: #e9f6ec;
@@ -127,17 +127,17 @@ button {
 .brand span,
 .sync-box span {
   color: #c5d6ca;
-  font-size: 0.86rem;
+  font-size: 0.72rem;
 }
 
 .nav {
   display: grid;
-  gap: 8px;
+  gap: 5px;
 }
 
 .nav-group {
   display: none;
-  gap: 8px;
+  gap: 5px;
 }
 
 .nav-group.open {
@@ -146,10 +146,10 @@ button {
 
 .nav-group-toggle {
   width: 100%;
-  min-height: 44px;
+  min-height: 32px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  padding: 0 14px;
+  padding: 0 10px;
   background: rgba(255, 255, 255, 0.10);
   color: #ffffff;
   font-weight: 900;
@@ -172,10 +172,10 @@ button {
 .secondary-button,
 .danger-button,
 .icon-button {
-  min-height: 42px;
+  min-height: 32px;
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 0 14px;
+  padding: 0 10px;
   font-weight: 700;
 }
 
@@ -213,22 +213,23 @@ button {
 
 .main {
   min-width: 0;
-  padding: 28px;
+  padding: 8px 10px;
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: 10px;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 4px;
+  min-height: 28px;
 }
 
 .eyebrow,
 .overline {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.62rem;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -242,7 +243,7 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(1.7rem, 3vw, 2.5rem);
+  font-size: clamp(0.98rem, 1.45vw, 1.25rem);
 }
 
 h2 {
@@ -260,9 +261,16 @@ h3 {
 .wide-actions,
 .modal-actions {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.topbar .secondary-button,
+.topbar .primary-button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.72rem;
 }
 
 .primary-button {
@@ -331,6 +339,1639 @@ td span,
 
 .kpi strong {
   font-size: 1.65rem;
+}
+
+.core-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.module-card {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: var(--shadow);
+}
+
+.module-card:hover {
+  border-color: rgba(31, 111, 74, 0.38);
+  transform: translateY(-1px);
+}
+
+.module-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.module-card strong {
+  font-size: 1.55rem;
+}
+
+.module-card small,
+.module-card em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #eef5ef;
+  color: var(--brand);
+  font-weight: 900;
+}
+
+.status-pill.closed {
+  background: #e8f6ec;
+  color: var(--ok);
+}
+
+.status-pill.in_progress {
+  background: #fff6df;
+  color: var(--warn);
+}
+
+.empty-module {
+  min-height: 280px;
+}
+
+.empty-state {
+  display: grid;
+  gap: 8px;
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.empty-state strong {
+  font-size: 1.05rem;
+}
+
+.empty-state p {
+  max-width: 720px;
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.irrigation-panel {
+  display: grid;
+  gap: 5px;
+  overflow: visible;
+  padding: 6px;
+}
+
+.irrigation-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(430px, 0.78fr);
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+  padding: 0 0 2px;
+  background: var(--surface);
+}
+
+.irrigation-panel-header h2 {
+  margin-bottom: 1px;
+  font-size: 0.84rem;
+}
+
+.irrigation-panel-header p {
+  margin-bottom: 0;
+  font-size: 0.58rem;
+}
+
+.irrigation-filters {
+  grid-template-columns: minmax(86px, 1fr) minmax(84px, 1fr) 66px 56px 58px;
+  min-width: 430px;
+  margin-bottom: 0;
+  padding: 2px;
+  gap: 3px;
+}
+
+.irrigation-filters label {
+  gap: 2px;
+  font-size: 0.6rem;
+}
+
+.irrigation-filters select,
+.irrigation-filters input {
+  min-height: 21px;
+  padding: 1px 6px;
+  font-size: 0.64rem;
+}
+
+.irrigation-filters button {
+  min-height: 21px;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+}
+
+.irrigation-compare-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  gap: 4px;
+  padding-bottom: 4px;
+  background: var(--surface);
+}
+
+.irrigation-section-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 7px;
+  border: 1px solid rgba(31, 111, 74, 0.16);
+  border-radius: 6px;
+  background: #f7faf6;
+  color: var(--brand);
+}
+
+.irrigation-section-title strong {
+  font-size: 0.8rem;
+}
+
+.irrigation-section-title span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 850;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-gantt {
+  display: grid;
+  gap: 5px;
+  overflow-x: auto;
+  max-height: calc(100vh - 185px);
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.irrigation-gantt-program {
+  max-height: max(170px, calc((100vh - 250px) / 2));
+  min-height: 170px;
+  gap: 5px;
+  padding-bottom: 4px;
+  border: 1px solid rgba(41, 127, 143, 0.22);
+  border-radius: 7px;
+  background: #eef8fa;
+}
+
+.irrigation-gantt-program .irrigation-block-head,
+.irrigation-gantt-program .irrigation-block-label,
+.irrigation-gantt-program .irrigation-total-head,
+.irrigation-gantt-program .irrigation-total,
+.irrigation-gantt-program .irrigation-reposition-head,
+.irrigation-gantt-program .irrigation-reposition {
+  background: #edf8fa;
+  border-color: rgba(41, 127, 143, 0.24);
+}
+
+.irrigation-gantt-program .irrigation-block-head,
+.irrigation-gantt-program .irrigation-total-head,
+.irrigation-gantt-program .irrigation-reposition-head {
+  color: #0b5f73;
+}
+
+.irrigation-program-spacer-row .calicata-label {
+  background: #f3fbfc;
+  color: #3f6470;
+}
+
+.irrigation-gantt-real {
+  max-height: max(170px, calc((100vh - 250px) / 2));
+  min-height: 170px;
+  border: 1px solid rgba(31, 111, 74, 0.16);
+  border-radius: 7px;
+  background: #fbfdfb;
+}
+
+.irrigation-row {
+  display: grid;
+  grid-template-columns: 460px max-content 64px 82px;
+  gap: 4px;
+  min-width: max-content;
+  align-items: stretch;
+}
+
+.irrigation-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+}
+
+.irrigation-block-head,
+.irrigation-block-label,
+.irrigation-total-head,
+.irrigation-total,
+.irrigation-reposition-head,
+.irrigation-reposition {
+  position: sticky;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.irrigation-block-head,
+.irrigation-block-label {
+  left: 0;
+}
+
+.irrigation-block-head {
+  z-index: 30;
+  background: #eef5ef;
+  color: var(--brand);
+  font-weight: 900;
+}
+
+.irrigation-block-label strong,
+.irrigation-block-label > span,
+.irrigation-block-label small {
+  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.12;
+}
+
+.irrigation-block-label {
+  grid-template-columns: max-content max-content minmax(0, max-content);
+  gap: 4px 7px;
+  justify-content: start;
+  align-items: center;
+  overflow: hidden;
+}
+
+.irrigation-block-label > span,
+.irrigation-block-label small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.irrigation-block-data {
+  display: grid;
+  grid-template-columns: minmax(86px, max-content) max-content;
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px 5px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.irrigation-block-data > small:first-child {
+  min-width: 0;
+  max-width: clamp(92px, 10vw, 178px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-block-label small {
+  display: block;
+}
+
+.calicata-label {
+  grid-template-columns: auto 1fr;
+}
+
+.calicata-row .calicata-label,
+.calicata-detail-row .calicata-label {
+  grid-template-columns: auto 1fr;
+}
+
+.irrigation-block-metric {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  gap: 3px;
+  align-items: center;
+  color: #0b5f73 !important;
+  font-weight: 900;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: visible !important;
+}
+
+.irrigation-block-metric span {
+  display: inline-flex;
+  min-width: max-content;
+  padding: 1px 3px;
+  border: 1px solid rgba(11, 95, 115, 0.18);
+  border-radius: 999px;
+  background: #edf8fa;
+  color: #0b5f73;
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
+.irrigation-potrero-group {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: calc(614px + (var(--days) * 30px));
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(31, 111, 74, 0.22);
+  border-radius: 8px;
+  background: #dfeee3;
+  color: var(--brand);
+}
+
+.irrigation-potrero-group-compact {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+.calicata-detail-row.is-hidden {
+  display: none;
+}
+
+.irrigation-potrero-group strong {
+  font-size: 0.9rem;
+}
+
+.irrigation-potrero-group span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.irrigation-days {
+  display: grid;
+  grid-template-columns: repeat(var(--days), 28px);
+  gap: 2px;
+}
+
+.irrigation-days b {
+  display: grid;
+  min-height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #eef5ef;
+  color: var(--brand);
+  font-size: 0.62rem;
+}
+
+.irrigation-date-cell {
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+  align-items: center;
+  justify-items: center;
+  line-height: 1;
+}
+
+.irrigation-date-cell span {
+  color: #1f6f4a;
+  font-size: 0.55rem;
+  font-weight: 950;
+}
+
+.irrigation-date-cell em {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.irrigation-date-cell.is-weekend,
+.irrigation-hour-input.is-weekend,
+.calicata-day-cell.is-weekend,
+.calicata-detail-cell.is-weekend {
+  background: #fff7e6;
+  border-color: rgba(168, 101, 0, 0.28);
+}
+
+.irrigation-date-cell.is-holiday,
+.irrigation-hour-input.is-holiday,
+.calicata-day-cell.is-holiday,
+.calicata-detail-cell.is-holiday {
+  background: #fdecec;
+  border-color: rgba(180, 35, 24, 0.32);
+}
+
+.irrigation-gantt-program .irrigation-date-cell.is-weekend,
+.irrigation-gantt-program .irrigation-hour-input.is-weekend {
+  background: #fff4d8;
+}
+
+.irrigation-gantt-program .irrigation-date-cell.is-holiday,
+.irrigation-gantt-program .irrigation-hour-input.is-holiday {
+  background: #fbe4e4;
+}
+
+.irrigation-hour-input {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--ink);
+  text-align: center;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.irrigation-hour-input::-webkit-outer-spin-button,
+.irrigation-hour-input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.irrigation-hour-input:focus {
+  outline: 2px solid rgba(31, 111, 74, 0.2);
+  border-color: var(--brand);
+}
+
+.irrigation-hour-input.has-hours {
+  background: #e8f6ec;
+  border-color: rgba(31, 111, 74, 0.35);
+  color: var(--brand);
+}
+
+.irrigation-hour-input.has-hours.is-weekend {
+  background: linear-gradient(0deg, rgba(31, 111, 74, 0.10), rgba(31, 111, 74, 0.10)), #fff7e6;
+}
+
+.irrigation-hour-input.has-hours.is-holiday {
+  background: linear-gradient(0deg, rgba(31, 111, 74, 0.10), rgba(31, 111, 74, 0.10)), #fdecec;
+}
+
+.irrigation-program-cell {
+  display: grid;
+  width: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 1px solid rgba(41, 127, 143, 0.18);
+  border-radius: 5px;
+  background: #f5fbfc;
+  color: #0b5f73;
+  font-size: 0.62rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.irrigation-program-cell.has-program {
+  background: #e6f5f7;
+  border-color: rgba(41, 127, 143, 0.36);
+}
+
+.irrigation-total-head,
+.irrigation-total {
+  position: sticky;
+  right: 86px;
+  justify-content: center;
+  text-align: center;
+  font-weight: 900;
+}
+
+.irrigation-reposition-head,
+.irrigation-reposition {
+  position: sticky;
+  right: 0;
+  justify-content: center;
+  text-align: center;
+  font-weight: 900;
+}
+
+.irrigation-total-head {
+  z-index: 30;
+  background: #eef5ef;
+  color: var(--brand);
+}
+
+.irrigation-total {
+  color: var(--ink);
+}
+
+.irrigation-reposition-head {
+  z-index: 31;
+  background: #eef5ef;
+  color: var(--brand);
+}
+
+.irrigation-reposition {
+  color: #0b5f73;
+  background: #f4fbfd;
+}
+
+.calicata-row {
+  opacity: 0.92;
+}
+
+.calicata-row .calicata-label,
+.calicata-detail-row .calicata-label {
+  background: #f7faf6;
+  border-style: dashed;
+}
+
+.calicata-day-cell {
+  display: grid;
+  width: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  background: #f7faf6;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.calicata-day-cell.has-calicata {
+  border-color: var(--calicata-border, rgba(37, 99, 168, 0.35));
+  background: var(--calicata-bg, #eaf2ff);
+  color: var(--calicata-color, var(--info));
+}
+
+.calicata-toggle {
+  position: sticky;
+  right: 86px;
+  z-index: 2;
+  width: 64px;
+  min-height: 28px;
+  border-radius: 6px;
+  background: #f7faf6;
+}
+
+.calicata-detail-cell {
+  display: grid;
+  width: 28px;
+  min-height: 24px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 0.54rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.calicata-detail-cell.has-calicata {
+  border-color: rgba(37, 99, 168, 0.24);
+  background: #f4f8ff;
+  color: var(--info);
+}
+
+.calicata-detail-row .irrigation-block-label {
+  min-height: 28px;
+}
+
+.calicata-detail-days {
+  align-items: center;
+}
+
+.irrigation-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.irrigation-tabs {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  overflow-x: auto;
+  padding: 2px 0 4px;
+  scrollbar-width: thin;
+}
+
+.irrigation-tab {
+  flex: 0 0 auto;
+  min-height: 28px;
+  border: 1px solid rgba(31, 111, 74, 0.16);
+  border-radius: 7px;
+  padding: 3px 10px;
+  background: #f7faf6;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.irrigation-tab.active {
+  border-color: rgba(31, 111, 74, 0.38);
+  background: #e8f6ec;
+  color: var(--brand);
+}
+
+.irrigation-subpanel {
+  display: grid;
+  gap: 10px;
+}
+
+.irrigation-local-filters {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.irrigation-local-filters label {
+  display: grid;
+  gap: 2px;
+  min-width: min(220px, 100%);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.irrigation-local-filters select {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 3px 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.irrigation-bandeja-entry-panel {
+  padding: 10px;
+}
+
+.irrigation-bandeja-entry-panel .panel-header {
+  margin-bottom: 8px;
+}
+
+.irrigation-bandeja-entry-panel h2 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.irrigation-bandeja-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(120px, 0.7fr) minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.irrigation-bandeja-form label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.irrigation-bandeja-form input {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.irrigation-bandeja-form button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.irrigation-program-tool {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.96), rgba(255, 255, 255, 0.96));
+}
+
+.irrigation-program-dialog {
+  width: min(620px, calc(100vw - 26px));
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(236, 253, 245, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.irrigation-program-dialog .dialog-header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.program-dialog-summary {
+  padding: 8px 10px;
+  border: 1px solid rgba(16, 185, 129, 0.20);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.program-auto-preview {
+  display: grid;
+  gap: 4px;
+  max-height: 96px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #ecfdf5;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  color: #064e3b;
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.irrigation-program-tool-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.irrigation-program-tool-head strong {
+  color: var(--brand);
+  font-size: 0.78rem;
+}
+
+.irrigation-program-tool-head span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.irrigation-program-tool-controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) repeat(3, minmax(92px, 0.7fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.irrigation-program-tool-controls label,
+.irrigation-program-blocks label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.irrigation-program-tool-controls input {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.irrigation-program-tool-controls select {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.irrigation-program-tool-controls button {
+  min-height: 28px;
+}
+
+.irrigation-hour-input.has-audit {
+  box-shadow: inset 0 -2px 0 rgba(245, 158, 11, 0.72);
+}
+
+.irrigation-program-blocks {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.irrigation-program-blocks-dialog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  max-height: 124px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fcf9;
+}
+
+.irrigation-program-blocks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
+.program-block-chip {
+  min-width: 0;
+}
+
+.program-block-chip span {
+  color: var(--brand);
+  font-size: 0.68rem;
+  font-weight: 950;
+}
+
+.program-block-chip small {
+  color: var(--muted);
+  font-size: 0.5rem;
+  font-weight: 800;
+}
+
+.dialog-section-label {
+  display: block;
+  margin: 10px 0 6px;
+  color: var(--brand);
+  font-size: 0.78rem;
+}
+
+.irrigation-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.irrigation-kpis-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.irrigation-kpis-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.irrigation-kpis .kpi {
+  min-height: 82px;
+  padding: 10px 12px;
+}
+
+.irrigation-kpis .kpi strong {
+  font-size: 1.15rem;
+}
+
+.irrigation-report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 10px;
+}
+
+.irrigation-balance-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  --balance-chart-height: min(62svh, 640px);
+}
+
+.irrigation-balance-charts .chart-panel {
+  height: var(--balance-chart-height);
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.irrigation-balance-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  padding: 10px 12px;
+  border: 1px solid rgba(31, 111, 74, 0.14);
+  border-radius: 10px;
+  background: #f7fbf8;
+}
+
+.irrigation-balance-toolbar > div {
+  display: grid;
+  gap: 2px;
+}
+
+.irrigation-balance-toolbar strong {
+  color: var(--brand);
+  font-size: 0.95rem;
+}
+
+.irrigation-balance-toolbar span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.irrigation-balance-toolbar label {
+  min-width: 190px;
+}
+
+.irrigation-balance-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px;
+  max-height: calc(var(--balance-chart-height) - 88px);
+  min-height: calc(var(--balance-chart-height) - 116px);
+  overflow: auto;
+  align-items: end;
+}
+
+.irrigation-balance-potrero-bar {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.irrigation-balance-potrero-bar > div {
+  display: flex;
+  align-items: end;
+  gap: 4px;
+  height: 150px;
+  padding: 5px;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  border-radius: 8px;
+  background: #f4f8f5;
+}
+
+.irrigation-balance-potrero-bar.active > div {
+  border-color: rgba(31, 111, 74, 0.55);
+  box-shadow: 0 0 0 2px rgba(31, 111, 74, 0.10);
+}
+
+.irrigation-balance-potrero-bar i {
+  position: relative;
+  display: block;
+  width: 50%;
+  min-height: 3px;
+  border-radius: 6px 6px 3px 3px;
+}
+
+.irrigation-balance-potrero-bar i em {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%);
+  color: #24352c;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.irrigation-balance-potrero-bar strong,
+.irrigation-balance-potrero-bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 950;
+}
+
+.irrigation-balance-potrero-bar span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.irrigation-balance-block-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  align-items: stretch;
+  align-content: start;
+  gap: 8px;
+  max-height: calc(var(--balance-chart-height) - 88px);
+  min-height: calc(var(--balance-chart-height) - 116px);
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.irrigation-bandeja-charts {
+  grid-template-columns: 1fr;
+}
+
+.irrigation-bandeja-chart {
+  display: grid;
+  grid-template-columns: repeat(var(--days, 31), minmax(14px, 1fr));
+  gap: 4px;
+  align-items: end;
+  min-height: 150px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.irrigation-bandeja-day {
+  display: grid;
+  gap: 4px;
+  min-width: 14px;
+  align-items: end;
+  justify-items: center;
+}
+
+.irrigation-bandeja-day > div {
+  display: flex;
+  gap: 2px;
+  align-items: end;
+  width: 100%;
+  height: 126px;
+  border-radius: 6px;
+  background: #f2f6f3;
+  padding: 2px;
+}
+
+.irrigation-bandeja-day i {
+  position: relative;
+  display: block;
+  width: 50%;
+  min-height: 2px;
+  border-radius: 4px 4px 2px 2px;
+}
+
+.irrigation-bandeja-day i em,
+.irrigation-volume-bars i em {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 2px);
+  transform: translateX(-50%) rotate(-90deg);
+  transform-origin: center;
+  color: #34433a;
+  font-size: 0.5rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.irrigation-bandeja-day span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.irrigation-volume-chart {
+  display: grid;
+  grid-template-columns: repeat(var(--days, 31), minmax(14px, 1fr));
+  gap: 4px;
+  align-items: end;
+  min-height: 150px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.irrigation-volume-day {
+  display: grid;
+  gap: 4px;
+  min-width: 14px;
+  align-items: end;
+  justify-items: center;
+}
+
+.irrigation-volume-bars {
+  display: flex;
+  gap: 2px;
+  align-items: end;
+  width: 100%;
+  height: 126px;
+  border-radius: 6px;
+  background: #f2f6f3;
+  padding: 2px;
+}
+
+.irrigation-volume-bars i {
+  position: relative;
+  display: block;
+  width: 50%;
+  min-height: 2px;
+  border-radius: 4px 4px 2px 2px;
+}
+
+.irrigation-volume-day span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.irrigation-chart-legend {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.irrigation-chart-legend span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.irrigation-chart-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.irrigation-volume-bars .program,
+.irrigation-chart-legend .program,
+.irrigation-block-chart-bars .program,
+.irrigation-balance-potrero-bar .program {
+  background: #297f8f;
+}
+
+.irrigation-volume-bars .real,
+.irrigation-chart-legend .real,
+.irrigation-block-chart-bars .real,
+.irrigation-balance-potrero-bar .real,
+.irrigation-bandeja-day .real {
+  background: #1f6f4a;
+}
+
+.irrigation-chart-legend .historical,
+.irrigation-bandeja-day .historical {
+  background: #d4a017;
+}
+
+.irrigation-block-chart-row {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 5px;
+  min-height: 198px;
+  padding: 7px;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  border-radius: 8px;
+  background: #f8fbf8;
+}
+
+.irrigation-block-chart-row > div:first-child {
+  display: grid;
+  gap: 2px;
+  align-items: start;
+}
+
+.irrigation-block-chart-row strong,
+.irrigation-block-chart-row span {
+  min-width: 0;
+  font-size: 0.72rem;
+}
+
+.irrigation-block-chart-row strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.1;
+}
+
+.irrigation-block-chart-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-block-chart-row span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.irrigation-block-chart-bars {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 4px;
+  min-height: 112px;
+  padding: 4px;
+  border-radius: 7px;
+  background: #eef5ef;
+}
+
+.irrigation-block-chart-bars i {
+  position: relative;
+  display: block;
+  width: 50%;
+  max-width: 28px;
+  min-height: 3px;
+  border-radius: 6px 6px 3px 3px;
+}
+
+.irrigation-block-chart-bars i em {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%);
+  color: #24352c;
+  font-size: 0.56rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.irrigation-block-chart-row small {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.irrigation-report-panel {
+  min-width: 0;
+  padding: 12px;
+}
+
+.irrigation-report-panel .panel-header {
+  margin-bottom: 8px;
+}
+
+.irrigation-report-panel .panel-header h2 {
+  font-size: 0.92rem;
+}
+
+.irrigation-report-panel .panel-header p {
+  font-size: 0.68rem;
+}
+
+.irrigation-table-scroll {
+  max-height: calc(100vh - 285px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.irrigation-table-scroll table {
+  min-width: 680px;
+}
+
+.irrigation-table-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #eef5ef;
+}
+
+.irrigation-diff-pill {
+  display: inline-flex;
+  min-width: 68px;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-weight: 900;
+}
+
+.irrigation-diff-pill.is-over {
+  background: #fff6df;
+  color: #9a5b00;
+}
+
+.irrigation-diff-pill.is-under {
+  background: #eef5ff;
+  color: #1d4f91;
+}
+
+.irrigation-diff-pill.is-even {
+  background: #e8f6ec;
+  color: var(--brand);
+}
+
+.irrigation-diff-pill.is-empty {
+  background: #f6f7f6;
+  color: var(--muted);
+}
+
+.irrigation-balance-summary-panel {
+  padding: 12px;
+}
+
+.irrigation-balance-matrix {
+  display: grid;
+  gap: 3px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 5px;
+}
+
+.irrigation-balance-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.9fr) minmax(calc(var(--days, 31) * 24px), 3fr) 74px 74px 74px;
+  gap: 4px;
+  align-items: stretch;
+  min-width: calc(150px + var(--days, 31) * 24px + 238px);
+}
+
+.irrigation-balance-row > div {
+  min-height: 28px;
+}
+
+.irrigation-balance-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: #214333;
+  font-size: 0.66rem;
+  font-weight: 950;
+}
+
+.irrigation-balance-row-head > div {
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #edf6ef;
+}
+
+.irrigation-balance-block-label {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: #f8fbf8;
+  border: 1px solid rgba(31, 111, 74, 0.10);
+}
+
+.irrigation-balance-block-label strong,
+.irrigation-balance-block-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-balance-block-label strong {
+  font-size: 0.72rem;
+}
+
+.irrigation-balance-block-label span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.irrigation-balance-days {
+  display: grid;
+  grid-template-columns: repeat(var(--days, 31), minmax(22px, 1fr));
+  gap: 3px;
+}
+
+.irrigation-balance-days b,
+.irrigation-balance-days span {
+  display: grid;
+  place-items: center;
+  min-height: 28px;
+  border-radius: 5px;
+  border: 1px solid rgba(31, 111, 74, 0.10);
+  background: #fbfdfb;
+  color: #244332;
+  font-size: 0.58rem;
+  font-weight: 950;
+}
+
+.irrigation-balance-days span.has-volume {
+  background: #e4f6ea;
+  border-color: rgba(31, 111, 74, 0.28);
+  color: #124f34;
+}
+
+.irrigation-balance-days .is-weekend {
+  background: #fff8e5;
+}
+
+.irrigation-balance-days .is-holiday {
+  background: #ffecec;
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.irrigation-balance-total {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  background: #f7fbf8;
+  font-size: 0.66rem;
+  font-weight: 950;
+}
+
+.irrigation-balance-row > .irrigation-diff-pill {
+  align-self: stretch;
+  min-width: 0;
+  border-radius: 7px;
+}
+
+.harvest-map-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.harvest-filters {
+  grid-template-columns: minmax(260px, 1.15fr) minmax(150px, 0.8fr) minmax(145px, 0.7fr) 130px auto;
+  margin-bottom: 0;
+}
+
+.harvest-date-range span {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.harvest-date-range input {
+  min-width: 0;
+}
+
+.harvest-map {
+  min-height: 620px;
+}
+
+.harvest-map-info {
+  display: grid;
+  gap: 8px;
+  width: 270px;
+  color: var(--ink);
+  font-family: inherit;
+}
+
+.harvest-map-info-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.harvest-map-info-head strong {
+  color: var(--brand);
+  font-size: 0.95rem;
+}
+
+.harvest-map-info-head span {
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #eef5ef;
+  color: var(--brand);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.harvest-map-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.harvest-map-info-grid div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.harvest-map-info-grid span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.harvest-map-info-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+  line-height: 1.15;
+}
+
+.harvest-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.harvest-ranking {
+  box-shadow: none;
+  padding: 14px;
+}
+
+@media (max-width: 980px) {
+  .harvest-filters,
+  .harvest-dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .harvest-filters,
+  .harvest-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-date-range span {
+    grid-template-columns: 1fr;
+  }
+}
+
+.harvest-rank-list {
+  display: grid;
+  gap: 8px;
+}
+
+.harvest-rank-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(120px, 1.2fr) 48px;
+  gap: 8px;
+  align-items: center;
+}
+
+.harvest-rank-row span {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-rank-row div {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.harvest-rank-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--brand), #d4a017);
+}
+
+.harvest-rank-row strong {
+  text-align: right;
+}
+
+.harvest-missing-compact {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.harvest-missing-compact > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.harvest-missing-chip {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #fff6df;
+  color: var(--warn);
+  font-size: 0.76rem;
+  font-weight: 900;
 }
 
 .map-panel {
@@ -1388,6 +3029,26 @@ th {
   box-shadow: 0 4px 14px rgba(32, 51, 38, 0.12);
 }
 
+.link-button {
+  min-height: auto;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--brand);
+  font-weight: 900;
+  text-align: center;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.auth-inline-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
 .auth-pane {
   display: none;
 }
@@ -1625,6 +3286,7 @@ textarea {
   }
 
   .kpi-grid,
+  .core-overview,
   .report-grid,
   .two-columns,
   .dashboard-ops,
@@ -3345,806 +5007,1383 @@ textarea:focus {
   margin: 8px 0 12px;
 }
 
-/* Responsive supervisor fixes */
-.panel,
-.gantt-panel,
-.order-card,
-.execution-card,
-.table-wrap,
-.gantt-table {
-  min-width: 0;
-}
-
-.order-card,
-.gantt-detail-note,
-.recipe-list span,
-.tech-strip span,
-.badge,
-.kpi,
-.panel-header,
-.card-actions,
-.top-actions {
-  overflow-wrap: anywhere;
-}
-
-@media (max-width: 1280px) {
-  .gantt-controls {
-    grid-template-columns: repeat(3, minmax(160px, 1fr));
+/* Responsive especifico para Riego: mantiene Programa y Real alineados
+   y reduce altura de cabecera/filtros en notebook, tablet y celular. */
+@media (max-width: 1180px) {
+  .irrigation-row {
+    grid-template-columns: 386px max-content 58px 74px;
   }
 
-  .gantt-detail-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .irrigation-block-label {
+    grid-template-columns: 40px 52px minmax(0, 1fr);
+    gap: 3px 6px;
+  }
+
+  .irrigation-block-data > small:first-child {
+    flex-basis: 92px;
+  }
+
+  .irrigation-days {
+    grid-template-columns: repeat(var(--days), 26px);
+    gap: 2px;
+  }
+
+  .irrigation-date-cell,
+  .irrigation-tray-cell,
+  .irrigation-program-cell,
+  .irrigation-hour-input,
+  .calicata-day-cell,
+  .calicata-detail-cell {
+    width: 26px;
+    min-height: 26px;
+  }
+
+  .irrigation-potrero-group {
+    min-width: calc(520px + (var(--days) * 28px));
   }
 }
 
-@media (max-width: 1100px) {
-  .order-grid {
+@media (max-width: 860px) {
+  .main {
+    padding: 7px 8px 14px !important;
+  }
+
+  .topbar {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 80 !important;
+    min-height: 28px !important;
+    margin: 0 0 4px !important;
+    padding: 4px 6px !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 18px rgba(8, 32, 51, 0.08) !important;
+  }
+
+  .topbar .eyebrow {
+    display: none;
+  }
+
+  .topbar h1 {
+    font-size: 0.92rem;
+  }
+
+  .topbar .ghost-button,
+  .topbar .secondary-button,
+  .topbar .primary-button {
+    min-height: 26px;
+    padding: 3px 8px;
+    font-size: 0.7rem;
+  }
+
+  .irrigation-panel {
+    gap: 3px;
+  }
+
+  .irrigation-panel-header {
+    top: 36px;
+    display: grid;
     grid-template-columns: 1fr;
+    gap: 3px;
+    padding: 2px 0;
   }
 
-  .metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 980px) {
-  .nav-group.open {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .irrigation-panel-header h2 {
+    font-size: 0.78rem;
   }
 
-  .nav-item,
-  .nav-group-toggle {
-    text-align: center;
+  .irrigation-panel-header p {
+    display: none;
   }
 
-  .panel-header,
-  .gantt-head,
-  .report-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .panel-header .top-actions,
-  .gantt-head .gantt-controls,
-  .report-toolbar .report-filters {
+  .irrigation-filters {
     width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 70px 58px auto;
+    gap: 3px;
+    padding: 3px;
   }
 
-  .gantt-controls,
-  .program-filters,
-  .report-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .irrigation-filters label {
+    font-size: 0.54rem;
   }
 
-  .gantt-species-filter {
-    grid-column: 1 / -1;
+  .irrigation-filters select,
+  .irrigation-filters input,
+  .irrigation-filters button {
+    min-height: 24px;
+    font-size: 0.64rem;
   }
 
-  .gantt-table {
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
+  .irrigation-compare-wrap {
+    top: 35px;
+    gap: 3px;
+    padding-bottom: 3px;
   }
 
-  .gantt-row {
-    grid-template-columns: 190px minmax(560px, 1fr);
-    min-width: 760px;
+  .irrigation-section-title {
+    padding: 2px 6px;
+    gap: 6px;
   }
 
-  .gantt-month-detail {
-    grid-template-columns: 190px minmax(760px, 1fr);
-    min-width: 970px;
+  .irrigation-section-title strong {
+    font-size: 0.72rem;
   }
 
-  .gantt-row > span {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-    align-self: stretch;
-    padding: 6px 8px;
-    border-right: 1px solid var(--line);
-    background: #ffffff;
+  .irrigation-section-title span {
+    font-size: 0.56rem;
   }
 
-  .gantt-months > span,
-  .gantt-month-header > span {
-    background: var(--surface-2);
+  .irrigation-gantt-program,
+  .irrigation-gantt-real {
+    min-height: 156px;
+    max-height: max(156px, calc((100svh - 212px) / 2));
   }
 
-  .card-actions,
-  .wide-actions,
-  .top-actions {
-    align-items: stretch;
+  .irrigation-row {
+    grid-template-columns: 300px max-content 54px 66px;
+    gap: 3px;
   }
 
-  .card-actions button,
-  .wide-actions button,
-  .top-actions button {
-    flex: 1 1 160px;
+  .irrigation-block-head,
+  .irrigation-block-label,
+  .irrigation-total-head,
+  .irrigation-total,
+  .irrigation-reposition-head,
+  .irrigation-reposition {
+    min-height: 25px;
+    padding: 3px 5px;
+    border-radius: 5px;
+  }
+
+  .irrigation-block-label {
+    grid-template-columns: 34px 44px minmax(0, 1fr);
+    gap: 2px 5px;
+  }
+
+  .irrigation-block-label > span,
+  .irrigation-block-label small {
+    font-size: 0.58rem;
+  }
+
+  .irrigation-block-metric {
+    width: 100%;
+    gap: 2px;
+  }
+
+  .irrigation-block-metric span {
+    padding: 1px 3px;
+    font-size: 0.52rem;
+  }
+
+  .irrigation-days {
+    grid-template-columns: repeat(var(--days), 24px);
+    gap: 1px;
+  }
+
+  .irrigation-date-cell,
+  .irrigation-tray-cell,
+  .irrigation-program-cell,
+  .irrigation-hour-input,
+  .calicata-day-cell,
+  .calicata-detail-cell {
+    width: 24px;
+    min-height: 24px;
+    font-size: 0.56rem;
+  }
+
+  .irrigation-date-cell em,
+  .irrigation-date-cell span,
+  .irrigation-tray-cell em,
+  .irrigation-tray-cell span {
+    font-size: 0.5rem;
+    line-height: 1;
+  }
+
+  .irrigation-potrero-group {
+    min-width: calc(423px + (var(--days) * 25px));
   }
 }
 
 @media (max-width: 640px) {
-  .auth-gate {
-    padding: 14px;
-  }
-
-  .auth-card,
-  .panel,
-  .order-card,
-  .execution-card,
-  .modal-body {
-    padding: 14px;
+  .app-shell:not(.locked) {
+    display: block !important;
   }
 
   .sidebar {
-    gap: 14px;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 120 !important;
+    height: auto !important;
+    padding: 7px 8px !important;
+    border-radius: 0 0 14px 14px !important;
   }
 
   .brand {
-    align-items: flex-start;
+    gap: 7px;
   }
 
-  .nav-group.open {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand small,
+  .sync-box {
+    display: none !important;
+  }
+
+  .nav {
+    display: flex !important;
+    grid-template-columns: none !important;
+    gap: 5px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .nav-group,
+  .nav-item,
+  .nav-group-toggle {
+    flex: 0 0 auto;
+  }
+
+  .nav-group-items {
+    display: none;
+  }
+
+  .nav-group-toggle,
+  .nav-item {
+    min-height: 29px;
+    padding: 4px 8px;
+    border-radius: 9px;
+    font-size: 0.68rem;
+    white-space: nowrap;
   }
 
   .main {
-    padding: 14px;
+    padding: 5px 6px 12px !important;
   }
 
   .topbar {
+    top: 48px !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 26px !important;
+  }
+
+  .topbar h1 {
+    font-size: 0.84rem;
+  }
+
+  .user-chip {
+    max-width: 138px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .irrigation-panel-header {
+    top: 84px;
+  }
+
+  .irrigation-filters {
+    grid-template-columns: minmax(96px, 1fr) minmax(96px, 1fr) 64px 52px;
+  }
+
+  .irrigation-filters button {
+    grid-column: 1 / -1;
+    min-height: 24px;
+  }
+
+  .irrigation-compare-wrap {
+    top: 84px;
+  }
+
+  .irrigation-gantt-program,
+  .irrigation-gantt-real {
+    min-height: 146px;
+    max-height: max(146px, calc((100svh - 236px) / 2));
+  }
+
+  .irrigation-row {
+    grid-template-columns: 246px max-content 48px 58px;
+  }
+
+  .irrigation-block-label {
+    grid-template-columns: 30px 39px minmax(0, 1fr);
+  }
+
+  .irrigation-block-data {
+    gap: 2px 4px;
+  }
+
+  .irrigation-block-data > small:first-child {
+    flex: 1 1 68px;
+  }
+
+  .irrigation-days {
+    grid-template-columns: repeat(var(--days), 22px);
+  }
+
+  .irrigation-date-cell,
+  .irrigation-tray-cell,
+  .irrigation-program-cell,
+  .irrigation-hour-input,
+  .calicata-day-cell,
+  .calicata-detail-cell {
+    width: 22px;
+    min-height: 23px;
+  }
+
+  .irrigation-total,
+  .irrigation-reposition {
+    font-size: 0.58rem;
+  }
+
+  .irrigation-potrero-group {
+    min-width: calc(352px + (var(--days) * 23px));
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar h1 {
+    font-size: 0.78rem;
+  }
+
+  .topbar .top-actions {
+    gap: 4px;
+  }
+
+  .topbar .ghost-button,
+  .topbar .secondary-button,
+  .topbar .primary-button {
+    padding: 3px 6px;
+    font-size: 0.62rem;
+  }
+
+  .irrigation-row {
+    grid-template-columns: 220px max-content 46px 54px;
+  }
+
+  .irrigation-block-label {
+    grid-template-columns: 28px 35px minmax(0, 1fr);
+  }
+
+  .irrigation-block-metric span {
+    font-size: 0.48rem;
+  }
+
+  .irrigation-days {
+    grid-template-columns: repeat(var(--days), 21px);
+  }
+
+  .irrigation-date-cell,
+  .irrigation-tray-cell,
+  .irrigation-program-cell,
+  .irrigation-hour-input,
+  .calicata-day-cell,
+  .calicata-detail-cell {
+    width: 21px;
+    min-height: 22px;
+  }
+
+  .irrigation-potrero-group {
+    min-width: calc(320px + (var(--days) * 22px));
+  }
+}
+
+/* Riego responsive v2: matriz fluida + columnas de comparacion a la derecha. */
+.irrigation-panel {
+  --irrigation-gap: 4px;
+  --irrigation-block-col: clamp(360px, 24vw, 520px);
+  --irrigation-day-size: clamp(28px, 1.75vw, 36px);
+  --irrigation-day-gap: 2px;
+  --irrigation-month-width: 1178px;
+  --irrigation-total-col: 64px;
+  --irrigation-reposition-col: 82px;
+  --irrigation-diff-hours-col: 72px;
+  --irrigation-diff-reposition-col: 82px;
+  --irrigation-right-reposition: calc(var(--irrigation-diff-reposition-col) + var(--irrigation-gap) + var(--irrigation-diff-hours-col) + var(--irrigation-gap));
+  --irrigation-right-total: calc(var(--irrigation-right-reposition) + var(--irrigation-reposition-col) + var(--irrigation-gap));
+}
+
+.irrigation-gantt {
+  width: 100%;
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
+.irrigation-row {
+  grid-template-columns:
+    var(--irrigation-block-col)
+    max-content
+    var(--irrigation-total-col)
+    var(--irrigation-reposition-col)
+    var(--irrigation-diff-hours-col)
+    var(--irrigation-diff-reposition-col) !important;
+  gap: var(--irrigation-gap) !important;
+}
+
+.irrigation-days {
+  grid-template-columns: repeat(var(--days), var(--irrigation-day-size)) !important;
+  gap: var(--irrigation-day-gap) !important;
+}
+
+.irrigation-date-cell,
+.irrigation-tray-cell,
+.irrigation-program-cell,
+.irrigation-hour-input,
+.calicata-day-cell,
+.calicata-detail-cell {
+  width: var(--irrigation-day-size) !important;
+  min-height: var(--irrigation-day-size) !important;
+}
+
+.irrigation-block-head,
+.irrigation-block-label,
+.irrigation-total-head,
+.irrigation-total,
+.irrigation-reposition-head,
+.irrigation-reposition,
+.irrigation-difference-head,
+.irrigation-difference {
+  position: sticky;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  min-height: max(25px, var(--irrigation-day-size));
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  font-weight: 900;
+}
+
+.irrigation-total-head,
+.irrigation-total {
+  right: var(--irrigation-right-total) !important;
+}
+
+.irrigation-reposition-head,
+.irrigation-reposition {
+  right: var(--irrigation-right-reposition) !important;
+}
+
+.irrigation-difference-hours {
+  right: calc(var(--irrigation-diff-reposition-col) + var(--irrigation-gap));
+}
+
+.irrigation-difference-reposition {
+  right: 0;
+}
+
+.irrigation-difference-head,
+.irrigation-difference {
+  justify-content: center;
+  text-align: center;
+}
+
+.irrigation-difference-head {
+  z-index: 31;
+  background: #eef5ef;
+  color: var(--brand);
+}
+
+.irrigation-difference {
+  color: var(--ink);
+}
+
+.irrigation-difference-base {
+  background: #f3fbfc;
+  color: #0b5f73;
+  font-size: 0.62rem;
+}
+
+.irrigation-difference.is-over {
+  background: #fff6df;
+  color: #9a5b00;
+}
+
+.irrigation-difference.is-under {
+  background: #eef5ff;
+  color: #1d4f91;
+}
+
+.irrigation-difference.is-even {
+  background: #e8f6ec;
+  color: var(--brand);
+}
+
+.irrigation-difference.is-empty {
+  background: #f6f7f6;
+  color: var(--muted);
+}
+
+.irrigation-gantt-program .irrigation-difference-head,
+.irrigation-gantt-program .irrigation-difference,
+.irrigation-gantt-program .irrigation-difference-base {
+  background: #edf8fa;
+  border-color: rgba(41, 127, 143, 0.24);
+  color: #0b5f73;
+}
+
+.calicata-toggle {
+  right: var(--irrigation-right-total) !important;
+  width: var(--irrigation-total-col);
+}
+
+.irrigation-potrero-group {
+  min-width: calc(
+    var(--irrigation-block-col)
+    + var(--irrigation-month-width)
+    + var(--irrigation-total-col)
+    + var(--irrigation-reposition-col)
+    + var(--irrigation-diff-hours-col)
+    + var(--irrigation-diff-reposition-col)
+    + (var(--irrigation-gap) * 5)
+  ) !important;
+}
+
+@media (min-width: 1500px) {
+  .irrigation-panel {
+    --irrigation-block-col: clamp(430px, 25vw, 560px);
+    --irrigation-day-size: clamp(32px, 1.85vw, 40px);
+    --irrigation-month-width: 1300px;
+    --irrigation-total-col: 72px;
+    --irrigation-reposition-col: 92px;
+    --irrigation-diff-hours-col: 82px;
+    --irrigation-diff-reposition-col: 94px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .irrigation-panel {
+    --irrigation-block-col: clamp(300px, 34vw, 386px);
+    --irrigation-day-size: clamp(24px, 2.35vw, 28px);
+    --irrigation-month-width: 930px;
+    --irrigation-total-col: 58px;
+    --irrigation-reposition-col: 74px;
+    --irrigation-diff-hours-col: 64px;
+    --irrigation-diff-reposition-col: 74px;
+  }
+}
+
+@media (max-width: 860px) {
+  .irrigation-panel {
+    --irrigation-block-col: clamp(246px, 48vw, 310px);
+    --irrigation-day-size: clamp(22px, 3.2vw, 25px);
+    --irrigation-month-width: 806px;
+    --irrigation-total-col: 52px;
+    --irrigation-reposition-col: 62px;
+    --irrigation-diff-hours-col: 56px;
+    --irrigation-diff-reposition-col: 64px;
+  }
+
+  .irrigation-block-head,
+  .irrigation-block-label,
+  .irrigation-total-head,
+  .irrigation-total,
+  .irrigation-reposition-head,
+  .irrigation-reposition,
+  .irrigation-difference-head,
+  .irrigation-difference {
+    padding: 3px 5px;
+    border-radius: 5px;
+  }
+
+  .irrigation-difference-head,
+  .irrigation-difference {
+    font-size: 0.56rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .irrigation-panel {
+    --irrigation-gap: 3px;
+    --irrigation-block-col: clamp(214px, 58vw, 246px);
+    --irrigation-day-size: clamp(20px, 5.4vw, 22px);
+    --irrigation-day-gap: 1px;
+    --irrigation-month-width: 712px;
+    --irrigation-total-col: 46px;
+    --irrigation-reposition-col: 54px;
+    --irrigation-diff-hours-col: 50px;
+    --irrigation-diff-reposition-col: 56px;
+  }
+
+  .irrigation-gantt-program,
+  .irrigation-gantt-real {
+    min-height: 44svh;
+    max-height: 44svh;
+  }
+
+  .irrigation-block-head,
+  .irrigation-block-label,
+  .irrigation-total-head,
+  .irrigation-total,
+  .irrigation-reposition-head,
+  .irrigation-reposition,
+  .irrigation-difference-head,
+  .irrigation-difference {
+    min-height: max(23px, var(--irrigation-day-size));
+    padding: 2px 4px;
+  }
+}
+
+@media (max-width: 420px) {
+  .irrigation-panel {
+    --irrigation-block-col: 210px;
+    --irrigation-day-size: 20px;
+    --irrigation-month-width: 650px;
+    --irrigation-total-col: 44px;
+    --irrigation-reposition-col: 52px;
+    --irrigation-diff-hours-col: 48px;
+    --irrigation-diff-reposition-col: 54px;
+  }
+}
+
+@media (max-width: 920px) {
+  .irrigation-kpis,
+  .irrigation-report-grid,
+  .irrigation-balance-charts,
+  .irrigation-bandeja-charts {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-table-scroll {
+    max-height: 46svh;
+  }
+}
+
+@media (max-width: 640px) {
+  .irrigation-tabs {
+    gap: 4px;
+  }
+
+  .irrigation-tab {
+    min-height: 27px;
+    padding: 3px 8px;
+    font-size: 0.66rem;
+  }
+
+  .irrigation-kpis,
+  .irrigation-report-grid,
+  .irrigation-balance-charts,
+  .irrigation-bandeja-charts {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-balance-charts {
+    --balance-chart-height: 56svh;
+  }
+
+  .irrigation-balance-charts .chart-panel {
+    height: var(--balance-chart-height);
+  }
+
+  .irrigation-balance-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .top-actions {
-    width: 100%;
-  }
-
-  .top-actions button,
-  .card-actions button,
-  .wide-actions button {
-    flex-basis: 100%;
-  }
-
-  .kpi-grid,
-  .metrics,
-  .form-grid,
-  .calc-preview,
-  .gantt-detail-grid,
-  .program-filters,
-  .gantt-controls,
-  .report-filters {
-    grid-template-columns: 1fr;
-  }
-
-  .gantt-species-filter {
-    grid-column: auto;
-  }
-
-  .gantt-panel {
-    padding: 12px;
-  }
-
-  .gantt-row {
-    grid-template-columns: 150px minmax(470px, 1fr);
-    min-width: 620px;
-    padding: 6px;
-  }
-
-  .gantt-month-detail {
-    grid-template-columns: 150px minmax(700px, 1fr);
-    min-width: 850px;
-  }
-
-  .gantt-day-grid b,
-  .gantt-track .gantt-stack i,
-  .gantt-day-track i {
-    font-size: 0.62rem;
-  }
-
-  .recipe-list,
-  .tech-strip {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .recipe-list span,
-  .tech-strip span {
-    border-radius: 8px;
-  }
-
-  table {
-    min-width: 620px;
-  }
-}
-
-@media (max-width: 420px) {
-  .nav-group.open {
-    grid-template-columns: 1fr;
-  }
-
-  h1 {
-    font-size: 1.45rem;
-  }
-
-  .panel-header h2,
-  .gantt-head h3 {
-    font-size: 1rem;
-  }
-
-  .gantt-row {
-    grid-template-columns: 130px minmax(430px, 1fr);
-    min-width: 560px;
-  }
-
-  .gantt-month-detail {
-    grid-template-columns: 130px minmax(650px, 1fr);
-    min-width: 780px;
-  }
-}
-
-
-
-/* Carta Gantt: colores por estado solicitado */
-.gantt-track i.active.cancelled,
-.gantt-day-track i.active.cancelled {
-  --gantt-state-color: #ef4444;
-}
-
-.gantt-track i.active.done,
-.gantt-day-track i.active.done {
-  --gantt-state-color: #16a34a;
-}
-
-.gantt-track i.active.process,
-.gantt-day-track i.active.process {
-  --gantt-state-color: #2563eb;
-}
-
-.gantt-track i.active.pending,
-.gantt-day-track i.active.pending {
-  --gantt-state-color: #facc15;
-}
-
-.gantt-track i.active,
-.gantt-day-track i.active {
-  border-color: var(--gantt-state-color, var(--program-color, var(--brand))) !important;
-  background: color-mix(in srgb, var(--gantt-state-color, var(--program-color, var(--brand))) 36%, white) !important;
-}
-
-.gantt-track i.active::after,
-.gantt-day-track i.active::after {
-  background: var(--gantt-state-color, var(--program-color, var(--brand))) !important;
-}
-
-.gantt-track i.active.cancelled,
-.gantt-day-track i.active.cancelled {
-  color: #7f1d1d;
-  text-decoration: line-through;
-}
-
-.gantt-track i.active.cancelled::after,
-.gantt-day-track i.active.cancelled::after {
-  width: 100%;
-  background: repeating-linear-gradient(45deg, #ef4444 0 6px, #fca5a5 6px 12px) !important;
-}
-
-.gantt-track i.active.pending,
-.gantt-day-track i.active.pending {
-  color: #533f03;
-}
-
-.gantt-status-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 2px 0;
-}
-
-.gantt-status-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: #111111;
-  font-size: 0.86rem;
-  font-weight: 800;
-}
-
-.gantt-status-legend i {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--gantt-state-color);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--gantt-state-color) 42%, white);
-}
-
-/* ===== Supervisor móvil: Gantt y nueva orden ===== */
-.gantt-mobile-hint {
-  display: none;
-}
-
-@media (max-width: 720px) {
-  .panel:has(.gantt-panel) {
-    padding-inline: 10px;
-  }
-
-  .gantt-panel {
-    gap: 14px;
-    padding: 12px;
-    border-radius: 18px;
-  }
-
-  .gantt-panel .gantt-head {
-    position: static !important;
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0;
-    padding: 12px;
-    border-radius: 16px;
-  }
-
-  .gantt-panel .gantt-head::before {
-    content: none !important;
-  }
-
-  .gantt-head h3 {
-    font-size: 1.05rem;
-    line-height: 1.2;
-  }
-
-  .gantt-controls {
-    display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
-    gap: 10px !important;
-    width: 100%;
-  }
-
-  .gantt-controls > label,
-  .gantt-species-filter {
+  .irrigation-balance-toolbar label {
     min-width: 0;
   }
 
-  .gantt-controls > label:first-child,
-  .gantt-species-filter,
-  .gantt-controls > label:last-child {
+  .irrigation-balance-chart {
+    grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  }
+
+  .irrigation-balance-potrero-bar > div {
+    height: 118px;
+  }
+
+  .irrigation-balance-block-chart {
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    min-height: calc(var(--balance-chart-height) - 90px);
+    max-height: calc(var(--balance-chart-height) - 90px);
+    overflow: auto;
+  }
+
+  .irrigation-volume-chart {
+    grid-template-columns: repeat(var(--days, 31), 18px);
+  }
+
+  .irrigation-bandeja-chart {
+    grid-template-columns: repeat(var(--days, 31), 18px);
+  }
+
+  .irrigation-report-panel {
+    padding: 9px;
+  }
+
+  .irrigation-table-scroll {
+    max-height: 52svh;
+  }
+
+  .irrigation-bandeja-form {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-program-tool-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-program-tool-controls button {
     grid-column: 1 / -1;
   }
-
-  .gantt-species-filter {
-    max-height: 120px;
-    overflow-y: auto;
-  }
-
-  .gantt-mobile-hint {
-    display: block;
-    margin: 0;
-    padding: 10px 12px;
-    border: 1px dashed rgba(10, 61, 98, 0.22);
-    border-radius: 12px;
-    background: #f7fbf8;
-    color: #435045;
-    font-size: 0.82rem;
-    font-weight: 800;
-  }
-
-  .gantt-table {
-    max-width: 100%;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    padding: 0 0 10px !important;
-    margin: 0 !important;
-    border-radius: 14px;
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .gantt-table::after {
-    content: "Desliza →";
-    position: sticky;
-    left: 10px;
-    bottom: 0;
-    display: inline-flex;
-    width: max-content;
-    margin-top: 6px;
-    padding: 5px 9px;
-    border-radius: 999px;
-    background: rgba(11, 45, 77, 0.92);
-    color: #ffffff;
-    font-size: 0.72rem;
-    font-weight: 900;
-  }
-
-  .gantt-row,
-  .gantt-month-detail {
-    scroll-snap-align: start;
-  }
-
-  .gantt-row > span {
-    left: 0;
-    min-width: 132px;
-    font-size: 0.78rem;
-  }
-
-  .gantt-row small {
-    max-height: 2.6em;
-    overflow: hidden;
-  }
-
-  .gantt-month-header {
-    position: sticky;
-    top: 0;
-    z-index: 4;
-    background: #f7fbf8;
-  }
-
-  .gantt-month-header > span {
-    z-index: 5;
-  }
-
-  .gantt-day-grid {
-    gap: 4px;
-  }
-
-  .gantt-day-grid b {
-    min-width: 20px;
-    padding: 5px 0;
-    border-radius: 7px;
-    background: rgba(10, 61, 98, 0.06);
-    text-align: center;
-  }
-
-  .gantt-day-track {
-    min-height: calc(var(--rows, 1) * 28px + 10px);
-    align-items: center;
-  }
-
-  .gantt-day-track i.active {
-    min-height: 22px;
-    padding: 4px 6px;
-    border-radius: 999px;
-    font-size: 0.64rem;
-    white-space: nowrap;
-  }
-
-  .gantt-detail {
-    padding: 12px;
-    border-radius: 14px;
-  }
-
-  .modal {
-    width: 100vw !important;
-    max-width: 100vw !important;
-    height: 100dvh;
-    max-height: 100dvh !important;
-    margin: 0;
-    border-radius: 0;
-  }
-
-  .modal-body {
-    max-height: 100dvh;
-    overflow-y: auto;
-    padding: 14px;
-    padding-bottom: calc(88px + env(safe-area-inset-bottom));
-  }
-
-  .modal-head {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: -14px -14px 4px;
-    padding: 14px;
-    border-bottom: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(12px);
-  }
-
-  #orderForm .form-grid,
-  #orderForm .block-picker-head,
-  #orderForm .recipe-line {
-    grid-template-columns: 1fr !important;
-  }
-
-  #orderForm .block-picker,
-  #orderForm .program-picker,
-  #orderForm .recipe-editor {
-    padding: 10px;
-    border-radius: 14px;
-  }
-
-  #orderForm .recipe-line-head {
-    display: none;
-  }
-
-  #orderForm .recipe-line {
-    padding: 10px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: #ffffff;
-  }
-
-  #orderForm .modal-actions {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 40;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.97);
-    box-shadow: 0 -16px 30px rgba(5, 20, 36, 0.14);
-  }
-
-  #orderForm .modal-actions button {
-    min-height: 46px;
-  }
 }
 
-@media (max-width: 420px) {
-  .gantt-controls {
-    grid-template-columns: 1fr !important;
-  }
-
-  .gantt-row {
-    grid-template-columns: 112px minmax(390px, 1fr) !important;
-    min-width: 502px !important;
-  }
-
-  .gantt-month-detail {
-    grid-template-columns: 112px minmax(600px, 1fr) !important;
-    min-width: 712px !important;
-  }
+/* Compactacion especifica de Riego: prioriza espacio vertical para Programa y Real. */
+.app-shell:has(#irrigation.active-view) .main {
+  padding-top: 4px;
 }
 
-/* Supervisor móvil: la Carta Gantt queda oculta hasta que el usuario la abra */
-.gantt-mobile-gate {
+.app-shell:has(#irrigation.active-view) .topbar {
+  min-height: 22px;
+  margin-bottom: 2px;
+}
+
+.app-shell:has(#irrigation.active-view) .topbar .eyebrow {
   display: none;
+}
+
+.app-shell:has(#irrigation.active-view) .topbar h1 {
+  font-size: 0.88rem;
+  line-height: 1;
+}
+
+.app-shell:has(#irrigation.active-view) .topbar .secondary-button,
+.app-shell:has(#irrigation.active-view) .topbar .primary-button {
+  min-height: 22px;
+  padding: 0 7px;
+  font-size: 0.64rem;
+}
+
+.app-shell:has(#irrigation.active-view) .panel.irrigation-panel {
+  padding: 5px 6px 6px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-header {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(420px, 0.72fr);
+  gap: 4px;
+  margin-bottom: 2px;
+  padding: 0;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-header h2 {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.05;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-header p {
+  margin: 0;
+  font-size: 0.5rem;
+  line-height: 1.05;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-filters {
+  justify-self: end;
+  width: min(100%, 560px);
+  min-width: 0;
+  grid-template-columns: minmax(78px, 1fr) minmax(78px, 1fr) 62px 52px 86px 54px;
+  padding: 2px;
+  gap: 3px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-filters label {
+  font-size: 0.5rem;
+  line-height: 1.05;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-filters select,
+.app-shell:has(#irrigation.active-view) .irrigation-filters input,
+.app-shell:has(#irrigation.active-view) .irrigation-filters button {
+  min-height: 20px;
+  padding: 1px 5px;
+  font-size: 0.6rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-section-title {
+  padding: 2px 6px;
+}
+
+.irrigation-calicatas-panel {
+  border: 1px solid rgba(31, 111, 74, 0.16);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fcf8, #ffffff);
+  padding: 6px;
+  margin-bottom: 6px;
+}
+
+.irrigation-calicatas-head {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(170px, 240px);
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 6px;
+}
+
+.irrigation-calicatas-head strong {
+  display: block;
+  color: var(--brand);
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.irrigation-calicatas-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.irrigation-calicatas-head label {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 900;
+}
+
+.irrigation-calicatas-head select {
+  width: 100%;
+  min-height: 25px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 3px 7px;
+}
+
+.irrigation-calicatas-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 320px);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.irrigation-calicata-map {
+  min-height: 218px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.irrigation-calicata-history {
+  min-height: 218px;
+  max-height: 218px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 6px;
+}
+
+.irrigation-calicata-history-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.irrigation-calicata-history-title strong {
+  color: var(--ink);
+  font-size: 0.7rem;
+}
+
+.irrigation-calicata-history-title span {
+  color: var(--muted);
+  font-size: 0.54rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.irrigation-calicata-card {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  border-radius: 7px;
+  background: #f8fbf8;
+  color: var(--ink);
+  padding: 6px;
+  margin-bottom: 5px;
+  cursor: pointer;
+}
+
+.irrigation-calicata-card:hover {
+  border-color: rgba(31, 111, 74, 0.36);
+  background: #eef8f1;
+}
+
+.irrigation-calicata-card span {
+  color: var(--muted);
+  font-size: 0.52rem;
+  font-weight: 900;
+}
+
+.irrigation-calicata-card strong {
+  color: var(--brand);
+  font-size: 0.64rem;
+  line-height: 1.1;
+}
+
+.irrigation-calicata-card small,
+.irrigation-calicata-card em {
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-style: normal;
+  line-height: 1.15;
+}
+
+.irrigation-calicata-card em {
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.irrigation-calicata-photo {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: cover;
+  border-radius: 7px;
+  margin: 6px 0;
+  border: 1px solid var(--line);
+}
+
+.irrigation-calicata-observation {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.app-shell:has(#calicatas.active-view) .main {
+  padding-top: 8px;
+}
+
+.app-shell:has(#calicatas.active-view) .topbar {
+  min-height: 30px;
+  margin-bottom: 8px;
+}
+
+.app-shell:has(#calicatas.active-view) .topbar .eyebrow {
+  display: none;
+}
+
+.app-shell:has(#calicatas.active-view) .topbar h1 {
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.calicatas-panel {
+  min-height: calc(100svh - 76px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
+.calicatas-panel-header {
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.calicatas-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.05;
+}
+
+.calicatas-panel-header p {
+  margin: 2px 0 0;
+  font-size: 0.68rem;
+}
+
+.calicatas-filters {
+  justify-content: end;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) 92px 72px;
+  gap: 6px;
+  padding: 6px;
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicatas-panel {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  margin-bottom: 0;
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicatas-layout {
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicata-map,
+.app-shell:has(#calicatas.active-view) .irrigation-calicata-history {
+  min-height: calc(100svh - 190px);
+  height: 100%;
+  max-height: none;
 }
 
 @media (max-width: 760px) {
-  .gantt-panel {
-    padding: 14px;
-    border-radius: 20px;
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-header {
+    grid-template-columns: 1fr;
   }
 
-  .gantt-mobile-gate {
-    display: grid;
-    gap: 12px;
-    align-items: center;
-    margin-bottom: 0;
-    padding: 14px;
-    border: 1px solid rgba(10, 61, 98, 0.12);
-    border-radius: 18px;
-    background: linear-gradient(135deg, rgba(240, 247, 243, 0.96), rgba(255, 255, 255, 0.96));
-    box-shadow: 0 12px 28px rgba(5, 20, 36, 0.1);
-  }
-
-  .gantt-mobile-gate strong {
-    display: block;
-    color: #0b2d4d;
-    font-size: 1rem;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .gantt-mobile-gate span {
-    display: block;
-    margin-top: 4px;
-    color: #52606d;
-    font-size: 0.88rem;
-    line-height: 1.35;
-  }
-
-  .gantt-mobile-gate .primary-button {
+  .app-shell:has(#irrigation.active-view) .irrigation-filters {
+    justify-self: stretch;
     width: 100%;
-    justify-content: center;
   }
 
-  .gantt-panel:not(.mobile-gantt-open) .gantt-head,
-  .gantt-panel:not(.mobile-gantt-open) .gantt-mobile-hint,
-  .gantt-panel:not(.mobile-gantt-open) .gantt-table,
-  .gantt-panel:not(.mobile-gantt-open) .program-color-legend,
-  .gantt-panel:not(.mobile-gantt-open) .gantt-status-legend,
-  .gantt-panel:not(.mobile-gantt-open) .gantt-detail {
-    display: none !important;
+  .irrigation-calicatas-head,
+  .irrigation-calicatas-layout {
+    grid-template-columns: 1fr;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-mobile-gate {
-    margin-bottom: 12px;
+  .irrigation-calicata-map {
+    min-height: 240px;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-head {
-    position: relative !important;
-    top: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 0 12px !important;
-    padding: 12px !important;
+  .irrigation-calicata-history {
+    min-height: 150px;
+    max-height: 190px;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-controls {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+  .calicatas-panel {
+    min-height: calc(100svh - 72px);
+    padding: 6px;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-controls label,
-  .gantt-panel.mobile-gantt-open .gantt-species-filter {
-    min-width: 0;
+  .calicatas-panel-header,
+  .calicatas-filters {
+    grid-template-columns: 1fr;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-species-filter {
-    grid-column: 1 / -1;
+  .app-shell:has(#calicatas.active-view) .irrigation-calicatas-layout {
+    grid-template-columns: 1fr;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-mobile-hint {
-    display: block;
-    margin: 8px 0 10px;
-    padding: 10px 12px;
-    border-radius: 14px;
-    background: rgba(11, 45, 77, 0.08);
-    color: #0b2d4d;
-    font-size: 0.84rem;
-    font-weight: 700;
+  .app-shell:has(#calicatas.active-view) .irrigation-calicata-map {
+    min-height: 58svh;
   }
 
-  .gantt-panel.mobile-gantt-open .gantt-table {
-    width: max-content;
-    min-width: 980px;
-    max-width: none;
-    padding-top: 0 !important;
-    margin-top: 0 !important;
-    overflow: visible;
-  }
-
-  .gantt-panel.mobile-gantt-open {
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-  }
-
-  .gantt-panel.mobile-gantt-open .gantt-row > span {
-    position: sticky;
-    left: 0;
-    z-index: 5;
-    background: rgba(255,255,255,0.96);
-    border-right: 1px solid rgba(10, 61, 98, 0.08);
+  .app-shell:has(#calicatas.active-view) .irrigation-calicata-history {
+    min-height: 24svh;
+    max-height: 28svh;
   }
 }
 
-@media (max-width: 760px) and (orientation: portrait) {
-  .gantt-panel.mobile-gantt-open .gantt-table {
-    opacity: 0.72;
-  }
-
-  .gantt-panel.mobile-gantt-open .gantt-mobile-hint::after {
-    content: " Recomendado: horizontal.";
-  }
+/* Ajuste fino Gantt: celdas textuales al ancho del contenido, sin huecos ni desbordes. */
+.app-shell:has(#irrigation.active-view) .irrigation-panel {
+  --irrigation-block-col: clamp(250px, 18vw, 292px);
+  --irrigation-day-size: clamp(18px, 1.15vw, 22px);
+  --irrigation-day-gap: 1px;
+  --irrigation-month-width: 100%;
+  --irrigation-total-col: clamp(40px, 3vw, 46px);
+  --irrigation-reposition-col: clamp(50px, 3.4vw, 58px);
+  --irrigation-diff-hours-col: clamp(46px, 3.2vw, 54px);
+  --irrigation-diff-reposition-col: clamp(50px, 3.5vw, 58px);
 }
 
-@media (max-width: 920px) and (orientation: landscape) {
-  .gantt-panel.mobile-gantt-open .gantt-table {
-    min-width: 1120px;
-  }
-
-  .gantt-panel.mobile-gantt-open .gantt-day-grid {
-    min-height: 44px;
-  }
-
-  .gantt-panel.mobile-gantt-open .gantt-day-track i {
-    min-height: 24px;
-    font-size: 0.72rem;
-  }
-}
-
-/* Mejoras Supervisor: Gantt móvil y detalle de salidas */
-.gantt-track i.active,
-.gantt-day-track i.active {
-  gap: 6px;
-}
-
-
-.gantt-track i.active span,
-.gantt-day-track i.active span {
+.app-shell:has(#irrigation.active-view) .irrigation-row {
+  grid-template-columns:
+    var(--irrigation-block-col)
+    minmax(0, 1fr)
+    var(--irrigation-total-col)
+    var(--irrigation-reposition-col)
+    var(--irrigation-diff-hours-col)
+    var(--irrigation-diff-reposition-col) !important;
+  width: 100%;
   min-width: 0;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-days {
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr)) !important;
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-potrero-group {
+  width: 100%;
+  min-width: 0 !important;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-date-cell,
+.app-shell:has(#irrigation.active-view) .irrigation-hour-input,
+.app-shell:has(#irrigation.active-view) .calicata-day-cell,
+.app-shell:has(#irrigation.active-view) .calicata-detail-cell {
+  width: 100% !important;
+  min-width: 0;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-block-label {
+  grid-template-columns: minmax(18px, max-content) minmax(34px, max-content) minmax(0, 1fr) !important;
+  justify-content: stretch;
+  gap: 2px 4px;
+  padding-inline: 4px;
+  overflow: hidden;
+}
+
+.app-shell:has(#irrigation.active-view) .calicata-label {
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+}
+
+.app-shell:has(#irrigation.active-view) .calicata-label strong {
+  max-width: none;
+  min-width: max-content;
+}
+
+.app-shell:has(#irrigation.active-view) .calicata-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-block-label strong {
+  min-width: 1.4ch;
+  max-width: 3.5ch;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.gantt-bottom-filter {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.72);
+.app-shell:has(#irrigation.active-view) .irrigation-block-label > span {
+  min-width: max-content;
 }
 
-.gantt-bottom-filter label {
-  display: grid;
-  gap: 6px;
-  min-width: min(260px, 100%);
-  font-weight: 800;
+.app-shell:has(#irrigation.active-view) .calicata-label strong {
+  max-width: none;
+  min-width: max-content;
+  overflow: visible;
+  text-overflow: clip;
 }
 
-.gantt-bottom-filter small {
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.dispatch-info-modal {
-  max-width: min(1080px, 96vw);
-}
-
-.dispatch-info-summary {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.dispatch-info-summary span {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-2);
-  font-weight: 900;
-}
-
-.dispatch-info-summary strong {
-  color: var(--muted);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-}
-
-.dispatch-info-table table {
-  min-width: 920px;
-}
-
-@media (max-width: 760px) {
-  .gantt-bottom-filter {
-    display: grid;
-  }
-
-  .dispatch-info-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .dispatch-info-modal {
-    width: 96vw;
-  }
-}
-
-/* Ajuste solicitado: porcentaje visible también en la línea de avance de la orden */
-.order-progress-percent {
-  margin-left: auto;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.10);
-  color: #1d4ed8;
-  font-size: 0.82rem;
+.app-shell:has(#irrigation.active-view) .calicata-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gantt-bottom-filter small {
-  display: block;
-  margin-top: 5px;
+.app-shell:has(#irrigation.active-view) .irrigation-block-data {
+  display: grid !important;
+  grid-template-columns: minmax(52px, 0.7fr) minmax(112px, 1.3fr);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  gap: 2px 4px;
 }
 
-@media (max-width: 720px) {
-  .progress-box div:first-child {
+.app-shell:has(#irrigation.active-view) .irrigation-block-data > small:first-child {
+  flex: initial !important;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-block-metric {
+  display: inline-flex !important;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden !important;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-block-metric span {
+  min-width: 0;
+  padding-inline: 2px;
+  font-size: 0.46rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-total-head,
+.app-shell:has(#irrigation.active-view) .irrigation-total,
+.app-shell:has(#irrigation.active-view) .irrigation-reposition-head,
+.app-shell:has(#irrigation.active-view) .irrigation-reposition,
+.app-shell:has(#irrigation.active-view) .irrigation-difference-head,
+.app-shell:has(#irrigation.active-view) .irrigation-difference {
+  padding-inline: 4px;
+  font-size: 0.62rem;
+}
+
+@media (min-width: 1500px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel {
+    --irrigation-block-col: clamp(270px, 16vw, 320px);
+    --irrigation-month-width: 100%;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel {
+    --irrigation-block-col: clamp(220px, 24vw, 250px);
+    --irrigation-month-width: 100%;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-block-data {
+    grid-template-columns: minmax(46px, 0.62fr) minmax(102px, 1.38fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel {
+    --irrigation-block-col: 206px;
+    --irrigation-month-width: 100%;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-block-data {
+    grid-template-columns: minmax(68px, 1fr);
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-block-metric {
+    grid-column: 1;
     flex-wrap: wrap;
-    align-items: center;
+    width: 100%;
   }
-  .order-progress-percent {
-    margin-left: 0;
+
+  .app-shell:has(#irrigation.active-view) .irrigation-block-metric span {
+    font-size: 0.5rem;
   }
+}
+
+/* Capa visual final: jerarquia clara de menu, color mas vivo y lectura limpia. */
+:root {
+  --bg: #eef7f4;
+  --surface: #ffffff;
+  --surface-2: #e7f3ee;
+  --ink: #10251f;
+  --muted: #5d6f69;
+  --line: rgba(13, 74, 57, 0.14);
+  --brand: #047857;
+  --brand-2: #10b981;
+  --accent: #f59e0b;
+  --shadow: 0 20px 46px rgba(9, 52, 41, 0.14);
+  --glow: 0 18px 40px rgba(16, 185, 129, 0.18);
+}
+
+body {
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.10), transparent 28%),
+    linear-gradient(180deg, #f6fbf8 0%, #edf7f3 100%);
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #063a31 0%, #07513f 52%, #08382f 100%);
+}
+
+.nav {
+  gap: 7px;
+}
+
+.nav-group-toggle {
+  min-height: 34px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+
+.nav-group.open {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  margin: -2px 0 2px 8px;
+  padding: 6px 0 6px 10px;
+  border-left: 2px solid rgba(16, 185, 129, 0.58);
+}
+
+.nav-group .nav-item {
+  min-height: 28px;
+  border-radius: 7px;
+  padding-left: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8f5e7;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.nav-group .nav-item:hover,
+.nav-group .nav-item.active {
+  background: #dff8ea;
+  color: #064e3b;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav > .nav-item {
+  font-weight: 900;
+}
+
+.nav > .nav-item.active {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.24), rgba(16, 185, 129, 0.18));
+  box-shadow: inset 4px 0 0 var(--accent), 0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+.panel,
+.kpi,
+.chart-panel,
+.irrigation-report-panel {
+  border-radius: 10px;
+  transition: transform 170ms ease, box-shadow 170ms ease, border-color 170ms ease;
+}
+
+.panel:hover,
+.kpi:hover,
+.chart-panel:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--glow);
+}
+
+.kpi small:empty {
+  display: none;
+}
+
+.irrigation-bandeja-day i em {
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #12362b;
+  font-size: 0.52rem;
+}
+
+.app-shell:has(#calicatas.active-view) .main {
+  height: 100svh;
+  overflow: hidden;
+}
+
+.app-shell:has(#calicatas.active-view) .calicatas-panel {
+  height: calc(100svh - 58px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicatas-panel {
+  overflow: hidden;
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicatas-layout {
+  overflow: hidden;
+}
+
+.app-shell:has(#calicatas.active-view) .irrigation-calicata-history {
+  overflow-y: auto;
 }
