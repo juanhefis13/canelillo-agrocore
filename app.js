@@ -191,7 +191,11 @@ let irrigationMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let irrigationSpeciesFilter = "Todas";
 let irrigationPotreroFilter = "Todos";
 let irrigationTab = "gantt";
+let irrigationFiltersOpen = false;
 let irrigationStationFilter = "Todas";
+let irrigationBandejaScrollLeft = 0;
+let irrigationBandejaScrollTop = 0;
+let irrigationBandejaFocusPending = true;
 let irrigationBalancePotreroFilter = "Todos";
 let irrigationBalanceSelectedPotreros = new Set();
 let calicataYear = String(new Date().getFullYear());
@@ -231,7 +235,14 @@ let dashboardMapElement = null;
 let dashboardMapOverlays = [];
 let harvestMap = null;
 let harvestMapElement = null;
-let harvestMapOverlays = [];
+let harvestMapBaseOverlays = [];
+let harvestMapMarkerCache = new Map();
+let harvestMapBaseReady = false;
+let harvestMapBaseBounds = null;
+let harvestMapRenderVersion = 0;
+let harvestMapVisibleRecords = [];
+let harvestMapIdleListener = null;
+let harvestMapMarkerRenderFrame = 0;
 let harvestInfoWindow = null;
 let irrigationCalicataBlockFilter = "Todos";
 let irrigationCalicataMap = null;
@@ -245,9 +256,31 @@ let harvestDateToFilter = "";
 let harvestCrewFilter = "Todas";
 let harvestStatusFilter = "Todos";
 let harvestSdpFilter = "Todos";
+let harvestUniqueCacheSource = null;
+let harvestUniqueCache = [];
+let harvestFilteredCacheSource = null;
+let harvestFilteredCacheKey = "";
+let harvestFilteredCache = [];
+let pestMonitoringRecords = null;
+let pestMonitoringLoadPromise = null;
+let pestMonitoringLoadError = "";
+let pestMonitoringDataSource = "";
+let pestMonitoringDateFrom = "";
+let pestMonitoringDateTo = "";
+let pestMonitoringPest = "Chanchito blanco";
+let pestMonitoringPotrero = "Todos";
+let pestMonitoringBlock = "Todos";
+let pestMonitoringMap = null;
+let pestMonitoringMapElement = null;
+let pestMonitoringPolygons = [];
+let pestMonitoringHeatOverlay = null;
+let pestMonitoringInfoWindow = null;
+let pestMonitoringMapRenderVersion = 0;
+let pestMonitoringCurrentSummaries = new Map();
 let weatherStationYear = String(new Date().getFullYear());
 let weatherStationMonth = "Todos";
 let weatherStationCloudAvailable = true;
+let weatherStationImportPreview = null;
 let irrigationEvaporationLoadedMonths = new Set();
 let irrigationEvaporationLoadingMonths = new Set();
 let supabaseSession = loadSession();
@@ -283,6 +316,7 @@ const views = {
   irrigation: document.getElementById("irrigation"),
   calicatas: document.getElementById("calicatas"),
   fertilizers: document.getElementById("fertilizers"),
+  pestMonitoring: document.getElementById("pestMonitoring"),
   applicationDashboard: document.getElementById("applicationDashboard"),
   program: document.getElementById("program"),
   manager: document.getElementById("manager"),
@@ -302,6 +336,7 @@ const titles = {
   irrigation: "Riegos",
   calicatas: "Calicatas",
   fertilizers: "Fertilizantes",
+  pestMonitoring: "Monitoreo de plagas",
   applicationDashboard: "Panel principal de aplicaciones",
   program: "Programa de aplicaciones",
   manager: "Panel supervisor encargado",
@@ -605,11 +640,11 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
     bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "reports", "harvestMap", "harvestInfo"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo"]
   };
   return (permissions[normalized] || []).includes(view);
 }
@@ -624,11 +659,11 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
     bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "reports", "harvestMap", "harvestInfo"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo"]
   };
   return new Set(viewsByRole[normalized] || [defaultViewForRole(normalized)]);
 }
@@ -778,6 +813,7 @@ async function saveIrrigationBandejaRecord() {
       irrigationYear = date.slice(0, 4);
       irrigationMonth = date.slice(5, 7);
     }
+    irrigationBandejaFocusPending = true;
     renderIrrigation();
     showToast("Dato de bandeja guardado");
   } catch (error) {
@@ -1864,14 +1900,130 @@ function updateIrrigationComparisonCells(blockId, daysInMonth, monthPrefix, hist
   }
 }
 
-function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal }) {
+function selectHistoricalPriorityDays({ daysInMonth, startDay, eventCount, skipDays, historicalMap }) {
+  const candidates = Array.from({ length: Math.max(0, daysInMonth - startDay + 1) }, (_, index) => {
+    const day = startDay + index;
+    const value = Number(historicalMap.get(String(day).padStart(2, "0")));
+    return { day, value };
+  }).filter((item) => Number.isFinite(item.value) && item.value > 0);
+  const sortedValues = candidates.map((item) => item.value).sort((a, b) => a - b);
+  const hasMeaningfulRange = sortedValues.length >= 5 && sortedValues.at(-1) - sortedValues[0] > 0.05;
+  const lowCutoff = hasMeaningfulRange ? sortedValues[Math.floor((sortedValues.length - 1) * 0.2)] : null;
+  const manualInterval = Number.isFinite(skipDays) && skipDays >= 0;
+  const requestedEvents = Math.max(0, Math.floor(eventCount));
+  const availableDays = Math.max(0, daysInMonth - startDay + 1);
+  const possibleEvents = Math.min(requestedEvents, availableDays);
+  let interval = manualInterval
+    ? Math.max(1, Math.floor(skipDays) + 1)
+    : possibleEvents <= 1 ? 1 : Math.max(1, Math.floor((daysInMonth - startDay) / (possibleEvents - 1)));
+  const theoreticalDays = [];
+  if (manualInterval) {
+    for (let day = startDay; day <= daysInMonth && theoreticalDays.length < requestedEvents; day += interval) {
+      theoreticalDays.push(day);
+    }
+  } else if (possibleEvents === 1) {
+    theoreticalDays.push(startDay);
+  } else if (possibleEvents > 1) {
+    const span = daysInMonth - startDay;
+    for (let index = 0; index < possibleEvents; index += 1) {
+      theoreticalDays.push(startDay + Math.floor(index * span / (possibleEvents - 1)));
+    }
+  }
+
+  const valuesByDay = new Map(candidates.map((item) => [item.day, item.value]));
+  const windowRadius = theoreticalDays.length <= 1 ? Math.min(2, Math.max(0, daysInMonth - startDay)) : interval >= 10 ? 2 : interval >= 3 ? 1 : 0;
+  let skippedLowDays = 0;
+  let adjustedEvents = 0;
+  const selected = theoreticalDays.map((targetDay, index) => {
+    const previousTarget = theoreticalDays[index - 1];
+    const nextTarget = theoreticalDays[index + 1];
+    const segmentStart = previousTarget === undefined ? startDay : Math.floor((previousTarget + targetDay) / 2) + 1;
+    const segmentEnd = nextTarget === undefined ? daysInMonth : Math.floor((targetDay + nextTarget) / 2);
+    const from = Math.max(startDay, segmentStart, targetDay - windowRadius);
+    const to = Math.min(daysInMonth, segmentEnd, targetDay + windowRadius);
+    const targetValue = valuesByDay.get(targetDay);
+    const targetIsLow = lowCutoff !== null && Number.isFinite(targetValue) && targetValue <= lowCutoff;
+    const targetHasNoHistory = !Number.isFinite(targetValue);
+    if ((!targetIsLow && !targetHasNoHistory) || windowRadius === 0) return targetDay;
+
+    const nearbyHighDays = [];
+    for (let day = from; day <= to; day += 1) {
+      const value = valuesByDay.get(day);
+      if (!Number.isFinite(value)) continue;
+      if (lowCutoff !== null && value <= lowCutoff) continue;
+      nearbyHighDays.push({ day, value, distance: Math.abs(day - targetDay) });
+    }
+    nearbyHighDays.sort((a, b) => b.value - a.value || a.distance - b.distance || a.day - b.day);
+    const chosenDay = nearbyHighDays[0]?.day ?? targetDay;
+    if (chosenDay !== targetDay) {
+      adjustedEvents += 1;
+      if (targetIsLow) skippedLowDays += 1;
+    }
+    return chosenDay;
+  });
+
+  return {
+    days: [...selected].sort((a, b) => a - b),
+    theoreticalDays,
+    availableHistoricalDays: candidates.length,
+    eligibleHighDays: lowCutoff === null ? candidates.length : candidates.filter((item) => item.value > lowCutoff).length,
+    skippedLowDays,
+    adjustedEvents,
+    lowCutoff,
+    windowRadius,
+    interval,
+    manualInterval
+  };
+}
+
+function automaticIrrigationBlockPlan({ block, daysInMonth, historicalMap, historicalTotal, hoursPerEvent, targetRepos, skipDays, startDay }) {
+  const precipitation = Number(block.precipitation);
+  if (!Number.isFinite(precipitation) || precipitation <= 0) {
+    return { block, error: "el bloque no tiene precipitacion valida" };
+  }
+  if (!Number.isFinite(historicalTotal) || historicalTotal <= 0) {
+    return { block, error: "no hay bandeja historica para el mes" };
+  }
+  const repositionPerEvent = hoursPerEvent * precipitation / historicalTotal * 100;
+  if (!Number.isFinite(repositionPerEvent) || repositionPerEvent <= 0) {
+    return { block, error: "no se pudo calcular el aporte de cada riego" };
+  }
+  const requiredEvents = Math.max(1, Math.ceil(targetRepos / repositionPerEvent - 1e-9));
+  const selection = selectHistoricalPriorityDays({ daysInMonth, startDay, eventCount: requiredEvents, skipDays, historicalMap });
+  const achievedRepos = selection.days.length * repositionPerEvent;
+  const difference = achievedRepos - targetRepos;
+  let warning = "";
+  if (selection.days.length < requiredEvents) {
+    const causes = [];
+    if (startDay > 1) causes.push(`el programa comienza el dia ${startDay}`);
+    if (selection.manualInterval && selection.interval > 1) causes.push(`la frecuencia de ${selection.interval} dias no permite mas eventos antes de terminar el mes`);
+    if (selection.availableHistoricalDays === 0) causes.push("no hay valores historicos diarios desde la fecha de inicio");
+    warning = `Bloque ${block.block || "-"}: no se pudo llegar a ${number(targetRepos, 1)}% porque ${causes.join(", ") || "no existen suficientes dias elegibles"}. Se logro ${number(achievedRepos, 1)}%.`;
+  } else if (difference > 0.5) {
+    warning = `Bloque ${block.block || "-"}: no se pudo llegar exactamente a ${number(targetRepos, 1)}% porque cada riego de ${number(hoursPerEvent, 1)} h agrega ${number(repositionPerEvent, 1)}%. Para no quedar bajo el objetivo se programaron ${requiredEvents} riegos y por eso se paso a ${number(achievedRepos, 1)}%.`;
+  }
+  return {
+    block,
+    days: selection.days,
+    requiredEvents,
+    achievedRepos,
+    repositionPerEvent,
+    warning,
+    ...selection
+  };
+}
+
+function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, historicalEvaporationMap, historicalEvaporationTotal, monthEvaporationTotal }) {
   const hoursInput = document.getElementById("programAutoHours");
   const reposInput = document.getElementById("programAutoReposicion");
   const skipInput = document.getElementById("programAutoSkipDays");
+  const startInput = document.getElementById("programAutoStartDate");
   const hoursPerEvent = Number(hoursInput?.value);
   const targetRepos = Number(reposInput?.value);
   const skipText = String(skipInput?.value || "").trim();
   const skipDays = skipText === "" ? NaN : Number(skipText);
+  const startDate = String(startInput?.value || `${monthPrefix}-01`);
+  const startDay = Number(startDate.slice(8, 10));
   if (!Number.isFinite(hoursPerEvent) || hoursPerEvent <= 0) {
     showToast("Ingresa horas por riego validas");
     return;
@@ -1880,22 +2032,33 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
     showToast("Ingresa reposicion objetivo");
     return;
   }
+  if (!startDate.startsWith(`${monthPrefix}-`) || !Number.isInteger(startDay) || startDay < 1 || startDay > daysInMonth) {
+    showToast("Selecciona una fecha de inicio dentro del mes");
+    return;
+  }
   const selectedIds = new Set([...document.querySelectorAll("[data-program-auto-block]:checked")].map((input) => input.dataset.programAutoBlock));
   const targetBlocks = blocks.filter((block) => selectedIds.has(block.id));
   if (!targetBlocks.length) {
     showToast("Selecciona al menos un bloque");
     return;
   }
-  targetBlocks.forEach((block) => {
-    const precipitation = Number(block.precipitation);
-    if (!Number.isFinite(precipitation) || precipitation <= 0 || !Number.isFinite(historicalEvaporationTotal) || historicalEvaporationTotal <= 0) return;
-    const requiredHours = targetRepos / 100 * historicalEvaporationTotal / precipitation;
-    const eventCount = Math.min(daysInMonth, Math.max(1, Math.ceil(requiredHours / hoursPerEvent)));
-    const dates = automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays);
+  const plans = targetBlocks.map((block) => automaticIrrigationBlockPlan({
+    block,
+    daysInMonth,
+    historicalMap: historicalEvaporationMap,
+    historicalTotal: historicalEvaporationTotal,
+    hoursPerEvent,
+    targetRepos,
+    skipDays,
+    startDay
+  }));
+  plans.forEach((plan) => {
+    if (plan.error) return;
+    const block = plan.block;
     for (let index = 1; index <= daysInMonth; index += 1) {
       const date = `${monthPrefix}-${String(index).padStart(2, "0")}`;
       const key = irrigationKey(block.id, date);
-      if (dates.includes(index)) {
+      if (plan.days.includes(index)) {
         irrigationProgramHours[key] = hoursPerEvent;
         setIrrigationCellAudit("program", block.id, date);
         scheduleIrrigationProgramCellSave(block.id, date, hoursPerEvent);
@@ -1912,31 +2075,9 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
   saveIrrigationProgramAudit();
   document.getElementById("irrigationProgramDialog")?.close();
   renderIrrigation();
-  showToast("Programa generado");
-}
-
-function automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays) {
-  if (eventCount <= 1) return [1];
-  if (Number.isFinite(skipDays) && skipDays >= 0) {
-    const interval = Math.max(1, skipDays + 1);
-    const dates = [];
-    for (let day = 1; day <= daysInMonth && dates.length < eventCount; day += interval) {
-      dates.push(day);
-    }
-    let day = daysInMonth;
-    while (dates.length < eventCount && day >= 1) {
-      if (!dates.includes(day)) dates.push(day);
-      day -= interval;
-    }
-    return [...new Set(dates)].sort((a, b) => a - b).slice(0, eventCount);
-  }
-  const step = (daysInMonth - 1) / (eventCount - 1);
-  const dates = Array.from({ length: eventCount }, (_, index) => {
-    if (index === 0) return 1;
-    if (index === eventCount - 1) return daysInMonth;
-    return Math.floor(1 + step * index);
-  });
-  return [...new Set(dates)].sort((a, b) => a - b);
+  const warnings = plans.map((plan) => plan.warning || (plan.error ? `Bloque ${plan.block.block || "-"}: ${plan.error}.` : "")).filter(Boolean);
+  showToast(warnings.length ? "Programa generado con alerta" : "Programa generado");
+  if (warnings.length) setTimeout(() => window.alert(`Alerta del programa de riego\n\n${warnings.join("\n\n")}`), 0);
 }
 
 function irrigationVisibleBlocksForProgramDialog() {
@@ -1963,6 +2104,10 @@ function openIrrigationProgramDialog() {
   const blocks = irrigationVisibleBlocksForProgramDialog();
   const potreros = [...new Set(blocks.map((block) => block.potrero).filter(Boolean))].sort(comparePotrero);
   const selectedPotrero = irrigationPotreroFilter !== "Todos" && potreros.includes(irrigationPotreroFilter) ? irrigationPotreroFilter : potreros[0] || "";
+  const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+  const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
+  const firstDate = `${monthPrefix}-01`;
+  const lastDate = `${monthPrefix}-${String(daysInMonth).padStart(2, "0")}`;
   dialog.innerHTML = `
     <form method="dialog" class="dialog-card irrigation-program-dialog">
       <div class="dialog-header">
@@ -1973,7 +2118,7 @@ function openIrrigationProgramDialog() {
         <button class="icon-button" type="button" data-action="close-dialog">x</button>
       </div>
       <div class="program-dialog-summary">
-        <span>Selecciona potrero, bloques y objetivo de reposicion.</span>
+        <span>Respeta la frecuencia y mueve cada riego solo a una evaporacion alta cercana cuando la fecha teorica es baja.</span>
       </div>
       <div class="irrigation-program-tool-controls">
         <label>Potrero
@@ -1981,13 +2126,16 @@ function openIrrigationProgramDialog() {
             ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === selectedPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}
           </select>
         </label>
+        <label>Fecha de inicio
+          <input id="programAutoStartDate" type="date" min="${firstDate}" max="${lastDate}" value="${firstDate}">
+        </label>
         <label>Horas por riego
           <input id="programAutoHours" type="number" min="0" step="0.5" inputmode="decimal" value="5">
         </label>
         <label>Reposicion objetivo %
           <input id="programAutoReposicion" type="number" min="0" step="1" inputmode="decimal" placeholder="Ej. 65">
         </label>
-        <label>Frecuencia
+        <label>Dias a saltar
           <input id="programAutoSkipDays" type="number" min="0" step="1" inputmode="numeric" placeholder="Auto">
         </label>
       </div>
@@ -2025,6 +2173,7 @@ function updateIrrigationProgramDialogPreview() {
   const targetRepos = Number(document.getElementById("programAutoReposicion")?.value);
   const skipText = String(document.getElementById("programAutoSkipDays")?.value || "").trim();
   const skipDays = skipText === "" ? NaN : Number(skipText);
+  const startDate = String(document.getElementById("programAutoStartDate")?.value || "");
   const selectedIds = new Set([...document.querySelectorAll("[data-program-auto-block]:checked")].map((input) => input.dataset.programAutoBlock));
   const blocks = irrigationVisibleBlocksForProgramDialog().filter((block) => selectedIds.has(block.id));
   const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
@@ -2033,18 +2182,25 @@ function updateIrrigationProgramDialogPreview() {
     const day = String(index + 1).padStart(2, "0");
     return Number(historicalMap.get(day)) || 0;
   }).reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(hours) || hours <= 0 || !Number.isFinite(targetRepos) || targetRepos <= 0 || !blocks.length || historicalTotal <= 0) {
+  const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+  const startDay = Number(startDate.slice(8, 10));
+  if (!Number.isFinite(hours) || hours <= 0 || !Number.isFinite(targetRepos) || targetRepos <= 0 || !blocks.length || historicalTotal <= 0 || !startDate.startsWith(`${monthPrefix}-`) || !Number.isInteger(startDay)) {
     preview.innerHTML = `<span>Completa horas, reposicion y bloques para ver la distribucion.</span>`;
     return;
   }
   const rows = blocks.slice(0, 4).map((block) => {
-    const precipitation = Number(block.precipitation);
-    if (!Number.isFinite(precipitation) || precipitation <= 0) return `<span>Bloque ${escapeHtml(block.block || "-")}: sin precipitacion</span>`;
-    const requiredHours = targetRepos / 100 * historicalTotal / precipitation;
-    const eventCount = Math.min(daysInMonth, Math.max(1, Math.ceil(requiredHours / hours)));
-    const dates = automaticIrrigationProgramDays(daysInMonth, eventCount, skipDays);
-    const achieved = irrigationReposicion(eventCount * hours, precipitation, historicalTotal);
-    return `<span>Bloque ${escapeHtml(block.block || "-")}: dias ${dates.join(", ")} · repos. ${irrigationReposicionLabel(achieved)}</span>`;
+    const plan = automaticIrrigationBlockPlan({
+      block,
+      daysInMonth,
+      historicalMap,
+      historicalTotal,
+      hoursPerEvent: hours,
+      targetRepos,
+      skipDays,
+      startDay
+    });
+    if (plan.error) return `<span class="is-warning">Bloque ${escapeHtml(block.block || "-")}: ${escapeHtml(plan.error)}</span>`;
+    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>Bloque ${escapeHtml(block.block || "-")}</strong> · dias ${plan.days.join(", ") || "-"} · repos. ${number(plan.achievedRepos, 1)}%${plan.adjustedEvents ? ` · ${plan.adjustedEvents} ajuste${plan.adjustedEvents === 1 ? "" : "s"} por evaporacion` : ""}</span>`;
   });
   const extra = blocks.length > 4 ? `<span>+${blocks.length - 4} bloques mas con el mismo criterio</span>` : "";
   preview.innerHTML = `${rows.join("")}${extra}`;
@@ -2069,30 +2225,148 @@ function focusIrrigationCellFromKeyboard(input, key) {
   return true;
 }
 
-function renderIrrigationBandejasPanel({ rows, stationRows, monthLabel, year, monthEvaporationTotal, historicalEvaporationTotal, selectedStation }) {
-  const realValues = rows.map((row) => row.real).filter((value) => value !== null);
-  const historicalValues = rows.map((row) => row.historical).filter((value) => value !== null);
-  const realAverage = irrigationAverage(realValues);
-  const historicalAverage = irrigationAverage(historicalValues);
-  const years = [...new Set((state.irrigationEvaporation || [])
-    .filter((item) => String(item.date || "").slice(5, 7) === irrigationMonth)
-    .map((item) => String(item.date || "").slice(0, 4))
-    .filter(Boolean))]
-    .sort();
-  const historicRecords = (state.irrigationEvaporation || [])
-    .filter((item) => String(item.date || "").slice(5, 7) === irrigationMonth)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .slice(0, 180);
-  const defaultDay = Math.min(new Date().getDate(), new Date(Number(year), Number(irrigationMonth), 0).getDate());
-  const defaultDate = `${year}-${irrigationMonth}-${String(defaultDay).padStart(2, "0")}`;
+function irrigationBandejaDataYears() {
+  return [...new Set((state.irrigationEvaporation || [])
+    .map((item) => Number(String(item.date || "").slice(0, 4)))
+    .filter((year) => Number.isInteger(year) && year >= 1900 && year <= 2100))]
+    .sort((a, b) => a - b);
+}
+
+function irrigationBandejaVisibleYears(focusYear) {
+  const dataYears = irrigationBandejaDataYears();
+  const focus = Math.min(2100, Math.max(1900, Number(focusYear) || new Date().getFullYear()));
+  if (!dataYears.length) return [focus - 1, focus, focus + 1];
+  let first = Math.min(dataYears[0], focus - 1);
+  let last = Math.max(dataYears.at(-1), focus + 1);
+  const maxVisibleYears = 25;
+  if (last - first + 1 > maxVisibleYears) {
+    last = Math.min(Math.max(dataYears.at(-1), focus + 1), focus + 2);
+    first = last - maxVisibleYears + 1;
+    if (first > focus - 1) {
+      first = focus - 1;
+      last = first + maxVisibleYears - 1;
+    }
+  }
+  first = Math.max(1900, first);
+  last = Math.min(2100, last);
+  return Array.from({ length: last - first + 1 }, (_, index) => first + index);
+}
+
+function irrigationBandejaHistoricalDays(month, evaporationMap) {
+  const buckets = new Map();
+  evaporationMap.forEach((item, date) => {
+    if (String(date).slice(5, 7) !== month) return;
+    const value = Number(item.evaporation);
+    if (!Number.isFinite(value)) return;
+    const day = String(date).slice(8, 10);
+    const bucket = buckets.get(day) || { sum: 0, count: 0 };
+    bucket.sum += value;
+    bucket.count += 1;
+    buckets.set(day, bucket);
+  });
+  return new Map([...buckets.entries()].map(([day, bucket]) => [day, {
+    average: bucket.count ? bucket.sum / bucket.count : null,
+    count: bucket.count
+  }]));
+}
+
+function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
+  const monthName = monthOptions().find((item) => item.value === month)?.label || month;
+  const maxDays = new Date(2000, Number(month), 0).getDate();
+  const historicalDays = irrigationBandejaHistoricalDays(month, evaporationMap);
+  const historicalMonthDays = Array.from(historicalDays.values())
+    .map((item) => Number(item.average))
+    .filter(Number.isFinite);
+  const historicalMonth = historicalMonthDays.length
+    ? historicalMonthDays.reduce((sum, value) => sum + value, 0) / historicalMonthDays.length
+    : null;
+  const accumulators = new Map(years.map((year) => [year, 0]));
+  const hasStarted = new Set();
+  const totals = new Map(years.map((year) => [year, 0]));
+  const counts = new Map(years.map((year) => [year, 0]));
+  const rows = Array.from({ length: maxDays }, (_, index) => {
+    const day = index + 1;
+    const dayText = String(day).padStart(2, "0");
+    const historical = historicalDays.get(dayText);
+    const yearCells = years.map((year) => {
+      const validDay = day <= new Date(year, Number(month), 0).getDate();
+      if (!validDay) {
+        return `<td class="bandeja-date is-unavailable">-</td><td class="bandeja-value is-unavailable">-</td><td class="bandeja-accum is-unavailable">-</td>`;
+      }
+      const date = `${year}-${month}-${dayText}`;
+      const rawValue = evaporationMap.get(date)?.evaporation;
+      const hasValue = rawValue !== null && rawValue !== undefined && Number.isFinite(Number(rawValue));
+      if (hasValue) {
+        accumulators.set(year, accumulators.get(year) + Number(rawValue));
+        totals.set(year, totals.get(year) + Number(rawValue));
+        counts.set(year, counts.get(year) + 1);
+        hasStarted.add(year);
+      }
+      const focusClass = String(year) === String(irrigationYear) ? " is-focus-year" : "";
+      const carriedClass = !hasValue && hasStarted.has(year) ? " is-carried" : "";
+      return `
+        <td class="bandeja-date${focusClass}">${dayText}-${month}-${String(year).slice(-2)}</td>
+        <td class="bandeja-value${focusClass} ${hasValue ? "has-value" : ""}">${hasValue ? irrigationBandejaLabel(rawValue) : "-"}</td>
+        <td class="bandeja-accum${focusClass}${carriedClass}">${hasStarted.has(year) ? irrigationBandejaLabel(accumulators.get(year)) : "-"}</td>
+      `;
+    }).join("");
+    return `
+      <tr>
+        <th class="bandeja-day" scope="row">${day}</th>
+        ${yearCells}
+        <td class="bandeja-historical" title="${historical ? `Promedio de ${historical.count} anos` : "Sin registros historicos"}">${historical ? irrigationBandejaLabel(historical.average) : "-"}</td>
+      </tr>`;
+  }).join("");
+  const footerCells = years.map((year) => {
+    const total = totals.get(year);
+    const count = counts.get(year);
+    const average = count ? total / count : null;
+    const focusClass = String(year) === String(irrigationYear) ? " is-focus-year" : "";
+    return `<td class="bandeja-date${focusClass}">Total mes</td><td class="bandeja-value${focusClass}" title="Promedio de ${count} dia${count === 1 ? "" : "s"}">${count ? irrigationBandejaLabel(average) : "-"}</td><td class="bandeja-accum${focusClass}">${count ? irrigationBandejaLabel(total) : "-"}</td>`;
+  }).join("");
   return `
-    <div class="irrigation-subpanel">
+    <section class="irrigation-bandeja-month" data-bandeja-month="${month}">
+      <table class="irrigation-bandeja-matrix-table" style="--bandeja-years:${years.length}">
+        <colgroup>
+          <col class="bandeja-col-day">
+          ${years.map(() => '<col class="bandeja-col-date"><col class="bandeja-col-value"><col class="bandeja-col-accum">').join("")}
+          <col class="bandeja-col-historical">
+        </colgroup>
+        <thead>
+          <tr class="bandeja-month-heading">
+            <th class="bandeja-month-fixed" colspan="4"><div><strong>${monthName}</strong><span>Prom. hist. mes ${historicalMonth === null ? "-" : irrigationBandejaLabel(historicalMonth)}</span></div></th>
+            <th class="bandeja-month-fill" colspan="${years.length * 3 - 2}" aria-hidden="true"></th>
+          </tr>
+          <tr class="bandeja-year-heading">
+            <th rowspan="2" class="bandeja-day">Dia</th>
+            ${years.map((year) => `<th colspan="3" data-bandeja-year="${year}" class="${String(year) === String(irrigationYear) ? "is-focus-year" : ""}">${year}</th>`).join("")}
+            <th rowspan="2" class="bandeja-historical">Prom. hist.<small>por dia</small></th>
+          </tr>
+          <tr class="bandeja-fields-heading">
+            ${years.map((year) => {
+              const focusClass = String(year) === String(irrigationYear) ? " class=\"is-focus-year\"" : "";
+              return `<th${focusClass}>Fecha</th><th${focusClass}>Evap.</th><th${focusClass}>Acum.</th>`;
+            }).join("")}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><th class="bandeja-day">Mes</th>${footerCells}<td class="bandeja-historical"><strong>${irrigationBandejaLabel(historicalMonth)}</strong><small>Prom. hist. mes</small></td></tr></tfoot>
+      </table>
+    </section>`;
+}
+
+function renderIrrigationBandejasPanel({ year }) {
+  const focusYear = Number(year) || new Date().getFullYear();
+  const years = irrigationBandejaVisibleYears(focusYear);
+  const dataYears = irrigationBandejaDataYears();
+  const evaporationMap = evaporationByDateMap(state.irrigationEvaporation || []);
+  const dates = [...evaporationMap.keys()].sort();
+  const defaultDay = Math.min(new Date().getDate(), new Date(focusYear, Number(irrigationMonth), 0).getDate());
+  const defaultDate = `${focusYear}-${irrigationMonth}-${String(defaultDay).padStart(2, "0")}`;
+  const rangeLabel = dates.length ? `${dates[0]} a ${dates.at(-1)}` : "Sin registros";
+  return `
+    <div class="irrigation-subpanel irrigation-bandeja-history-panel">
       <section class="panel irrigation-bandeja-entry-panel">
-        <div class="panel-header">
-          <div>
-            <h2>Nuevo dato de bandeja</h2>
-          </div>
-        </div>
         <form id="irrigationBandejaForm" class="irrigation-bandeja-form">
           <label>Fecha
             <input name="fecha" type="date" required value="${defaultDate}">
@@ -2103,72 +2377,57 @@ function renderIrrigationBandejasPanel({ rows, stationRows, monthLabel, year, mo
           <label>Estacion
             <input name="estacion" type="text" placeholder="Nombre o codigo">
           </label>
-          <button class="primary-button" type="button" data-action="save-irrigation-bandeja">Guardar</button>
+          <button class="primary-button" type="button" data-action="save-irrigation-bandeja">Guardar dato</button>
         </form>
       </section>
-      <div class="irrigation-kpis">
-        ${kpi("Bandeja mes", irrigationBandejaLabel(realAverage), `${monthLabel} ${year}`)}
-        ${kpi("Total bandeja", irrigationBandejaLabel(monthEvaporationTotal), `${realValues.length} dias`)}
-        ${kpi("Promedio historico", irrigationBandejaLabel(historicalAverage), `${years.length} anos`)}
-        ${kpi("Total historico", irrigationBandejaLabel(historicalEvaporationTotal), monthLabel)}
+      <div class="irrigation-bandeja-summary">
+        <span><strong>${number(evaporationMap.size, 0)}</strong> dias registrados</span>
+        <span><strong>${number(dataYears.length, 0)}</strong> anos con datos</span>
+        <span><strong>${escapeHtml(rangeLabel)}</strong> rango disponible</span>
       </div>
-      <div class="irrigation-balance-charts irrigation-bandeja-charts">
-        ${chartPanel("Bandeja diaria", "Dato diario contra promedio historico del mismo dia", irrigationBandejaDailyChart(rows))}
-      </div>
-      <div class="irrigation-report-grid">
-        <section class="panel irrigation-report-panel">
-          <div class="panel-header">
-            <div>
-              <h2>Bandeja diaria</h2>
-            </div>
+      <section class="panel irrigation-bandeja-matrix-panel">
+        <div class="irrigation-bandeja-matrix-help">
+          <span>Desplaza verticalmente para cambiar de mes.</span>
+          <span>Izquierda: anos anteriores · Derecha: anos siguientes.</span>
+        </div>
+        <div id="irrigationBandejaMatrixScroll" class="irrigation-bandeja-matrix-scroll">
+          <div class="irrigation-bandeja-matrix-content">
+            ${monthOptions().map((item) => irrigationBandejaMonthMatrix(item.value, years, evaporationMap)).join("")}
           </div>
-          <div class="compact-table irrigation-table-scroll">
-            <table>
-              <thead><tr><th>Dia</th><th>Fecha</th><th>Bandeja</th><th>Historico</th><th>Dif. hist.</th></tr></thead>
-              <tbody>
-                ${rows.map((row) => `
-                  <tr>
-                    <td>${row.day}</td>
-                    <td>${row.date}</td>
-                    <td>${irrigationBandejaLabel(row.real)}</td>
-                    <td>${irrigationBandejaLabel(row.historical)}</td>
-                    <td>${row.difference === null ? "-" : irrigationBandejaLabel(row.difference)}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section class="panel irrigation-report-panel">
-          <div class="panel-header">
-            <div>
-              <h2>Historico de bandejas</h2>
-            </div>
-          </div>
-          <div class="compact-table irrigation-table-scroll">
-            <table>
-              <thead><tr><th>Fecha</th><th>Evaporacion</th><th>Estacion</th><th>Dif. estacion</th></tr></thead>
-              <tbody>
-                ${historicRecords.map((item) => {
-                  const station = irrigationStationLabel(item.station);
-                  const stationValue = Number(item.station);
-                  const stationDiff = Number.isFinite(Number(item.evaporation)) && Number.isFinite(stationValue) ? Number(item.evaporation) - stationValue : null;
-                  return `
-                    <tr>
-                      <td>${escapeHtml(item.date || "-")}</td>
-                      <td>${irrigationBandejaLabel(item.evaporation)}</td>
-                      <td>${escapeHtml(station)}</td>
-                      <td>${stationDiff === null ? "-" : irrigationBandejaLabel(stationDiff)}</td>
-                    </tr>
-                  `;
-                }).join("") || `<tr><td colspan="4">No hay registros historicos para este mes.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </div>
-  `;
+        </div>
+      </section>
+    </div>`;
+}
+
+function focusIrrigationBandejaMatrix(year = irrigationYear, month = irrigationMonth, behavior = "auto") {
+  const scroller = document.getElementById("irrigationBandejaMatrixScroll");
+  if (!scroller) return;
+  const yearHeader = scroller.querySelector(`[data-bandeja-year="${CSS.escape(String(year))}"]`);
+  const monthSection = scroller.querySelector(`[data-bandeja-month="${CSS.escape(String(month))}"]`);
+  if (yearHeader) scroller.scrollTo({ left: Math.max(0, yearHeader.offsetLeft - 64), top: scroller.scrollTop, behavior });
+  if (monthSection) scroller.scrollTo({ left: scroller.scrollLeft, top: Math.max(0, monthSection.offsetTop - 4), behavior });
+}
+
+function wireIrrigationBandejaMatrix() {
+  const scroller = document.getElementById("irrigationBandejaMatrixScroll");
+  if (!scroller) return;
+  requestAnimationFrame(() => {
+    if (irrigationBandejaFocusPending) {
+      focusIrrigationBandejaMatrix(irrigationYear, irrigationMonth);
+      irrigationBandejaFocusPending = false;
+    } else {
+      scroller.scrollLeft = irrigationBandejaScrollLeft;
+      scroller.scrollTop = irrigationBandejaScrollTop;
+    }
+  });
+  scroller.addEventListener("scroll", () => {
+    irrigationBandejaScrollLeft = scroller.scrollLeft;
+    irrigationBandejaScrollTop = scroller.scrollTop;
+  }, { passive: true });
+  document.getElementById("irrigationBandejaMonthJump")?.addEventListener("change", (event) => {
+    irrigationMonth = event.target.value;
+    focusIrrigationBandejaMatrix(irrigationYear, irrigationMonth, "smooth");
+  });
 }
 
 function irrigationBalanceSelectionLabel(selectedPotreros) {
@@ -2488,6 +2747,8 @@ function harvestRecordStatus(record) {
 }
 
 function uniqueHarvestRecords(records = state.harvestRecords || []) {
+  const cacheable = records === state.harvestRecords;
+  if (cacheable && harvestUniqueCacheSource === records) return harvestUniqueCache;
   const byBin = new Map();
   records.forEach((record) => {
     const key = harvestBinKey(record);
@@ -2495,10 +2756,18 @@ function uniqueHarvestRecords(records = state.harvestRecords || []) {
     const prev = byBin.get(key);
     if (!prev || String(record.scanDate || record.createdAt || "") > String(prev.scanDate || prev.createdAt || "")) byBin.set(key, record);
   });
-  return [...byBin.values()];
+  const unique = [...byBin.values()];
+  if (cacheable) {
+    harvestUniqueCacheSource = records;
+    harvestUniqueCache = unique;
+  }
+  return unique;
 }
 
 function filteredHarvestRecords(records = state.harvestRecords || []) {
+  const cacheable = records === state.harvestRecords;
+  const cacheKey = `${harvestDateFromFilter}|${harvestDateToFilter}|${harvestCrewFilter}|${harvestStatusFilter}|${harvestSdpFilter}`;
+  if (cacheable && harvestFilteredCacheSource === records && harvestFilteredCacheKey === cacheKey) return harvestFilteredCache;
   const filtered = records.filter((record) => {
     const date = harvestRecordDate(record);
     if (harvestDateFromFilter && (!date || date < harvestDateFromFilter)) return false;
@@ -2508,7 +2777,13 @@ function filteredHarvestRecords(records = state.harvestRecords || []) {
     if (harvestSdpFilter !== "Todos" && (record.sdp || "Sin SDP") !== harvestSdpFilter) return false;
     return true;
   });
-  return uniqueHarvestRecords(filtered);
+  const unique = uniqueHarvestRecords(filtered);
+  if (cacheable) {
+    harvestFilteredCacheSource = records;
+    harvestFilteredCacheKey = cacheKey;
+    harvestFilteredCache = unique;
+  }
+  return unique;
 }
 
 function harvestCrewValue(record) {
@@ -3293,6 +3568,7 @@ function render() {
     irrigation: renderIrrigation,
     calicatas: renderCalicatas,
     fertilizers: renderFertilizers,
+    pestMonitoring: renderPestMonitoring,
     applicationDashboard: renderApplicationDashboard,
     program: renderProgram,
     manager: renderManager,
@@ -3330,6 +3606,11 @@ function coreModuleCard(view, label, value, hint, meta) {
   `;
 }
 
+function weatherStationImportButton() {
+  if (!hasRole("admin")) return "";
+  return `<button class="secondary-button weather-import-button" type="button" data-action="open-weather-station-import">Actualizar BD</button>`;
+}
+
 function renderDashboard() {
   const dailyRows = [...(state.weatherStationDaily || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const years = [...new Set(dailyRows.map((row) => String(row.date || "").slice(0, 4)).filter(Boolean))].sort();
@@ -3348,6 +3629,7 @@ function renderDashboard() {
             <span class="weather-eyebrow">Estacion climatica</span>
             <h2>Monitoreo meteorologico</h2>
           </div>
+          ${weatherStationImportButton()}
         </div>
         <div class="empty-state">
           <strong>${weatherStationCloudAvailable ? "Sin mediciones disponibles" : "Estacion pendiente de configurar"}</strong>
@@ -3376,17 +3658,20 @@ function renderDashboard() {
           <h2>Condiciones termicas</h2>
           <p>${number(summary.records, 0)} registros · cobertura ${number(summary.completeness, 1)}%</p>
         </div>
-        <div class="weather-station-filters" aria-label="Filtros de estacion climatica">
-          <label>Ano
-            <select id="weatherStationYearFilter">
-              ${years.map((year) => `<option value="${year}" ${year === weatherStationYear ? "selected" : ""}>${year}</option>`).join("")}
-            </select>
-          </label>
-          <label>Periodo
-            <select id="weatherStationMonthFilter">
-              ${monthOptions.map(([value, label]) => `<option value="${value}" ${value === weatherStationMonth ? "selected" : ""}>${label}</option>`).join("")}
-            </select>
-          </label>
+        <div class="weather-station-header-actions">
+          ${weatherStationImportButton()}
+          <div class="weather-station-filters" aria-label="Filtros de estacion climatica">
+            <label>Ano
+              <select id="weatherStationYearFilter">
+                ${years.map((year) => `<option value="${year}" ${year === weatherStationYear ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label>Periodo
+              <select id="weatherStationMonthFilter">
+                ${monthOptions.map(([value, label]) => `<option value="${value}" ${value === weatherStationMonth ? "selected" : ""}>${label}</option>`).join("")}
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -3395,7 +3680,7 @@ function renderDashboard() {
         ${weatherStationKpi("Minima del periodo", summary.hasRows ? `${number(summary.minimum, 1)} °C` : "-", summary.minimumDate ? weatherStationDateLabel(summary.minimumDate, { day: true }) : "", "minimum")}
         ${weatherStationKpi("Maxima del periodo", summary.hasRows ? `${number(summary.maximum, 1)} °C` : "-", summary.maximumDate ? weatherStationDateLabel(summary.maximumDate, { day: true }) : "", "maximum")}
         ${weatherStationKpi("Horas sobre 7 °C", summary.hasRows ? `${number(summary.hoursAbove7, 1)} h` : "-", "Suma de intervalos medidos", "thermal")}
-        ${weatherStationKpi("Grados-dia base 7 °C", summary.hasRows ? `${number(summary.degreeDays, 1)} °C-dia` : "-", "Acumulado termico", "degree")}
+        ${weatherStationKpi("Grados-dia base 7 °C", summary.hasRows ? `${number(summary.degreeDays, 1)} °C-dia` : "-", "Metodo Tmax/Tmin diario", "degree")}
         ${weatherStationKpi("Dias con helada", summary.hasRows ? number(summary.frostDays, 0) : "-", summary.hasRows ? `${number(summary.totalFrostHours, 1)} h bajo 0 °C` : "", "frost")}
       </div>
 
@@ -3412,13 +3697,14 @@ function renderDashboard() {
           <div class="weather-panel-title">
             <div><h3>Duracion de heladas</h3><p>Horas acumuladas por intensidad</p></div>
           </div>
+          ${weatherFrostWindow(rows)}
           ${weatherFrostBands(summary)}
         </section>
       </div>
 
       <section class="panel weather-frost-history">
         <div class="weather-panel-title">
-          <div><h3>Resumen diario de heladas</h3><p>Temperatura minima y duracion por rango</p></div>
+          <div><h3>Resumen diario de heladas</h3><p>Temperatura minima, horario corregido y duracion por rango</p></div>
         </div>
         ${weatherFrostTable(rows)}
       </section>
@@ -3433,6 +3719,325 @@ function renderDashboard() {
     weatherStationMonth = event.target.value;
     renderDashboard();
   });
+}
+
+function weatherStationImportFileInput() {
+  return `<input id="weatherStationExcelInput" type="file" accept=".xlsx,.xls" hidden>`;
+}
+
+function wireWeatherStationImportInput() {
+  document.getElementById("weatherStationExcelInput")?.addEventListener("change", analyzeWeatherStationExcel);
+}
+
+function openWeatherStationImportDialog() {
+  if (!supabaseSession || !hasRole("admin")) {
+    showToast("Solo un administrador puede actualizar la base de datos climatica");
+    return;
+  }
+  weatherStationImportPreview = null;
+  const dialog = document.getElementById("weatherStationImportDialog");
+  dialog.innerHTML = `
+    <div class="modal-body weather-import-modal-body">
+      <div class="modal-head">
+        <div><h2>Actualizar base de datos</h2><p>Estacion climatica</p></div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="weather-import-intro">
+        <strong>Selecciona el Excel de la estacion</strong>
+        <span>Columnas requeridas: FECHA, HORA, TEMP OUT, HI TEMP y LOW TEMP.</span>
+      </div>
+      <button class="weather-file-picker" type="button" data-action="choose-weather-station-excel">
+        <strong>Seleccionar archivo Excel</strong>
+        <span>Se comparara fecha y hora antes de guardar.</span>
+      </button>
+      ${weatherStationImportFileInput()}
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+      </div>
+    </div>
+  `;
+  wireWeatherStationImportInput();
+  dialog.showModal();
+}
+
+function renderWeatherStationImportLoading(fileName, message = "Analizando registros...") {
+  const dialog = document.getElementById("weatherStationImportDialog");
+  dialog.innerHTML = `
+    <div class="modal-body weather-import-modal-body">
+      <div class="modal-head"><div><h2>Actualizar base de datos</h2><p>${escapeHtml(fileName)}</p></div></div>
+      <div class="weather-import-loading" role="status" aria-live="polite">
+        <span class="weather-import-spinner"></span>
+        <strong>${escapeHtml(message)}</strong>
+        <small>El archivo no se guardara hasta confirmar la importacion.</small>
+      </div>
+    </div>
+  `;
+}
+
+function stationExcelHeader(value) {
+  return normalizeText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function stationExcelDate(value) {
+  let year;
+  let month;
+  let day;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    year = value.getFullYear();
+    month = value.getMonth() + 1;
+    day = value.getDate();
+  } else if (typeof value === "number" && window.XLSX?.SSF?.parse_date_code) {
+    const parsed = window.XLSX.SSF.parse_date_code(value);
+    if (!parsed) return "";
+    year = parsed.y;
+    month = parsed.m;
+    day = parsed.d;
+  } else {
+    const text = String(value ?? "").trim();
+    let match = text.match(/^(\d{4})[-/]([01]?\d)[-/]([0-3]?\d)(?:\s|$)/);
+    if (match) {
+      year = Number(match[1]);
+      month = Number(match[2]);
+      day = Number(match[3]);
+    } else {
+      match = text.match(/^([0-3]?\d)[-/]([01]?\d)[-/](\d{2}|\d{4})(?:\s|$)/);
+      if (!match) return "";
+      day = Number(match[1]);
+      month = Number(match[2]);
+      year = Number(match[3]);
+      if (year < 100) year += year < 70 ? 2000 : 1900;
+    }
+  }
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function stationExcelTime(value) {
+  let hour;
+  let minute;
+  let second;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    hour = value.getHours();
+    minute = value.getMinutes();
+    second = value.getSeconds();
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    const fraction = ((value % 1) + 1) % 1;
+    const totalSeconds = Math.round(fraction * 86400) % 86400;
+    hour = Math.floor(totalSeconds / 3600);
+    minute = Math.floor((totalSeconds % 3600) / 60);
+    second = totalSeconds % 60;
+  } else {
+    const match = String(value ?? "").trim().match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+    if (!match) return "";
+    hour = Number(match[1]);
+    minute = Number(match[2]);
+    second = Number(match[3] || 0);
+  }
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) return "";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
+}
+
+function stationExcelTemperature(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).trim().replace(/\s+/g, "").replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= -60 && parsed <= 70 ? parsed : null;
+}
+
+function parseWeatherStationExcelRows(matrix) {
+  if (!Array.isArray(matrix) || !matrix.length) throw new Error("El Excel no contiene filas");
+  const headers = matrix[0].map(stationExcelHeader);
+  const expected = {
+    fecha: headers.indexOf("fecha"),
+    hora: headers.indexOf("hora"),
+    tempOut: headers.indexOf("tempout"),
+    hiTemp: headers.indexOf("hitemp"),
+    lowTemp: headers.indexOf("lowtemp")
+  };
+  const missing = Object.entries(expected).filter(([, index]) => index < 0).map(([key]) => ({
+    fecha: "FECHA", hora: "HORA", tempOut: "TEMP OUT", hiTemp: "HI TEMP", lowTemp: "LOW TEMP"
+  })[key]);
+  if (missing.length) throw new Error(`Faltan columnas requeridas: ${missing.join(", ")}`);
+
+  const unique = new Map();
+  const invalidSamples = [];
+  let spreadsheetRows = 0;
+  let validRows = 0;
+  let duplicateRows = 0;
+  matrix.slice(1).forEach((row, index) => {
+    if (!Array.isArray(row) || !row.some((value) => value !== null && value !== undefined && String(value).trim() !== "")) return;
+    spreadsheetRows += 1;
+    const date = stationExcelDate(row[expected.fecha]);
+    const time = stationExcelTime(row[expected.hora]);
+    const tempOut = stationExcelTemperature(row[expected.tempOut]);
+    const hiTemp = stationExcelTemperature(row[expected.hiTemp]);
+    const lowTemp = stationExcelTemperature(row[expected.lowTemp]);
+    const errors = [];
+    if (!date) errors.push("fecha");
+    if (!time) errors.push("hora");
+    if (tempOut === null) errors.push("temp out");
+    if (hiTemp === null) errors.push("hi temp");
+    if (lowTemp === null) errors.push("low temp");
+    if (hiTemp !== null && lowTemp !== null && hiTemp < lowTemp) errors.push("maxima menor que minima");
+    if (errors.length) {
+      if (invalidSamples.length < 5) invalidSamples.push({ row: index + 2, reason: errors.join(", ") });
+      return;
+    }
+    validRows += 1;
+    const key = `${date}|${time}`;
+    if (unique.has(key)) duplicateRows += 1;
+    unique.set(key, {
+      fecha: date,
+      hora: time,
+      temp_out: tempOut,
+      hi_temp: hiTemp,
+      low_temp: lowTemp,
+      fuente: "excel_estacion"
+    });
+  });
+  return {
+    spreadsheetRows,
+    validRows,
+    duplicateRows,
+    invalidRows: spreadsheetRows - validRows,
+    invalidSamples,
+    uniqueRows: [...unique.values()].sort((a, b) => `${a.fecha} ${a.hora}`.localeCompare(`${b.fecha} ${b.hora}`))
+  };
+}
+
+async function analyzeWeatherStationExcel(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!/\.(xlsx|xls)$/i.test(file.name)) {
+    showToast("Selecciona un archivo Excel .xlsx o .xls");
+    input.value = "";
+    return;
+  }
+  if (!window.XLSX) {
+    showToast("No se pudo cargar el lector de Excel. Revisa la conexion y recarga la pagina.");
+    return;
+  }
+  renderWeatherStationImportLoading(file.name);
+  try {
+    const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) throw new Error("El Excel no contiene hojas");
+    const matrix = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true });
+    const parsed = parseWeatherStationExcelRows(matrix);
+    if (!parsed.uniqueRows.length) throw new Error("No se encontraron lecturas validas");
+    const firstDate = parsed.uniqueRows[0].fecha;
+    const lastDate = parsed.uniqueRows.at(-1).fecha;
+    renderWeatherStationImportLoading(file.name, "Comparando con Supabase...");
+    const existingRows = await sbSelectAll("estacion_climatica", `select=fecha,hora&fecha=gte.${firstDate}&fecha=lte.${lastDate}&order=fecha.asc,hora.asc`);
+    const existingKeys = new Set(existingRows.map((row) => `${stationExcelDate(row.fecha)}|${stationExcelTime(row.hora)}`));
+    const newRows = parsed.uniqueRows.filter((row) => !existingKeys.has(`${row.fecha}|${row.hora}`));
+    weatherStationImportPreview = {
+      ...parsed,
+      fileName: file.name,
+      sheetName,
+      firstDate,
+      lastDate,
+      existingRows: parsed.uniqueRows.length - newRows.length,
+      newRows
+    };
+    renderWeatherStationImportPreview();
+  } catch (error) {
+    weatherStationImportPreview = null;
+    renderWeatherStationImportError(file.name, error.message);
+  }
+}
+
+function renderWeatherStationImportPreview() {
+  const preview = weatherStationImportPreview;
+  if (!preview) return;
+  const dialog = document.getElementById("weatherStationImportDialog");
+  const invalidDetail = preview.invalidSamples.length
+    ? `<div class="weather-import-errors"><strong>Filas omitidas</strong>${preview.invalidSamples.map((item) => `<span>Fila ${item.row}: ${escapeHtml(item.reason)}</span>`).join("")}</div>`
+    : "";
+  dialog.innerHTML = `
+    <div class="modal-body weather-import-modal-body">
+      <div class="modal-head">
+        <div><h2>Vista previa</h2><p>${escapeHtml(preview.fileName)} · ${escapeHtml(preview.sheetName)}</p></div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="weather-import-range"><span>Periodo detectado</span><strong>${preview.firstDate} a ${preview.lastDate}</strong></div>
+      <div class="weather-import-summary">
+        <article><span>Filas del Excel</span><strong>${number(preview.spreadsheetRows, 0)}</strong></article>
+        <article><span>Ya existentes</span><strong>${number(preview.existingRows, 0)}</strong></article>
+        <article class="is-new"><span>Nuevas</span><strong>${number(preview.newRows.length, 0)}</strong></article>
+        <article class="is-warning"><span>Omitidas</span><strong>${number(preview.invalidRows + preview.duplicateRows, 0)}</strong></article>
+      </div>
+      <div class="weather-import-note">
+        <strong>${preview.newRows.length ? "Solo se insertaran las lecturas nuevas." : "La base de datos ya contiene todas estas lecturas."}</strong>
+        <span>Los registros se comparan mediante FECHA + HORA. Los existentes no se modifican.</span>
+      </div>
+      ${invalidDetail}
+      ${weatherStationImportFileInput()}
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="choose-weather-station-excel">Cambiar archivo</button>
+        <button class="primary-button" type="button" data-action="import-weather-station-excel" ${preview.newRows.length ? "" : "disabled"}>Insertar ${number(preview.newRows.length, 0)} nuevas</button>
+      </div>
+    </div>
+  `;
+  wireWeatherStationImportInput();
+}
+
+function renderWeatherStationImportError(fileName, message) {
+  const dialog = document.getElementById("weatherStationImportDialog");
+  dialog.innerHTML = `
+    <div class="modal-body weather-import-modal-body">
+      <div class="modal-head"><div><h2>No se pudo analizar</h2><p>${escapeHtml(fileName)}</p></div><button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button></div>
+      <div class="weather-import-error"><strong>Revisa el archivo</strong><span>${escapeHtml(message)}</span></div>
+      ${weatherStationImportFileInput()}
+      <div class="modal-actions"><button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button><button class="primary-button" type="button" data-action="choose-weather-station-excel">Elegir otro archivo</button></div>
+    </div>
+  `;
+  wireWeatherStationImportInput();
+}
+
+function updateWeatherStationImportProgress(done, total) {
+  const progress = document.getElementById("weatherStationImportProgress");
+  if (!progress) return;
+  const percent = total ? Math.round(done / total * 100) : 0;
+  progress.querySelector("i").style.width = `${percent}%`;
+  progress.querySelector("strong").textContent = `${number(done, 0)} de ${number(total, 0)}`;
+}
+
+async function importWeatherStationExcel() {
+  const preview = weatherStationImportPreview;
+  if (!preview?.newRows?.length || !hasRole("admin")) return;
+  if (!confirm(`Insertar ${preview.newRows.length} lecturas nuevas en estacion_climatica?`)) return;
+  const dialog = document.getElementById("weatherStationImportDialog");
+  dialog.innerHTML = `
+    <div class="modal-body weather-import-modal-body">
+      <div class="modal-head"><div><h2>Actualizando base de datos</h2><p>${escapeHtml(preview.fileName)}</p></div></div>
+      <div class="weather-import-loading" role="status" aria-live="polite"><span class="weather-import-spinner"></span><strong>Insertando lecturas nuevas...</strong></div>
+      <div class="weather-import-progress" id="weatherStationImportProgress"><div><i></i></div><strong>0 de ${number(preview.newRows.length, 0)}</strong></div>
+    </div>
+  `;
+  const batchSize = 500;
+  let inserted = 0;
+  try {
+    for (let index = 0; index < preview.newRows.length; index += batchSize) {
+      const batch = preview.newRows.slice(index, index + batchSize);
+      await sbFetch("/rest/v1/estacion_climatica?on_conflict=fecha%2Chora", {
+        method: "POST",
+        prefer: "resolution=ignore-duplicates,return=minimal",
+        body: JSON.stringify(batch)
+      });
+      inserted += batch.length;
+      updateWeatherStationImportProgress(inserted, preview.newRows.length);
+    }
+    weatherStationImportPreview = null;
+    await loadCloudData();
+    dialog.close();
+    if (currentView === "dashboard") renderDashboard();
+    showToast(`${inserted} lecturas nuevas agregadas a la base de datos`);
+  } catch (error) {
+    renderWeatherStationImportError(preview.fileName, `${inserted} lecturas procesadas antes del error. ${error.message}`);
+    showToast(`No se completo la actualizacion: ${error.message}`);
+  }
 }
 
 function weatherStationKpi(label, value, hint, tone) {
@@ -3554,14 +4159,97 @@ function weatherFrostBands(summary) {
     </article>`).join("")}</div>`;
 }
 
+function weatherFrostTimeLabel(value) {
+  const time = String(value || "").slice(0, 5);
+  return /^\d{2}:\d{2}$/.test(time) ? time : "-";
+}
+
+function weatherCorrectedFrostMinutes(value) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours >= 12) hours -= 12;
+  return hours * 60 + minutes;
+}
+
+function weatherMinutesLabel(value) {
+  const minutes = ((Number(value) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function weatherStationFrostWindowsByDate(readings) {
+  const minutesByDate = new Map();
+  readings.forEach((reading) => {
+    if (Number(reading.temp_out) > 0 || !reading.fecha) return;
+    const minutes = weatherCorrectedFrostMinutes(reading.hora);
+    if (minutes === null) return;
+    if (!minutesByDate.has(reading.fecha)) minutesByDate.set(reading.fecha, new Set());
+    minutesByDate.get(reading.fecha).add(minutes);
+  });
+  const result = new Map();
+  minutesByDate.forEach((minuteSet, date) => {
+    const values = [...minuteSet].sort((a, b) => a - b);
+    if (!values.length) return;
+    const segments = [];
+    let start = values[0];
+    let previous = values[0];
+    values.slice(1).forEach((minutes) => {
+      if (minutes - previous > 30) {
+        segments.push({ start, end: previous + 15 });
+        start = minutes;
+      }
+      previous = minutes;
+    });
+    segments.push({ start, end: previous + 15 });
+    result.set(date, {
+      start: weatherMinutesLabel(segments[0].start),
+      end: weatherMinutesLabel(segments.at(-1).end),
+      label: segments.map((segment) => `${weatherMinutesLabel(segment.start)} a ${weatherMinutesLabel(segment.end)}`).join(" / ")
+    });
+  });
+  return result;
+}
+
+function weatherFrostWindowLabel(row) {
+  if (row.frostWindows) return row.frostWindows;
+  if (row.frostStart && row.frostEnd) return `${weatherFrostTimeLabel(row.frostStart)} a ${weatherFrostTimeLabel(row.frostEnd)}`;
+  return "-";
+}
+
+function weatherFrostWindow(rows) {
+  const latestFrost = [...rows]
+    .filter((row) => Number(row.minimum) <= 0 && row.frostStart && row.frostEnd)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  if (!latestFrost) return "";
+  const frost0ToMinus1 = Number(latestFrost.frost0ToMinus1 || 0);
+  const frostMinus1ToMinus2 = Number(latestFrost.frostMinus1ToMinus2 || 0);
+  const frostBelowMinus2 = Number(latestFrost.frostBelowMinus2 || 0);
+  const totalFrostHours = frost0ToMinus1 + frostMinus1ToMinus2 + frostBelowMinus2;
+  return `
+    <div class="weather-frost-window">
+      <div class="weather-frost-window-head">
+        <div><span>Ultima helada</span><small>${weatherStationDateLabel(latestFrost.date, { day: true })}</small></div>
+        <strong>${weatherFrostWindowLabel(latestFrost)}</strong>
+      </div>
+      <div class="weather-frost-window-metrics">
+        <div><span>0 a -1 °C</span><b>${number(frost0ToMinus1, 2)} h</b></div>
+        <div><span>-1 a -2 °C</span><b>${number(frostMinus1ToMinus2, 2)} h</b></div>
+        <div><span>≤ -2 °C</span><b>${number(frostBelowMinus2, 2)} h</b></div>
+        <div class="weather-frost-window-total"><span>Total</span><b>${number(totalFrostHours, 2)} h</b></div>
+      </div>
+    </div>`;
+}
+
 function weatherFrostTable(rows) {
   const frostRows = rows.filter((row) => Number(row.minimum) <= 0).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   if (!frostRows.length) return '<div class="empty-state compact-empty"><strong>No se registraron heladas en el periodo.</strong></div>';
   return `<div class="table-wrap weather-frost-table"><table>
-    <thead><tr><th>Fecha</th><th>Minima</th><th>0 a -1 °C</th><th>-1 a -2 °C</th><th>≤ -2 °C</th><th>Total</th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Minima</th><th>Inicio - termino</th><th>0 a -1 °C</th><th>-1 a -2 °C</th><th>≤ -2 °C</th><th>Total</th></tr></thead>
     <tbody>${frostRows.map((row) => {
       const total = Number(row.frost0ToMinus1 || 0) + Number(row.frostMinus1ToMinus2 || 0) + Number(row.frostBelowMinus2 || 0);
-      return `<tr><td data-label="Fecha">${weatherStationDateLabel(row.date, { day: true })}</td><td data-label="Minima"><strong>${number(row.minimum, 1)} °C</strong></td><td data-label="0 a -1 °C">${number(row.frost0ToMinus1, 2)} h</td><td data-label="-1 a -2 °C">${number(row.frostMinus1ToMinus2, 2)} h</td><td data-label="Menor o igual a -2 °C">${number(row.frostBelowMinus2, 2)} h</td><td data-label="Total"><strong>${number(total, 2)} h</strong></td></tr>`;
+      const frostWindow = weatherFrostWindowLabel(row);
+      return `<tr><td data-label="Fecha">${weatherStationDateLabel(row.date, { day: true })}</td><td data-label="Minima"><strong>${number(row.minimum, 1)} °C</strong></td><td data-label="Inicio - termino"><strong>${frostWindow}</strong></td><td data-label="0 a -1 °C">${number(row.frost0ToMinus1, 2)} h</td><td data-label="-1 a -2 °C">${number(row.frostMinus1ToMinus2, 2)} h</td><td data-label="Menor o igual a -2 °C">${number(row.frostBelowMinus2, 2)} h</td><td data-label="Total"><strong>${number(total, 2)} h</strong></td></tr>`;
     }).join("")}</tbody>
   </table></div>`;
 }
@@ -3625,6 +4313,20 @@ function renderApplicationDashboard() {
   renderGeoJsonMap();
 }
 
+function setIrrigationFiltersOpen(open) {
+  irrigationFiltersOpen = Boolean(open);
+  const drawer = document.getElementById("irrigationFilterDrawer");
+  const toggle = views.irrigation?.querySelector(".irrigation-filter-toggle");
+  drawer?.classList.toggle("is-open", irrigationFiltersOpen);
+  drawer?.setAttribute("aria-hidden", String(!irrigationFiltersOpen));
+  if (toggle) {
+    toggle.classList.toggle("is-open", irrigationFiltersOpen);
+    toggle.setAttribute("aria-expanded", String(irrigationFiltersOpen));
+    toggle.setAttribute("title", irrigationFiltersOpen ? "Ocultar filtros" : "Mostrar filtros");
+    toggle.innerHTML = irrigationFiltersOpen ? "&#8250;" : "&#8249;";
+  }
+}
+
 function renderIrrigation() {
   pruneEmptyIrrigationAudits();
   const allBlocks = [...state.blocks].filter((block) => block.active !== false).sort(blockSort);
@@ -3671,40 +4373,63 @@ function renderIrrigation() {
   const blockRowIndexMap = new Map(filteredBlocks.map((block, index) => [block.id, index]));
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
+  const irrigationHeaderControls = irrigationTab === "bandejas" ? `
+    <div class="irrigation-bandeja-navigation">
+      <button class="icon-button" type="button" data-action="shift-irrigation-bandeja-year" data-delta="-1" title="Ano anterior" aria-label="Ano anterior">&#8592;</button>
+      <label>Ano foco
+        <input id="irrigationYearFilter" type="number" min="1900" max="2100" step="1" value="${irrigationYear}">
+      </label>
+      <button class="icon-button" type="button" data-action="shift-irrigation-bandeja-year" data-delta="1" title="Ano siguiente" aria-label="Ano siguiente">&#8594;</button>
+      <label>Ir a mes
+        <select id="irrigationBandejaMonthJump">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
+      </label>
+      <button class="secondary-button" type="button" data-action="focus-current-irrigation-bandeja">Hoy</button>
+    </div>` : `
+    <div class="program-filters irrigation-filters">
+      <label>Especie
+        <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+      </label>
+      <label>Potrero
+        <select id="irrigationPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+      </label>
+      <label>Mes
+        <select id="irrigationMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
+      </label>
+      <label>Ano
+        <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
+      </label>
+      ${irrigationTab === "gantt" ? `
+        <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
+        <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>
+        <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>` : ""}
+    </div>`;
 
   views.irrigation.innerHTML = `
-    <section class="panel irrigation-panel">
-      <div class="panel-header irrigation-panel-header">
-        <div>
-          <h2>Riego</h2>
-          <p>${monthLabel} ${irrigationYear} · bandeja sobre cada fecha.</p>
+    <section class="panel irrigation-panel ${irrigationTab === "gantt" ? "irrigation-panel-gantt" : ""}">
+      <button
+        class="irrigation-filter-toggle ${irrigationFiltersOpen ? "is-open" : ""}"
+        type="button"
+        data-action="toggle-irrigation-filters"
+        aria-controls="irrigationFilterDrawer"
+        aria-expanded="${irrigationFiltersOpen}"
+        title="${irrigationFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}"
+      >${irrigationFiltersOpen ? "&#8250;" : "&#8249;"}</button>
+      <aside
+        id="irrigationFilterDrawer"
+        class="irrigation-filter-drawer ${irrigationFiltersOpen ? "is-open" : ""}"
+        aria-hidden="${!irrigationFiltersOpen}"
+      >
+        <div class="irrigation-filter-drawer-head">
+          <div>
+            <strong>Filtros de riego</strong>
+            <span>${monthLabel} ${irrigationYear}</span>
+          </div>
+          <button class="icon-button" type="button" data-action="toggle-irrigation-filters" title="Ocultar filtros" aria-label="Ocultar filtros">&#10005;</button>
         </div>
-        <div class="program-filters irrigation-filters">
-          <label>Especie
-            <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
-          </label>
-          <label>Potrero
-            <select id="irrigationPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
-          </label>
-          <label>Mes
-            <select id="irrigationMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
-          </label>
-          <label>Ano
-            <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
-          </label>
-          <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
-          ${irrigationTab === "gantt" ? '<button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>' : ""}
-          <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>
-        </div>
-      </div>
+        ${irrigationHeaderControls}
+      </aside>
       ${irrigationTab === "bandejas" ? renderIrrigationBandejasPanel({
-        rows: bandejaRows,
-        stationRows,
-        monthLabel,
-        year: irrigationYear,
-        monthEvaporationTotal: bandejaMonthEvaporationTotal,
-        historicalEvaporationTotal: bandejaHistoricalEvaporationTotal,
-        selectedStation: irrigationStationFilter
+        year: irrigationYear
       }) : irrigationTab === "balance" ? renderIrrigationBalancePanel({
         blockRows: balanceBlockRows,
         monthPrefix,
@@ -3815,7 +4540,6 @@ function renderIrrigation() {
             }).join("")}
           `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
         </div>
-      </div>
       <div class="irrigation-section-title">
         <strong>Riegos reales</strong>
         <span>Bandeja registrada ${monthLabel.toLowerCase()} ${irrigationYear} · total ${irrigationBandejaLabel(monthEvaporationTotal)}</span>
@@ -3840,7 +4564,7 @@ function renderIrrigation() {
           <div class="irrigation-difference-head irrigation-difference-reposition" title="(Reposicion real - reposicion programa) / reposicion programa">Dif. repos.</div>
         </div>
         ${blockGroups.map((group) => `
-          <div class="irrigation-potrero-group">
+          <div class="irrigation-potrero-group irrigation-potrero-group-compact">
             <strong>Potrero ${group.potrero}</strong>
             <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
           </div>
@@ -3937,6 +4661,7 @@ function renderIrrigation() {
           }).join("")}
         `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
       </div>
+      </div>
       `}
     </section>
   `;
@@ -3964,6 +4689,7 @@ function renderIrrigation() {
   });
   document.getElementById("irrigationYearFilter")?.addEventListener("change", (event) => {
     irrigationYear = String(event.target.value || new Date().getFullYear());
+    if (irrigationTab === "bandejas") irrigationBandejaFocusPending = true;
     renderIrrigation();
   });
   views.irrigation.querySelectorAll(".irrigation-hour-input").forEach((input) => {
@@ -4040,6 +4766,7 @@ function renderIrrigation() {
       updateIrrigationComparisonCells(target.dataset.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
     });
   });
+  if (irrigationTab === "bandejas") wireIrrigationBandejaMatrix();
   syncIrrigationGanttScroll();
 }
 
@@ -4167,6 +4894,659 @@ function harvestFilterControls() {
   `;
 }
 
+function setPestMonitoringDefaultDates() {
+  const dates = (pestMonitoringRecords || []).map((record) => record.date).filter(Boolean).sort();
+  if (!pestMonitoringDateTo && dates.length) {
+    pestMonitoringDateTo = dates.at(-1);
+    const from = new Date(`${pestMonitoringDateTo}T12:00:00`);
+    from.setDate(from.getDate() - 30);
+    pestMonitoringDateFrom = from.toISOString().slice(0, 10);
+  }
+}
+
+function mapSupabasePestMonitoringRecord(row) {
+  return {
+    date: row.fecha || "",
+    pest: row.tipo_plaga || "",
+    potrero: row.potrero_excel || row.potrero || "Sin potrero",
+    canonicalPotrero: row.potrero || "Sin potrero",
+    potreroNormalized: Boolean(row.campo_normalizado),
+    sourceAlias: row.alias_geojson || "",
+    sourceBlock: row.bloque_geojson || "",
+    excelBlock: row.bloque_excel || row.bloque || "",
+    mapAlias: row.alias_mapa || row.alias_geojson || "",
+    mapBlock: row.bloque_mapa || row.bloque || "",
+    block: row.bloque_excel || row.bloque || "",
+    tree: String(row.numero_arbol ?? ""),
+    monitoringOrder: String(row.orden_monitoreo ?? ""),
+    foundAt: row.encontrado_en || "",
+    sector: String(row.sector_monitoreo ?? ""),
+    photoUrl: row.evidencia_foto || "",
+    sourceTotal: Number(row.total_origen) || 0,
+    stageTotal: Number(row.total_calculado) || 0,
+    eggs: Number(row.huevos) || 0,
+    nymph1: Number(row.ninfas_1) || 0,
+    nymph2: Number(row.ninfas_2) || 0,
+    nymph3: Number(row.ninfas_3) || 0,
+    adults: Number(row.adultos) || 0,
+    larvae: Number(row.larvas) || 0,
+    pupae: Number(row.pupas) || 0,
+    longitude: Number(row.longitud),
+    latitude: Number(row.latitud)
+  };
+}
+
+async function loadPestMonitoringFromSupabase() {
+  if (!supabaseSession) throw new Error("Se requiere una sesion de Supabase");
+  const select = [
+    "fecha", "tipo_plaga", "potrero", "bloque", "campo_normalizado", "potrero_excel", "bloque_excel",
+    "alias_geojson", "bloque_geojson", "alias_mapa", "bloque_mapa", "numero_arbol",
+    "orden_monitoreo", "encontrado_en", "sector_monitoreo", "evidencia_foto",
+    "total_origen", "total_calculado", "huevos", "ninfas_1", "ninfas_2", "ninfas_3",
+    "adultos", "larvas", "pupas", "longitud", "latitud", "origen_capa", "origen_fid"
+  ].join(",");
+  const rows = await sbSelectAll(
+    "v_monitoreo_plagas",
+    `select=${select}&order=fecha.asc.nullslast,origen_capa.asc,origen_fid.asc`,
+    1000
+  );
+  if (!rows.length) throw new Error("La tabla monitoreo_plagas aun no contiene registros");
+  pestMonitoringDataSource = "Supabase";
+  return rows.map(mapSupabasePestMonitoringRecord);
+}
+
+async function loadPestMonitoringFromLocalBackup() {
+  const response = await fetch("outputs/plagas_monitoreo.compact.json?v=4", { cache: "force-cache" });
+  if (!response.ok) throw new Error(`No se pudo cargar el respaldo del monitoreo (${response.status})`);
+  const collection = await response.json();
+  const dictionaries = collection.dictionaries || {};
+  pestMonitoringDataSource = "Respaldo local";
+  return (collection.records || []).map((row) => ({
+        date: dictionaries.dates?.[row[0]] || "",
+        pest: dictionaries.pests?.[row[1]] || "",
+        potrero: dictionaries.potreros?.[row[2]] || "Sin potrero",
+        canonicalPotrero: dictionaries.potreros?.[row[2]] || "Sin potrero",
+        potreroNormalized: Boolean(row[3]),
+        sourceAlias: dictionaries.aliases?.[row[4]] || "",
+        sourceBlock: dictionaries.blocks?.[row[5]] || "",
+        excelBlock: dictionaries.blocks?.[row[6]] || "",
+        mapAlias: dictionaries.aliases?.[row[7]] || "",
+        mapBlock: dictionaries.blocks?.[row[8]] || "",
+        block: dictionaries.blocks?.[row[6]] || "",
+        tree: String(row[9] ?? ""),
+        monitoringOrder: String(row[10] ?? ""),
+        foundAt: dictionaries.foundAt?.[row[11]] || "",
+        sector: dictionaries.sectors?.[row[12]] || "",
+        photoUrl: dictionaries.photos?.[row[13]] || "",
+        sourceTotal: Number(row[14]) || 0,
+        stageTotal: Number(row[15]) || 0,
+        eggs: Number(row[16]) || 0,
+        nymph1: Number(row[17]) || 0,
+        nymph2: Number(row[18]) || 0,
+        nymph3: Number(row[19]) || 0,
+        adults: Number(row[20]) || 0,
+        larvae: Number(row[21]) || 0,
+        pupae: Number(row[22]) || 0,
+        longitude: Number(row[23]),
+        latitude: Number(row[24])
+      }));
+}
+
+async function loadPestMonitoringRecords() {
+  if (pestMonitoringRecords) return pestMonitoringRecords;
+  if (pestMonitoringLoadPromise) return pestMonitoringLoadPromise;
+  pestMonitoringLoadPromise = (async () => {
+    try {
+      pestMonitoringRecords = await loadPestMonitoringFromSupabase();
+    } catch (error) {
+      console.warn("Monitoreo de plagas usa respaldo local", error);
+      pestMonitoringRecords = await loadPestMonitoringFromLocalBackup();
+    }
+    pestMonitoringRecords = pestMonitoringRecords.filter((record) =>
+      Number.isFinite(record.latitude) && Number.isFinite(record.longitude)
+    );
+    setPestMonitoringDefaultDates();
+      pestMonitoringLoadError = "";
+      return pestMonitoringRecords;
+  })().catch((error) => {
+      pestMonitoringLoadError = error.message || "No se pudo cargar el monitoreo";
+      throw error;
+  }).finally(() => { pestMonitoringLoadPromise = null; });
+  return pestMonitoringLoadPromise;
+}
+
+function pestMonitoringEggNymphTotal(record) {
+  return (Number(record.eggs) || 0)
+    + (Number(record.nymph1) || 0)
+    + (Number(record.nymph2) || 0)
+    + (Number(record.nymph3) || 0);
+}
+
+function pestMonitoringObservedTotal(record) {
+  return pestMonitoringEggNymphTotal(record)
+    + (Number(record.adults) || 0)
+    + (Number(record.larvae) || 0)
+    + (Number(record.pupae) || 0);
+}
+
+function pestMonitoringFilteredRecords({ includePest = true } = {}) {
+  return (pestMonitoringRecords || []).filter((record) => {
+    if (pestMonitoringDateFrom && (!record.date || record.date < pestMonitoringDateFrom)) return false;
+    if (pestMonitoringDateTo && (!record.date || record.date > pestMonitoringDateTo)) return false;
+    if (includePest && pestMonitoringPest !== "Todas" && record.pest !== pestMonitoringPest) return false;
+    if (pestMonitoringPotrero !== "Todos" && record.potrero !== pestMonitoringPotrero) return false;
+    if (pestMonitoringBlock !== "Todos" && String(record.excelBlock || "") !== pestMonitoringBlock) return false;
+    return true;
+  });
+}
+
+function pestMonitoringBlockKey(recordOrProperties) {
+  const alias = recordOrProperties.mapAlias ?? recordOrProperties.sourceAlias ?? recordOrProperties["Potrero_Alias:"] ?? "";
+  const block = recordOrProperties.mapBlock ?? recordOrProperties.block ?? recordOrProperties.Bloque ?? "";
+  return `${String(alias).trim()}|${String(block).trim()}`;
+}
+
+function pestMonitoringBlockSummaries(records) {
+  const summaries = new Map();
+  records.forEach((record) => {
+    const key = pestMonitoringBlockKey(record);
+    const summary = summaries.get(key) || {
+      key,
+      potrero: record.potrero || "Sin potrero",
+      sourceAlias: record.sourceAlias || "",
+      block: "",
+      excelBlocks: new Set(),
+      samples: 0,
+      positives: 0,
+      total: 0,
+      eggNymphTotal: 0,
+      latest: "",
+      pests: new Set(),
+      trees: new Set(),
+      orders: new Set(),
+      foundAt: new Map(),
+      stages: { eggs: 0, nymph1: 0, nymph2: 0, nymph3: 0, adults: 0, larvae: 0, pupae: 0 }
+    };
+    const observedTotal = pestMonitoringObservedTotal(record);
+    summary.samples += 1;
+    summary.total += observedTotal;
+    summary.eggNymphTotal += pestMonitoringEggNymphTotal(record);
+    if (observedTotal > 0) summary.positives += 1;
+    if (record.date > summary.latest) summary.latest = record.date;
+    summary.pests.add(record.pest);
+    if (record.excelBlock) summary.excelBlocks.add(String(record.excelBlock));
+    if (record.tree) summary.trees.add(record.tree);
+    if (record.monitoringOrder) summary.orders.add(record.monitoringOrder);
+    if (record.foundAt) summary.foundAt.set(record.foundAt, (summary.foundAt.get(record.foundAt) || 0) + 1);
+    Object.keys(summary.stages).forEach((stage) => { summary.stages[stage] += Number(record[stage]) || 0; });
+    summaries.set(key, summary);
+  });
+  summaries.forEach((summary) => {
+    summary.block = [...summary.excelBlocks].sort((a, b) => a.localeCompare(b, "es", { numeric: true })).join(", ");
+    summary.incidence = summary.samples ? summary.positives / summary.samples * 100 : 0;
+    summary.intensity = summary.samples ? summary.total / summary.samples : 0;
+  });
+  return summaries;
+}
+
+const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#d9362b"];
+
+function pestMonitoringQuantile(sortedValues, ratio) {
+  if (!sortedValues.length) return 0;
+  const position = (sortedValues.length - 1) * ratio;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sortedValues[lower];
+  return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (position - lower);
+}
+
+function pestMonitoringRiskScale(records) {
+  const positives = records
+    .map(pestMonitoringObservedTotal)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b);
+  return {
+    thresholds: [0.2, 0.4, 0.6, 0.8].map((ratio) => pestMonitoringQuantile(positives, ratio)),
+    maximum: positives.at(-1) || 0,
+    positives: positives.length
+  };
+}
+
+function pestMonitoringRiskLevel(value, scale) {
+  if (value <= 0) return 0;
+  const [veryLow, low, medium, high] = scale.thresholds;
+  if (value <= veryLow) return 1;
+  if (value <= low) return 2;
+  if (value <= medium) return 3;
+  if (value <= high) return 4;
+  return 5;
+}
+
+function pestMonitoringRiskColor(value, scale) {
+  return PEST_RISK_COLORS[pestMonitoringRiskLevel(value, scale)];
+}
+
+function pestMonitoringLegend(scale) {
+  if (!scale.positives) {
+    return `<strong>Carga observada · ${escapeHtml(pestMonitoringPest)}</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin presencia</div>`;
+  }
+  const [veryLow, low, medium, high] = scale.thresholds;
+  const items = [
+    [PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"],
+    [PEST_RISK_COLORS[1], `Muy baja · hasta ${number(veryLow, 1)}`],
+    [PEST_RISK_COLORS[2], `Baja · hasta ${number(low, 1)}`],
+    [PEST_RISK_COLORS[3], `Media · hasta ${number(medium, 1)}`],
+    [PEST_RISK_COLORS[4], `Alta · hasta ${number(high, 1)}`],
+    [PEST_RISK_COLORS[5], `Muy alta · sobre ${number(high, 1)}`]
+  ];
+  return `<strong>Carga observada · escala ${escapeHtml(pestMonitoringPest)}</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+}
+
+function createPestMonitoringHeatOverlay(maps, map) {
+  class PestCanvasHeatOverlay extends maps.OverlayView {
+    constructor() {
+      super();
+      this.container = null;
+      this.canvas = null;
+      this.points = [];
+      this.scale = { thresholds: [0, 0, 0, 0], maximum: 0, positives: 0 };
+      this.frame = 0;
+      this.setMap(map);
+    }
+
+    onAdd() {
+      this.container = document.createElement("div");
+      this.container.className = "pest-heat-overlay";
+      this.canvas = document.createElement("canvas");
+      this.container.appendChild(this.canvas);
+      this.getPanes().overlayLayer.appendChild(this.container);
+    }
+
+    setData(points, scale) {
+      this.points = points;
+      this.scale = scale;
+      this.draw();
+    }
+
+    draw() {
+      if (this.frame) cancelAnimationFrame(this.frame);
+      this.frame = requestAnimationFrame(() => this.paint());
+    }
+
+    paint() {
+      this.frame = 0;
+      if (!this.container || !this.canvas || !this.getProjection()) return;
+      const bounds = map.getBounds();
+      if (!bounds) return;
+      const projection = this.getProjection();
+      const northEast = projection.fromLatLngToDivPixel(bounds.getNorthEast());
+      const southWest = projection.fromLatLngToDivPixel(bounds.getSouthWest());
+      const width = Math.max(1, Math.round(northEast.x - southWest.x));
+      const height = Math.max(1, Math.round(southWest.y - northEast.y));
+      this.container.style.left = `${southWest.x}px`;
+      this.container.style.top = `${northEast.y}px`;
+      this.container.style.width = `${width}px`;
+      this.container.style.height = `${height}px`;
+      const pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
+      this.canvas.width = Math.round(width * pixelRatio);
+      this.canvas.height = Math.round(height * pixelRatio);
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+      const context = this.canvas.getContext("2d");
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const gridSize = 14;
+      const buckets = new Map();
+      this.points.forEach((point) => {
+        const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(point.lat, point.lng));
+        const x = pixel.x - southWest.x;
+        const y = pixel.y - northEast.y;
+        if (x < -40 || x > width + 40 || y < -40 || y > height + 40) return;
+        const key = `${Math.floor(x / gridSize)}:${Math.floor(y / gridSize)}`;
+        const bucket = buckets.get(key) || { x: 0, y: 0, weight: 0, count: 0 };
+        bucket.x += x;
+        bucket.y += y;
+        bucket.weight += point.weight;
+        bucket.count += 1;
+        buckets.set(key, bucket);
+      });
+      const cells = [...buckets.values()].map((bucket) => ({
+        x: bucket.x / bucket.count,
+        y: bucket.y / bucket.count,
+        value: bucket.weight / bucket.count
+      }));
+      cells.forEach((cell) => {
+        const level = pestMonitoringRiskLevel(cell.value, this.scale);
+        const color = pestMonitoringRiskColor(cell.value, this.scale);
+        const radius = level === 0 ? 11 : 19 + level * 4;
+        const gradient = context.createRadialGradient(cell.x, cell.y, 0, cell.x, cell.y, radius);
+        gradient.addColorStop(0, `${color}${level === 0 ? "b8" : "e0"}`);
+        gradient.addColorStop(0.42, `${color}${level === 0 ? "55" : "78"}`);
+        gradient.addColorStop(1, `${color}00`);
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(cell.x, cell.y, radius, 0, Math.PI * 2);
+        context.fill();
+      });
+    }
+
+    onRemove() {
+      if (this.frame) cancelAnimationFrame(this.frame);
+      this.container?.remove();
+      this.container = null;
+      this.canvas = null;
+    }
+  }
+  return new PestCanvasHeatOverlay();
+}
+
+function pestMonitoringKpis(records, summaries) {
+  const positives = records.filter((record) => pestMonitoringObservedTotal(record) > 0).length;
+  const incidence = records.length ? positives / records.length * 100 : 0;
+  const total = records.reduce((sum, record) => sum + pestMonitoringObservedTotal(record), 0);
+  const intensity = records.length ? total / records.length : 0;
+  const affectedBlocks = [...summaries.values()].filter((summary) => summary.positives > 0).length;
+  return `
+    ${kpi("Monitoreos", records.length, "Registros del filtro")}
+    ${kpi("Presencia", `${number(incidence, 1)}%`, `${positives} observaciones positivas`)}
+    ${kpi("Carga observada", number(total, 0), `${number(intensity, 2)} por monitoreo`)}
+    ${kpi("Bloques con presencia", affectedBlocks, `${summaries.size} bloques monitoreados`)}
+  `;
+}
+
+function pestMonitoringCoverageRows(summaries, totalRecords) {
+  const rows = [...summaries.values()].sort((a, b) => b.samples - a.samples || b.incidence - a.incidence || comparePotrero(a.potrero, b.potrero));
+  if (!rows.length) return `<tr><td colspan="4"><div class="empty-state compact"><strong>Sin datos</strong><span>Ajusta los filtros.</span></div></td></tr>`;
+  return rows.map((summary) => `
+    <tr>
+      <td><button type="button" data-pest-block-key="${htmlAttr(summary.key)}">${escapeHtml(summary.potrero)} <span>B${escapeHtml(summary.block || "-")}</span></button></td>
+      <td>${summary.samples}</td>
+      <td>${number(totalRecords ? summary.samples / totalRecords * 100 : 0, 1)}%</td>
+      <td><strong>${number(summary.incidence, 1)}%</strong></td>
+    </tr>
+  `).join("");
+}
+
+function pestMonitoringMonthlyRows(records) {
+  const grouped = new Map();
+  records.forEach((record) => {
+    const month = record.date ? record.date.slice(0, 7) : "Sin fecha";
+    const key = `${month}|${record.pest}`;
+    const summary = grouped.get(key) || {
+      month,
+      pest: record.pest,
+      samples: 0,
+      positives: 0,
+      eggs: 0,
+      nymph1: 0,
+      nymph2: 0,
+      nymph3: 0,
+      adults: 0,
+      larvae: 0,
+      pupae: 0,
+      eggNymphTotal: 0,
+      observedTotal: 0
+    };
+    summary.samples += 1;
+    if (pestMonitoringObservedTotal(record) > 0) summary.positives += 1;
+    ["eggs", "nymph1", "nymph2", "nymph3", "adults", "larvae", "pupae"].forEach((stage) => {
+      summary[stage] += Number(record[stage]) || 0;
+    });
+    summary.eggNymphTotal += pestMonitoringEggNymphTotal(record);
+    summary.observedTotal += pestMonitoringObservedTotal(record);
+    grouped.set(key, summary);
+  });
+  return [...grouped.values()].sort((a, b) => b.month.localeCompare(a.month) || a.pest.localeCompare(b.pest, "es"));
+}
+
+function renderPestMonitoringMonthlyTable(records) {
+  const rows = pestMonitoringMonthlyRows(records);
+  if (!rows.length) return `<div class="empty-state compact"><strong>Sin datos mensuales</strong><span>Ajusta el rango de fechas o los filtros de campo.</span></div>`;
+  return `
+    <div class="pest-monthly-table-wrap">
+      <table class="pest-monthly-table">
+        <thead><tr><th>Mes</th><th>Plaga</th><th>Monit.</th><th>Presencia</th><th>Huevos</th><th>Ninfa 1</th><th>Ninfa 2</th><th>Ninfa 3</th><th>Adultos</th><th>Larvas</th><th>Pupas</th><th>Total H+N</th><th>Carga total</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.month)}</td><td><strong>${escapeHtml(row.pest)}</strong></td><td>${row.samples}</td>
+            <td>${number(row.samples ? row.positives / row.samples * 100 : 0, 1)}%</td>
+            <td>${number(row.eggs, 0)}</td><td>${number(row.nymph1, 0)}</td><td>${number(row.nymph2, 0)}</td><td>${number(row.nymph3, 0)}</td>
+            <td>${number(row.adults, 0)}</td><td>${number(row.larvae, 0)}</td><td>${number(row.pupae, 0)}</td>
+            <td><strong>${number(row.eggNymphTotal, 0)}</strong></td><td><strong>${number(row.observedTotal, 0)}</strong></td>
+          </tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderPestMonitoring() {
+  if (!pestMonitoringRecords) {
+    views.pestMonitoring.innerHTML = `
+      <section class="panel pest-loading-state">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <strong>${pestMonitoringLoadError ? "No se pudo cargar el monitoreo" : "Cargando monitoreo de plagas"}</strong>
+        <span>${escapeHtml(pestMonitoringLoadError || "Preparando 13.786 observaciones georreferenciadas")}</span>
+        ${pestMonitoringLoadError ? `<button class="secondary-button" type="button" data-action="retry-pest-monitoring">Reintentar</button>` : ""}
+      </section>`;
+    if (!pestMonitoringLoadError) loadPestMonitoringRecords().then(() => {
+      if (currentView === "pestMonitoring") renderPestMonitoring();
+    }).catch(() => {
+      if (currentView === "pestMonitoring") renderPestMonitoring();
+    });
+    return;
+  }
+  const existingMap = document.getElementById("pestMonitoringMap");
+  if (existingMap && views.pestMonitoring.contains(existingMap)) {
+    refreshPestMonitoring();
+    return;
+  }
+  const pests = [...new Set(pestMonitoringRecords.map((record) => record.pest))].sort((a, b) => a.localeCompare(b, "es"));
+  const potreros = [...new Set(pestMonitoringRecords.map((record) => record.potrero).filter(Boolean))].sort(comparePotrero);
+  views.pestMonitoring.innerHTML = `
+    <section class="pest-monitoring-shell">
+      <div class="pest-filter-bar">
+        <label>Desde<input type="date" value="${htmlAttr(pestMonitoringDateFrom)}" data-pest-filter="from"></label>
+        <label>Hasta<input type="date" value="${htmlAttr(pestMonitoringDateTo)}" data-pest-filter="to"></label>
+        <label>Plaga<select data-pest-filter="pest">${pests.map((pest) => `<option value="${htmlAttr(pest)}" ${pest === pestMonitoringPest ? "selected" : ""}>${escapeHtml(pest)}</option>`).join("")}</select></label>
+        <label>Potrero<select data-pest-filter="potrero"><option>Todos</option>${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === pestMonitoringPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}</select></label>
+        <label>Bloque<select data-pest-filter="block" id="pestMonitoringBlockFilter"><option>Todos</option></select></label>
+        <button class="icon-button" type="button" data-action="clear-pest-filters" title="Limpiar filtros" aria-label="Limpiar filtros">×</button>
+      </div>
+      <div class="kpi-grid pest-kpis" id="pestMonitoringKpis"></div>
+      <div class="pest-monitoring-layout">
+        <section class="panel pest-map-panel">
+          <div id="pestMonitoringMap" class="geo-map pest-monitoring-map"><span>Cargando mapa...</span></div>
+          <div class="pest-map-legend" id="pestMonitoringLegend" aria-label="Escala de riesgo"></div>
+        </section>
+        <aside class="panel pest-ranking-panel">
+          <div class="panel-header"><div><h2>Cobertura del monitoreo</h2><span id="pestMonitoringSummary"></span></div></div>
+          <div class="pest-coverage-wrap">
+            <table class="pest-coverage-table">
+              <thead><tr><th>Potrero / bloque</th><th>N</th><th>% monit.</th><th>% pres.</th></tr></thead>
+              <tbody id="pestMonitoringCoverage"></tbody>
+            </table>
+          </div>
+          <div class="pest-data-note" id="pestMonitoringDataNote"></div>
+        </aside>
+      </div>
+      <section class="panel pest-monthly-panel">
+        <div class="panel-header"><div><h2>Resumen mensual por plaga</h2><p>Etapas observadas según fecha, potrero y bloque Excel.</p></div></div>
+        <div id="pestMonitoringMonthly"></div>
+      </section>
+    </section>`;
+  wirePestMonitoringFilters();
+  refreshPestMonitoring();
+}
+
+function wirePestMonitoringFilters() {
+  views.pestMonitoring.querySelectorAll("[data-pest-filter]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const filter = control.dataset.pestFilter;
+      if (filter === "from") pestMonitoringDateFrom = control.value;
+      if (filter === "to") pestMonitoringDateTo = control.value;
+      if (pestMonitoringDateFrom && pestMonitoringDateTo && pestMonitoringDateFrom > pestMonitoringDateTo) {
+        if (filter === "from") pestMonitoringDateTo = pestMonitoringDateFrom;
+        else pestMonitoringDateFrom = pestMonitoringDateTo;
+        const fromControl = views.pestMonitoring.querySelector('[data-pest-filter="from"]');
+        const toControl = views.pestMonitoring.querySelector('[data-pest-filter="to"]');
+        if (fromControl) fromControl.value = pestMonitoringDateFrom;
+        if (toControl) toControl.value = pestMonitoringDateTo;
+      }
+      if (filter === "pest") pestMonitoringPest = control.value;
+      if (filter === "potrero") {
+        pestMonitoringPotrero = control.value;
+        pestMonitoringBlock = "Todos";
+      }
+      if (filter === "block") pestMonitoringBlock = control.value;
+      refreshPestMonitoring();
+    });
+  });
+}
+
+function refreshPestMonitoring() {
+  if (!pestMonitoringRecords) return;
+  const blockControl = document.getElementById("pestMonitoringBlockFilter");
+  if (blockControl) {
+    const blocks = [...new Set(pestMonitoringRecords
+      .filter((record) => record.pest === pestMonitoringPest)
+      .filter((record) => pestMonitoringPotrero === "Todos" || record.potrero === pestMonitoringPotrero)
+      .map((record) => String(record.excelBlock || "")).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+    if (pestMonitoringBlock !== "Todos" && !blocks.includes(pestMonitoringBlock)) pestMonitoringBlock = "Todos";
+    blockControl.innerHTML = `<option>Todos</option>${blocks.map((block) => `<option value="${htmlAttr(block)}" ${block === pestMonitoringBlock ? "selected" : ""}>${escapeHtml(block)}</option>`).join("")}`;
+  }
+  const records = pestMonitoringFilteredRecords();
+  const summaries = pestMonitoringBlockSummaries(records);
+  pestMonitoringCurrentSummaries = summaries;
+  const kpis = document.getElementById("pestMonitoringKpis");
+  if (kpis) kpis.innerHTML = pestMonitoringKpis(records, summaries);
+  const coverage = document.getElementById("pestMonitoringCoverage");
+  if (coverage) coverage.innerHTML = pestMonitoringCoverageRows(summaries, records.length);
+  const monthly = document.getElementById("pestMonitoringMonthly");
+  if (monthly) monthly.innerHTML = renderPestMonitoringMonthlyTable(pestMonitoringFilteredRecords({ includePest: false }));
+  const summary = document.getElementById("pestMonitoringSummary");
+  if (summary) summary.textContent = `${summaries.size} bloques · ${records.length} monitoreos`;
+  const pending = records.filter((record) => record.potreroNormalized === false).length;
+  const note = document.getElementById("pestMonitoringDataNote");
+  if (note) {
+    const pendingNote = pending ? `<strong>${pending} registros sin potrero</strong><span>La fuente no permite asociarlos de forma segura.</span>` : "";
+    const sourceNote = pestMonitoringDataSource === "Respaldo local" ? `<strong>Respaldo local activo</strong><span>Ejecuta la migracion e importacion de monitoreo en Supabase.</span>` : "";
+    note.innerHTML = `${pendingNote}${sourceNote}`;
+  }
+  const scale = pestMonitoringRiskScale(records);
+  const legend = document.getElementById("pestMonitoringLegend");
+  if (legend) legend.innerHTML = pestMonitoringLegend(scale);
+  renderPestMonitoringMap(records, summaries, scale);
+  views.pestMonitoring.querySelectorAll("[data-pest-block-key]").forEach((button) => {
+    button.addEventListener("click", () => focusPestMonitoringBlock(button.dataset.pestBlockKey, summaries));
+  });
+}
+
+async function renderPestMonitoringMap(records, summaries, scale) {
+  const element = document.getElementById("pestMonitoringMap");
+  if (!element) return;
+  const renderVersion = ++pestMonitoringMapRenderVersion;
+  try {
+    const [maps, layers] = await Promise.all([loadGoogleMaps(), (async () => { geoJsonCache ||= await loadGeoJson(); return geoJsonCache; })()]);
+    if (renderVersion !== pestMonitoringMapRenderVersion || !element.isConnected) return;
+    if (pestMonitoringMapElement !== element) {
+      pestMonitoringHeatOverlay?.setMap?.(null);
+      pestMonitoringPolygons.forEach((entry) => entry.polygon.setMap(null));
+      pestMonitoringMap = null;
+      pestMonitoringMapElement = element;
+      pestMonitoringPolygons = [];
+      pestMonitoringHeatOverlay = null;
+      pestMonitoringInfoWindow?.close();
+    }
+    if (!pestMonitoringMap) {
+      pestMonitoringMap = new maps.Map(element, {
+        mapTypeId: "satellite",
+        streetViewControl: false,
+        fullscreenControl: true,
+        mapTypeControl: true,
+        clickableIcons: false,
+        tilt: 0
+      });
+      const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
+      blockRings.forEach((item) => {
+        item.rings.forEach((ring) => {
+          const sourceKey = pestMonitoringBlockKey(item.feature.properties || {});
+          const polygon = new maps.Polygon({
+            paths: ring.map(([lng, lat]) => ({ lat, lng })),
+            strokeColor: "#ffffff",
+            strokeOpacity: 0.62,
+            strokeWeight: 1.2,
+            fillColor: "#6e8f83",
+            fillOpacity: 0.05,
+            zIndex: 2
+          });
+          polygon.setMap(pestMonitoringMap);
+          polygon.addListener("click", (event) => showPestMonitoringBlockInfo(sourceKey, event.latLng, pestMonitoringCurrentSummaries, maps));
+          pestMonitoringPolygons.push({ polygon, key: sourceKey });
+        });
+      });
+      pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(maps, pestMonitoringMap);
+    }
+    pestMonitoringPolygons.forEach((entry) => {
+      const block = summaries.get(entry.key);
+      const value = block?.intensity || 0;
+      const level = block ? pestMonitoringRiskLevel(value, scale) : 0;
+      entry.polygon.setOptions({
+        fillColor: block ? pestMonitoringRiskColor(value, scale) : "#6e8f83",
+        fillOpacity: block ? 0.18 + level * 0.045 : 0.035,
+        strokeOpacity: block ? 0.9 : 0.32,
+        strokeWeight: block ? 1.8 : 1
+      });
+    });
+    pestMonitoringHeatOverlay.setData(records.map((record) => ({
+      lat: record.latitude,
+      lng: record.longitude,
+      weight: pestMonitoringObservedTotal(record)
+    })), scale);
+    const bounds = new maps.LatLngBounds();
+    records.forEach((record) => bounds.extend({ lat: record.latitude, lng: record.longitude }));
+    if (!bounds.isEmpty()) pestMonitoringMap.fitBounds(bounds, 36);
+  } catch (error) {
+    if (renderVersion === pestMonitoringMapRenderVersion) element.innerHTML = `<div class="empty-state"><strong>No se pudo cargar el mapa</strong><span>${escapeHtml(error.message)}</span></div>`;
+  }
+}
+
+function showPestMonitoringBlockInfo(key, position, summaries, maps) {
+  const summary = summaries.get(key);
+  if (!summary || !pestMonitoringMap) return;
+  const foundAt = [...summary.foundAt.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([place, count]) => `${place} (${count})`)
+    .join(", ");
+  pestMonitoringInfoWindow ||= new maps.InfoWindow({ maxWidth: 280 });
+  pestMonitoringInfoWindow.setContent(`
+    <div class="pest-map-info">
+      <strong>${escapeHtml(summary.potrero)} / Bloque ${escapeHtml(summary.block || "-")}</strong>
+      <div><span>Monitoreos</span><b>${summary.samples}</b></div>
+      <div><span>Positivos</span><b>${summary.positives}</b></div>
+      <div><span>Incidencia</span><b>${number(summary.incidence, 1)}%</b></div>
+      <div><span>Carga total</span><b>${number(summary.total, 0)}</b></div>
+      <div><span>Total huevos + ninfas</span><b>${number(summary.eggNymphTotal, 0)}</b></div>
+      <div><span>Arboles registrados</span><b>${summary.trees.size}</b></div>
+      <div><span>Ordenes monitoreo</span><b>${summary.orders.size}</b></div>
+      <div><span>Encontrado en</span><b>${escapeHtml(foundAt || "-")}</b></div>
+      <div><span>Ultimo monitoreo</span><b>${escapeHtml(summary.latest || "-")}</b></div>
+    </div>`);
+  pestMonitoringInfoWindow.setPosition(position);
+  pestMonitoringInfoWindow.open({ map: pestMonitoringMap });
+}
+
+function focusPestMonitoringBlock(key, summaries) {
+  const entry = pestMonitoringPolygons.find((item) => item.key === key);
+  const summary = summaries.get(key);
+  if (!entry || !summary || !pestMonitoringMap) return;
+  const bounds = new google.maps.LatLngBounds();
+  entry.polygon.getPath().forEach((position) => bounds.extend(position));
+  if (!bounds.isEmpty()) pestMonitoringMap.fitBounds(bounds, 48);
+  showPestMonitoringBlockInfo(key, bounds.getCenter(), summaries, google.maps);
+}
+
 function wireHarvestFilters() {
   document.querySelectorAll("[data-harvest-filter]").forEach((control) => {
     control.addEventListener("change", (event) => {
@@ -4177,21 +5557,57 @@ function wireHarvestFilters() {
       if (target.dataset.harvestFilter === "sdp") harvestSdpFilter = target.value;
       if (target.dataset.harvestFilter === "status") harvestStatusFilter = target.value;
       selectedHarvestBinId = "";
-      renderHarvestMap();
-      renderHarvestInfo();
+      if (currentView === "harvestMap") refreshHarvestMapView();
+      if (currentView === "harvestInfo") renderHarvestInfo();
     });
   });
+}
+
+function harvestMapKpis(records, stats = harvestStats(records)) {
+  return `
+    ${kpi("Bines filtrados", stats.total, "Con ubicacion y filtros aplicados")}
+    ${kpi("Cuadrillas", stats.crews.size, "Han escaneado bins")}
+    ${kpi("Despachados", records.filter((record) => harvestRecordStatus(record) === "despachado").length, "Con trazabilidad camion")}
+    ${kpi("Pendientes", records.filter((record) => harvestRecordStatus(record) !== "despachado").length, "En terreno")}
+  `;
+}
+
+function syncHarvestFilterControlValues() {
+  document.querySelectorAll("[data-harvest-filter]").forEach((control) => {
+    if (control.dataset.harvestFilter === "from") control.value = harvestDateFromFilter;
+    if (control.dataset.harvestFilter === "to") control.value = harvestDateToFilter;
+    if (control.dataset.harvestFilter === "crew") control.value = harvestCrewFilter;
+    if (control.dataset.harvestFilter === "sdp") control.value = harvestSdpFilter;
+    if (control.dataset.harvestFilter === "status") control.value = harvestStatusFilter;
+  });
+}
+
+function refreshHarvestMapView() {
+  const mapElement = document.getElementById("harvestGeoMap");
+  if (!mapElement) {
+    renderHarvestMap();
+    return;
+  }
+  const records = filteredHarvestRecords();
+  syncHarvestFilterControlValues();
+  const kpis = document.getElementById("harvestMapKpis");
+  if (kpis) kpis.innerHTML = harvestMapKpis(records);
+  renderHarvestGeoMap({ fitBounds: false });
 }
 
 function renderHarvestMap() {
   const records = filteredHarvestRecords();
   const stats = harvestStats(records);
+  const existingMapElement = document.getElementById("harvestGeoMap");
+  if (existingMapElement && views.harvestMap.contains(existingMapElement)) {
+    const kpis = document.getElementById("harvestMapKpis");
+    if (kpis) kpis.innerHTML = harvestMapKpis(records, stats);
+    renderHarvestGeoMap({ fitBounds: false });
+    return;
+  }
   views.harvestMap.innerHTML = `
-    <div class="kpi-grid">
-      ${kpi("Bines filtrados", stats.total, "Con ubicacion y filtros aplicados")}
-      ${kpi("Cuadrillas", stats.crews.size, "Han escaneado bins")}
-      ${kpi("Despachados", records.filter((record) => harvestRecordStatus(record) === "despachado").length, "Con trazabilidad camion")}
-      ${kpi("Pendientes", records.filter((record) => harvestRecordStatus(record) !== "despachado").length, "En terreno")}
+    <div class="kpi-grid" id="harvestMapKpis">
+      ${harvestMapKpis(records, stats)}
     </div>
     <section class="panel harvest-map-panel">
       <div class="panel-header">
@@ -4205,7 +5621,7 @@ function renderHarvestMap() {
     </section>
   `;
   wireHarvestFilters();
-  renderHarvestGeoMap();
+  renderHarvestGeoMap({ fitBounds: true });
 }
 
 function renderHarvestInfo() {
@@ -4980,7 +6396,7 @@ async function loadCloudData(options = {}) {
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRows, weatherLatestRows, harvestRecords, harvestOfficialRecords, harvestCrewSchedule, harvestJornales] = await Promise.all([
+  const [seasons, programs, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRows, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales] = await Promise.all([
     canSeePlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve([]),
     canSeePlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve([]),
     sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc"),
@@ -5042,7 +6458,11 @@ async function loadCloudData(options = {}) {
           return [];
         });
       }),
-    sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2&order=fecha.asc")
+    sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2,helada_inicio,helada_termino&order=fecha.asc")
+      .catch((error) => {
+        if (!isMissingSupabaseColumn(error, ["helada_inicio", "helada_termino"])) throw error;
+        return sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2&order=fecha.asc");
+      })
       .then((rows) => {
         weatherStationCloudAvailable = true;
         return rows;
@@ -5052,17 +6472,18 @@ async function loadCloudData(options = {}) {
         weatherStationCloudAvailable = false;
         return [];
       }),
+    sbSelectAll("estacion_climatica", "select=fecha,hora,temp_out&temp_out=lte.0&order=fecha.asc,hora.asc")
+      .catch((error) => {
+        console.warn("No se pudieron cargar los horarios de helada", error);
+        return [];
+      }),
     sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp&order=fecha.desc,hora.desc&limit=1")
       .catch((error) => {
         console.warn("No se pudo cargar la ultima lectura de la estacion climatica", error);
         return [];
       }),
-    sbSelectAll("registros_trazabilidad", "select=*&order=id.desc").catch((error) => {
+    sbSelectAll("registros_trazabilidad", "select=id,tipo_registro,num_bin,codigo_local,contratista,cuadrilla,cuartel,bloque,cuartel_sdp,bloque_sdp,sdp,especie,variedad,fecha_cosecha,fecha_escaneo,patente,conductor_nombre,fecha_despacho_camion,latitud,longitud,fecha_sincronizacion,ultima_sincronizacion&order=id.desc").catch((error) => {
       console.warn("No se pudieron cargar registros de cosecha", error);
-      return [];
-    }),
-    sbSelectAll("registros_trazabilidad_oficial", "select=*&order=id.desc").catch((error) => {
-      console.warn("No se pudieron cargar registros oficiales de cosecha", error);
       return [];
     }),
     sbSelect("v_programacion_cuadrillas_dia", "select=*").catch((error) => {
@@ -5128,6 +6549,7 @@ async function loadCloudData(options = {}) {
   if (Array.isArray(irrigationProgramRows)) applyIrrigationProgramRecords(irrigationProgramRows);
   if (Array.isArray(irrigationObservationRows)) applyIrrigationObservationRecords(irrigationObservationRows);
   state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
+  const frostWindowsByDate = weatherStationFrostWindowsByDate(weatherFrostRows || []);
   state.weatherStationDaily = (weatherDailyRows || []).map((item) => ({
     date: item.fecha || "",
     records: Number(item.registros) || 0,
@@ -5138,7 +6560,10 @@ async function loadCloudData(options = {}) {
     degreeDays: Number(item.grados_dia_base_7) || 0,
     frost0ToMinus1: Number(item.helada_0_menos_1) || 0,
     frostMinus1ToMinus2: Number(item.helada_menos_1_menos_2) || 0,
-    frostBelowMinus2: Number(item.helada_menor_igual_menos_2) || 0
+    frostBelowMinus2: Number(item.helada_menor_igual_menos_2) || 0,
+    frostStart: frostWindowsByDate.get(item.fecha)?.start || item.helada_inicio || "",
+    frostEnd: frostWindowsByDate.get(item.fecha)?.end || item.helada_termino || "",
+    frostWindows: frostWindowsByDate.get(item.fecha)?.label || ""
   })).filter((item) => item.date && Number.isFinite(item.minimum) && Number.isFinite(item.maximum));
   const latestWeather = weatherLatestRows?.[0];
   state.weatherStationLatest = latestWeather ? {
@@ -5178,7 +6603,7 @@ async function loadCloudData(options = {}) {
     };
   };
   state.harvestRecords = harvestRecords.map((item) => mapHarvestRecord(item, "operativo"));
-  state.harvestOfficialRecords = harvestOfficialRecords.map((item) => mapHarvestRecord({ ...item, tipo_registro: "tarja_despachada" }, "oficial"));
+  state.harvestOfficialRecords = [];
   state.harvestCrewSchedule = harvestCrewSchedule.map((item) => ({
     date: item.fecha || item.fecha_cosecha || "",
     contractor: item.nombre_empresa || item.contratista || "",
@@ -5359,8 +6784,8 @@ function startCloudSync() {
     "observaciones_riego",
     "evaporacion_bandeja",
     "estacion_climatica",
+    "monitoreo_plagas",
     "registros_trazabilidad",
-    "registros_trazabilidad_oficial",
     "ordenes_aplicacion",
     "orden_productos",
     "despachos",
@@ -5384,7 +6809,16 @@ function startCloudSync() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table },
-        () => scheduleRealtimeCloudReload(table)
+        () => {
+          if (table === "monitoreo_plagas") {
+            pestMonitoringRecords = null;
+            pestMonitoringLoadError = "";
+            pestMonitoringDataSource = "";
+            if (currentView === "pestMonitoring") renderPestMonitoring();
+            return;
+          }
+          scheduleRealtimeCloudReload(table);
+        }
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
@@ -6190,27 +7624,159 @@ function createMapLabelOverlay(maps, position, text, className) {
   return new LabelOverlay();
 }
 
-async function renderHarvestGeoMap() {
+async function renderHarvestGeoMap(options = {}) {
   const el = document.getElementById("harvestGeoMap");
   if (!el) return;
+  const renderVersion = ++harvestMapRenderVersion;
   try {
     geoJsonCache ||= await loadGeoJson();
-    await renderGoogleHarvestMap(el, geoJsonCache);
+    await renderGoogleHarvestMap(el, geoJsonCache, { ...options, renderVersion });
   } catch (error) {
-    el.innerHTML = `<span>No se pudo cargar Google Maps para cosecha.</span>`;
+    if (renderVersion === harvestMapRenderVersion && el.isConnected) {
+      el.innerHTML = `<span>No se pudo cargar Google Maps para cosecha.</span>`;
+    }
   }
 }
 
-async function renderGoogleHarvestMap(el, layers) {
+function harvestMarkerIcon(maps, record, count = 1) {
+  const clustered = count > 1;
+  return {
+    path: maps.SymbolPath.CIRCLE,
+    scale: clustered ? Math.min(23, 15 + Math.log2(count) * 1.7) : 15,
+    fillColor: clustered ? "#176b87" : harvestRecordStatus(record) === "despachado" ? "#237847" : "#b42318",
+    fillOpacity: 0.95,
+    strokeColor: "#ffffff",
+    strokeWeight: clustered ? 2.5 : 2
+  };
+}
+
+function clearHarvestMapCache() {
+  harvestMapIdleListener?.remove?.();
+  harvestMapIdleListener = null;
+  if (harvestMapMarkerRenderFrame) cancelAnimationFrame(harvestMapMarkerRenderFrame);
+  harvestMapMarkerRenderFrame = 0;
+  harvestMapBaseOverlays.forEach((overlay) => overlay.setMap?.(null));
+  harvestMapMarkerCache.forEach((entry) => entry.marker?.setMap?.(null));
+  harvestMapBaseOverlays = [];
+  harvestMapMarkerCache = new Map();
+  harvestMapBaseReady = false;
+  harvestMapBaseBounds = null;
+  harvestMapVisibleRecords = [];
+}
+
+function harvestMapClusters(records, zoom) {
+  if (zoom >= 20) {
+    return records.map((record) => ({
+      key: `bin:${harvestBinKey(record)}`,
+      latitude: record.latitude,
+      longitude: record.longitude,
+      records: [record]
+    }));
+  }
+  const cellDegrees = Math.max(0.00008, 52 * 360 / (256 * (2 ** Math.max(1, zoom))));
+  const buckets = new Map();
+  records.forEach((record) => {
+    const row = Math.floor(record.latitude / cellDegrees);
+    const column = Math.floor(record.longitude / cellDegrees);
+    const key = `cluster:${zoom}:${row}:${column}`;
+    const bucket = buckets.get(key) || { key, latitude: 0, longitude: 0, records: [] };
+    bucket.latitude += record.latitude;
+    bucket.longitude += record.longitude;
+    bucket.records.push(record);
+    buckets.set(key, bucket);
+  });
+  return [...buckets.values()].map((bucket) => ({
+    ...bucket,
+    latitude: bucket.latitude / bucket.records.length,
+    longitude: bucket.longitude / bucket.records.length
+  }));
+}
+
+function renderHarvestMapMarkers(maps) {
+  if (!harvestMap) return;
+  const zoom = Math.round(harvestMap.getZoom?.() || 15);
+  const bounds = harvestMap.getBounds?.();
+  const recordsInView = bounds
+    ? harvestMapVisibleRecords.filter((record) => bounds.contains({ lat: record.latitude, lng: record.longitude }))
+    : harvestMapVisibleRecords;
+  const clusters = harvestMapClusters(recordsInView, zoom);
+  const visibleKeys = new Set(clusters.map((cluster) => cluster.key));
+  harvestMapMarkerCache.forEach((entry, key) => {
+    if (!visibleKeys.has(key)) {
+      entry.marker.setMap(null);
+      harvestMapMarkerCache.delete(key);
+    }
+  });
+
+  clusters.forEach((cluster) => {
+    const count = cluster.records.length;
+    const record = cluster.records[0];
+    const position = { lat: cluster.latitude, lng: cluster.longitude };
+    const label = count > 1
+      ? { text: String(count), color: "#ffffff", fontSize: "11px", fontWeight: "800" }
+      : { text: harvestCrewMarkerLabel(record), color: "#ffffff", fontSize: "10px", fontWeight: "800" };
+    const title = count > 1
+      ? `${count} bines - acercar para ver detalle`
+      : `${record.crew || "Sin cuadrilla"} - BIN ${record.numBin || record.localCode || "S/N"}`;
+    let entry = harvestMapMarkerCache.get(cluster.key);
+    if (!entry) {
+      entry = { records: cluster.records, marker: null };
+      entry.marker = new maps.Marker({
+        position,
+        map: harvestMap,
+        label,
+        icon: harvestMarkerIcon(maps, record, count),
+        title,
+        optimized: true
+      });
+      entry.marker.addListener("click", () => {
+        if (entry.records.length > 1) {
+          harvestInfoWindow?.close();
+          harvestMap.panTo(entry.marker.getPosition());
+          harvestMap.setZoom(Math.min(20, (harvestMap.getZoom() || 15) + 2));
+          return;
+        }
+        const selected = entry.records[0];
+        selectedHarvestBinId = selected.id;
+        renderHarvestBinDetail(selected, entry.marker, maps);
+      });
+      harvestMapMarkerCache.set(cluster.key, entry);
+    } else {
+      entry.records = cluster.records;
+      entry.marker.setPosition(position);
+      entry.marker.setLabel(label);
+      entry.marker.setIcon(harvestMarkerIcon(maps, record, count));
+      entry.marker.setTitle(title);
+      entry.marker.setMap(harvestMap);
+    }
+  });
+
+  const selectedEntry = [...harvestMapMarkerCache.values()].find((entry) =>
+    entry.marker.getMap?.() && entry.records.length === 1 && entry.records[0].id === selectedHarvestBinId);
+  if (selectedEntry) renderHarvestBinDetail(selectedEntry.records[0], selectedEntry.marker, maps);
+  else if (selectedHarvestBinId) harvestInfoWindow?.close();
+}
+
+function scheduleHarvestMapMarkerRender(maps) {
+  if (harvestMapMarkerRenderFrame) cancelAnimationFrame(harvestMapMarkerRenderFrame);
+  const renderVersion = harvestMapRenderVersion;
+  harvestMapMarkerRenderFrame = requestAnimationFrame(() => {
+    harvestMapMarkerRenderFrame = 0;
+    if (renderVersion !== harvestMapRenderVersion) return;
+    renderHarvestMapMarkers(maps);
+  });
+}
+
+async function renderGoogleHarvestMap(el, layers, options = {}) {
   const maps = await loadGoogleMaps();
+  if (options.renderVersion !== harvestMapRenderVersion || !el.isConnected) return;
   const records = filteredHarvestRecords().filter((record) => Number.isFinite(record.latitude) && Number.isFinite(record.longitude));
   if (harvestMapElement !== el) {
+    clearHarvestMapCache();
     harvestMap = null;
     harvestMapElement = el;
   }
-  harvestMapOverlays.forEach((overlay) => overlay.setMap?.(null));
-  harvestMapOverlays = [];
-  harvestInfoWindow?.close();
+  const createdMap = !harvestMap;
   if (!harvestMap) {
     harvestMap = new maps.Map(el, {
       mapTypeId: "satellite",
@@ -6221,73 +7787,66 @@ async function renderGoogleHarvestMap(el, layers) {
       tilt: 0
     });
   }
-  const bounds = new maps.LatLngBounds();
-  const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
-  const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
-  blockRings.forEach((item, index) => {
-    item.rings.forEach((ring) => {
-      const polygon = new maps.Polygon({
-        paths: ring.map(([lng, lat]) => ({ lat, lng })),
-        strokeColor: ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
-        strokeOpacity: 0.95,
-        strokeWeight: 1.9,
-        fillColor: "#dfe8dc",
-        fillOpacity: 0.18,
-        zIndex: 4
-      });
-      polygon.setMap(harvestMap);
-      harvestMapOverlays.push(polygon);
-      ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
-    });
-    const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
-    label.setMap(harvestMap);
-    harvestMapOverlays.push(label);
-  });
-  potreroRings.forEach((item, index) => {
-    item.rings.forEach((ring) => {
-      const polygon = new maps.Polygon({
-        paths: ring.map(([lng, lat]) => ({ lat, lng })),
-        strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
-        strokeOpacity: 1,
-        strokeWeight: 3,
-        fillOpacity: 0,
-        zIndex: 2
-      });
-      polygon.setMap(harvestMap);
-      harvestMapOverlays.push(polygon);
-    });
-    const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
-    label.setMap(harvestMap);
-    harvestMapOverlays.push(label);
-  });
-  records.forEach((record) => {
-    const marker = new maps.Marker({
-      position: { lat: record.latitude, lng: record.longitude },
-      map: harvestMap,
-      label: { text: harvestCrewMarkerLabel(record), color: "#ffffff", fontSize: "10px", fontWeight: "800" },
-      icon: {
-        path: maps.SymbolPath.CIRCLE,
-        scale: 15,
-        fillColor: harvestRecordStatus(record) === "despachado" ? "#237847" : "#b42318",
-        fillOpacity: 0.95,
-        strokeColor: "#ffffff",
-        strokeWeight: 2
-      },
-      title: `${record.crew || "Sin cuadrilla"} - BIN ${record.numBin || record.localCode || "S/N"}`
-    });
-    marker.addListener("click", () => {
-      selectedHarvestBinId = record.id;
-      renderHarvestBinDetail(record, marker, maps);
-    });
-    harvestMapOverlays.push(marker);
-    bounds.extend({ lat: record.latitude, lng: record.longitude });
-  });
-  if (!bounds.isEmpty()) harvestMap.fitBounds(bounds, 24);
-  const selected = records.find((record) => record.id === selectedHarvestBinId);
-  if (selected) {
-    const marker = harvestMapOverlays.find((overlay) => overlay?.getTitle?.() === `${selected.crew || "Sin cuadrilla"} - BIN ${selected.numBin || selected.localCode || "S/N"}`);
-    if (marker) renderHarvestBinDetail(selected, marker, maps);
+  harvestMapVisibleRecords = records;
+  if (!harvestMapIdleListener) {
+    harvestMapIdleListener = maps.event.addListener(harvestMap, "idle", () => scheduleHarvestMapMarkerRender(maps));
   }
+  maps.event.trigger(harvestMap, "resize");
+
+  if (!harvestMapBaseReady) {
+    const baseBounds = new maps.LatLngBounds();
+    const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
+    const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
+    blockRings.forEach((item, index) => {
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
+          strokeOpacity: 0.95,
+          strokeWeight: 1.9,
+          fillColor: "#dfe8dc",
+          fillOpacity: 0.18,
+          zIndex: 4
+        });
+        polygon.setMap(harvestMap);
+        harvestMapBaseOverlays.push(polygon);
+        ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
+      });
+      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
+      label.setMap(harvestMap);
+      harvestMapBaseOverlays.push(label);
+    });
+    potreroRings.forEach((item, index) => {
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
+          strokeOpacity: 1,
+          strokeWeight: 3,
+          fillOpacity: 0,
+          zIndex: 2
+        });
+        polygon.setMap(harvestMap);
+        harvestMapBaseOverlays.push(polygon);
+      });
+      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+      label.setMap(harvestMap);
+      harvestMapBaseOverlays.push(label);
+    });
+    harvestMapBaseBounds = baseBounds;
+    harvestMapBaseReady = true;
+  }
+
+  const recordBounds = new maps.LatLngBounds();
+  records.forEach((record) => recordBounds.extend({ lat: record.latitude, lng: record.longitude }));
+
+  if ((createdMap || options.fitBounds) && harvestMap) {
+    const bounds = new maps.LatLngBounds();
+    if (harvestMapBaseBounds && !harvestMapBaseBounds.isEmpty()) bounds.union(harvestMapBaseBounds);
+    if (!recordBounds.isEmpty()) bounds.union(recordBounds);
+    if (!bounds.isEmpty()) harvestMap.fitBounds(bounds, 24);
+  }
+  scheduleHarvestMapMarkerRender(maps);
 }
 
 function harvestCrewMarkerLabel(record) {
@@ -8820,6 +10379,15 @@ document.addEventListener("click", async (event) => {
   if (action === "gate-tab") {
     showGateTab(actionTarget.dataset.tab);
   }
+  if (action === "open-weather-station-import") {
+    openWeatherStationImportDialog();
+  }
+  if (action === "choose-weather-station-excel") {
+    document.getElementById("weatherStationExcelInput")?.click();
+  }
+  if (action === "import-weather-station-excel") {
+    await importWeatherStationExcel();
+  }
   if (action === "toggle-applications-menu") {
     const menu = document.getElementById("applicationsMenu");
     const open = !menu.classList.contains("open");
@@ -8878,8 +10446,23 @@ document.addEventListener("click", async (event) => {
     harvestStatusFilter = "Todos";
     harvestSdpFilter = "Todos";
     selectedHarvestBinId = "";
-    renderHarvestMap();
-    renderHarvestInfo();
+    if (currentView === "harvestMap") refreshHarvestMapView();
+    if (currentView === "harvestInfo") renderHarvestInfo();
+  }
+  if (action === "retry-pest-monitoring") {
+    pestMonitoringLoadError = "";
+    pestMonitoringRecords = null;
+    renderPestMonitoring();
+  }
+  if (action === "clear-pest-filters") {
+    const dates = (pestMonitoringRecords || []).map((record) => record.date).filter(Boolean).sort();
+    pestMonitoringDateFrom = dates[0] || "";
+    pestMonitoringDateTo = dates.at(-1) || "";
+    pestMonitoringPest = "Chanchito blanco";
+    pestMonitoringPotrero = "Todos";
+    pestMonitoringBlock = "Todos";
+    views.pestMonitoring.innerHTML = "";
+    renderPestMonitoring();
   }
   if (action === "clear-irrigation-hours") {
     if (!confirm(`Limpiar las horas de riego visibles para ${irrigationMonth}/${irrigationYear}?`)) return;
@@ -8899,7 +10482,11 @@ document.addEventListener("click", async (event) => {
     renderIrrigation();
     showToast("Horas de riego limpiadas");
   }
+  if (action === "toggle-irrigation-filters") {
+    setIrrigationFiltersOpen(!irrigationFiltersOpen);
+  }
   if (action === "open-irrigation-program-dialog") {
+    setIrrigationFiltersOpen(false);
     openIrrigationProgramDialog();
   }
   if (action === "apply-irrigation-program-auto") {
@@ -8917,10 +10504,22 @@ document.addEventListener("click", async (event) => {
       const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
       return Number(evaporationMap.get(date)?.evaporation) || 0;
     }).reduce((sum, value) => sum + value, 0);
-    applyAutomaticIrrigationProgram({ blocks: allBlocks, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal });
+    applyAutomaticIrrigationProgram({ blocks: allBlocks, daysInMonth, monthPrefix, historicalEvaporationMap, historicalEvaporationTotal, monthEvaporationTotal });
   }
   if (action === "save-irrigation-bandeja") {
     await saveIrrigationBandejaRecord();
+  }
+  if (action === "shift-irrigation-bandeja-year") {
+    irrigationYear = String(Math.min(2100, Math.max(1900, Number(irrigationYear) + Number(actionTarget.dataset.delta || 0))));
+    irrigationBandejaFocusPending = true;
+    renderIrrigation();
+  }
+  if (action === "focus-current-irrigation-bandeja") {
+    const now = new Date();
+    irrigationYear = String(now.getFullYear());
+    irrigationMonth = String(now.getMonth() + 1).padStart(2, "0");
+    irrigationBandejaFocusPending = true;
+    renderIrrigation();
   }
   if (action === "toggle-calicatas") {
     const key = actionTarget.dataset.key;
@@ -9005,6 +10604,10 @@ document.addEventListener("change", async (event) => {
     updateIrrigationProgramDialogBlocks();
     return;
   }
+  if (event.target?.id === "programAutoStartDate") {
+    updateIrrigationProgramDialogPreview();
+    return;
+  }
   if (event.target?.matches?.("[data-program-auto-block]")) {
     updateIrrigationProgramDialogPreview();
     return;
@@ -9044,14 +10647,18 @@ document.addEventListener("change", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (["programAutoHours", "programAutoReposicion", "programAutoSkipDays"].includes(event.target?.id)) {
+  if (["programAutoStartDate", "programAutoHours", "programAutoReposicion", "programAutoSkipDays"].includes(event.target?.id)) {
     updateIrrigationProgramDialogPreview();
   }
 });
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => {
-    if (button.dataset.irrigationMenuTab) irrigationTab = button.dataset.irrigationMenuTab;
+    if (button.dataset.irrigationMenuTab) {
+      if (button.dataset.irrigationMenuTab === "bandejas" && irrigationTab !== "bandejas") irrigationBandejaFocusPending = true;
+      irrigationTab = button.dataset.irrigationMenuTab;
+      irrigationFiltersOpen = false;
+    }
     switchView(button.dataset.view);
   });
 });

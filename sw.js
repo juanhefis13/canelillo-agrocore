@@ -1,5 +1,5 @@
-const CACHE = "canelillo-agrocore-v87-weather-station-home";
-const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
+const CACHE = "canelillo-agrocore-v112-frost-summary";
+const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./vendor/xlsx.full.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

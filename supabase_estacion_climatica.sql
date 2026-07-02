@@ -14,6 +14,9 @@ create table if not exists public.estacion_climatica (
 
 create index if not exists estacion_climatica_fecha_idx
   on public.estacion_climatica (fecha desc, hora desc);
+create index if not exists estacion_climatica_heladas_fecha_hora_idx
+  on public.estacion_climatica (fecha, hora)
+  where temp_out <= 0;
 
 comment on table public.estacion_climatica is
   'Lecturas cada 15 minutos de la estacion climatica de Agricola El Canelillo.';
@@ -31,10 +34,24 @@ select
   min(low_temp) as temperatura_minima,
   max(hi_temp) as temperatura_maxima,
   round((count(*) filter (where temp_out > 7) * 0.25)::numeric, 2) as horas_sobre_7,
-  round((sum(greatest(temp_out - 7, 0)) * 0.25 / 24)::numeric, 3) as grados_dia_base_7,
+  round(greatest(((max(hi_temp) + min(low_temp)) / 2) - 7, 0)::numeric, 3) as grados_dia_base_7,
   round((count(*) filter (where temp_out <= 0 and temp_out > -1) * 0.25)::numeric, 2) as helada_0_menos_1,
   round((count(*) filter (where temp_out <= -1 and temp_out > -2) * 0.25)::numeric, 2) as helada_menos_1_menos_2,
-  round((count(*) filter (where temp_out <= -2) * 0.25)::numeric, 2) as helada_menor_igual_menos_2
+  round((count(*) filter (where temp_out <= -2) * 0.25)::numeric, 2) as helada_menor_igual_menos_2,
+  min(
+    case when temp_out <= 0 then
+      case when hora >= time '12:00' then hora - interval '12 hours' else hora end
+    end
+  ) as helada_inicio,
+  case when count(*) filter (where temp_out <= 0) > 0 then
+    (
+      max(
+        case when temp_out <= 0 then
+          case when hora >= time '12:00' then hora - interval '12 hours' else hora end
+        end
+      ) + interval '15 minutes'
+    )::time
+  end as helada_termino
 from public.estacion_climatica
 group by fecha;
 

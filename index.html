@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-    <link rel="stylesheet" href="styles.css?v=87-weather-station-home">
+    <link rel="stylesheet" href="styles.css?v=112-frost-summary">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -77,6 +77,7 @@
             <button class="nav-item" data-view="calicatas" title="Calicatas">Calicatas</button>
           </div>
           <button class="nav-item" data-view="fertilizers" title="Fertilizantes">Fertilizantes</button>
+          <button class="nav-item" data-view="pestMonitoring" title="Monitoreo de plagas">Monitoreo de plagas</button>
           <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false">Aplicaciones</button>
           <div class="nav-group" id="applicationsMenu">
             <button class="nav-item" data-view="applicationDashboard" title="Panel principal">Panel principal</button>
@@ -114,6 +115,7 @@
         <section id="irrigation" class="view"></section>
         <section id="calicatas" class="view"></section>
         <section id="fertilizers" class="view"></section>
+        <section id="pestMonitoring" class="view"></section>
         <section id="applicationDashboard" class="view"></section>
         <section id="program" class="view"></section>
         <section id="manager" class="view"></section>
@@ -140,10 +142,12 @@
     <dialog id="authDialog" class="modal"></dialog>
     <dialog id="irrigationProgramDialog" class="modal"></dialog>
     <dialog id="irrigationObservationDialog" class="modal"></dialog>
+    <dialog id="weatherStationImportDialog" class="modal weather-import-dialog"></dialog>
     <div id="printArea" class="print-area"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=87-weather-station-home"></script>
+    <script src="vendor/xlsx.full.min.js"></script>
+    <script src="app.js?v=112-frost-summary"></script>
   </body>
 </html>
