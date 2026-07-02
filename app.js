@@ -5164,13 +5164,14 @@ function pestMonitoringHeatColor(ratio) {
   return stops[lower].map((channel, index) => Math.round(channel + (stops[upper][index] - channel) * amount));
 }
 
-function createPestMonitoringHeatOverlay(maps, map) {
+function createPestMonitoringHeatOverlay(maps, map, maskRings = []) {
   class PestCanvasHeatOverlay extends maps.OverlayView {
     constructor() {
       super();
       this.container = null;
       this.canvas = null;
       this.points = [];
+      this.maskRings = maskRings;
       this.scale = { thresholds: [0, 0, 0, 0], minimum: 0, maximum: 0, positives: 0 };
       this.frame = 0;
       this.setMap(map);
@@ -5281,7 +5282,23 @@ function createPestMonitoringHeatOverlay(maps, map) {
       surfaceContext.putImageData(image, 0, 0);
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
+      if (this.maskRings.length) {
+        context.save();
+        context.beginPath();
+        this.maskRings.forEach((ring) => {
+          ring.forEach(([lng, lat], index) => {
+            const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(lat, lng));
+            const x = pixel.x - southWest.x;
+            const y = pixel.y - northEast.y;
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.closePath();
+        });
+        context.clip("evenodd");
+      }
       context.drawImage(surface, 0, 0, gridWidth, gridHeight, 0, 0, width, height);
+      if (this.maskRings.length) context.restore();
     }
 
     onRemove() {
@@ -5595,7 +5612,11 @@ async function renderPestMonitoringMap(records, summaries, scale) {
         label.setMap(pestMonitoringMap);
         pestMonitoringBaseOverlays.push(label);
       });
-      pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(maps, pestMonitoringMap);
+      pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(
+        maps,
+        pestMonitoringMap,
+        blockRings.flatMap((item) => item.rings)
+      );
     }
     pestMonitoringPolygons.forEach((entry) => {
       const block = summaries.get(entry.key);
