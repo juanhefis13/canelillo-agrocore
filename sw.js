@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v112-frost-summary";
+const CACHE = "canelillo-agrocore-v115-pest-contrast";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./vendor/xlsx.full.min.js"];
 
 self.addEventListener("install", (event) => {

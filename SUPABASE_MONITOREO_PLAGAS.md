@@ -7,26 +7,32 @@ Ejecutar en el SQL Editor de Supabase, en este orden:
 1. `supabase_monitoreo_plagas.sql`
 2. `supabase_monitoreo_plagas_import.sql`
 
-Si la tabla ya estaba instalada, ejecutar solamente
-`supabase_monitoreo_plagas_dashboard.sql` para agregar los totales calculados y
-el indice utilizado por los filtros de potrero/bloque Excel.
+Si la tabla ya estaba instalada con el modelo anterior, ejecutar solamente:
+
+1. `supabase_monitoreo_plagas_normalizar_campos.sql`
+
+La migracion sincroniza `potrero_excel` y `bloque_excel` desde `campos`, cambia
+los identificadores a UUID deterministas y elimina las columnas QGIS y de
+auditoria que ya no forman parte del modelo.
 
 El primer archivo crea la tabla, la vista unificada, indices, permisos, RLS y
 Realtime. Tambien registra los bloques 1 al 5 de CirrusAgro en `campos`.
 
-El segundo archivo importa 13.786 observaciones. Es idempotente: utiliza la
-combinacion `origen_capa + origen_fid`, por lo que volver a ejecutarlo actualiza
-los registros existentes en lugar de duplicarlos.
+El segundo archivo importa 13.786 observaciones. Es idempotente: genera un UUID
+estable por observacion, por lo que volver a ejecutarlo actualiza los registros
+existentes en lugar de duplicarlos.
 
 ## Modelo
 
 - `monitoreo_plagas.campo_id` enlaza cada observacion con `campos`.
 - Potrero, bloque, especie, variedad y hectareas canonicos se leen desde
   `v_monitoreo_plagas`.
-- `potrero_excel` y `bloque_excel` conservan la fuente tabular.
-- `alias_geojson`, `bloque_geojson`, latitud y longitud conservan la fuente GIS.
-- `total_origen` mantiene el `TOTAL` recibido y `total_calculado` mantiene la
-  suma real de las etapas de la plaga.
+- `potrero_excel` y `bloque_excel` se sincronizan con los nombres oficiales de
+  `campos`.
+- Latitud y longitud conservan la ubicacion puntual del monitoreo.
+- Los poligonos son los mismos `outputs/bloques.geojson` usados por Calicatas,
+  normalizados al potrero y bloque de `campos`.
+- `total_calculado` suma huevos y ninfas 1 a 3 mediante una columna generada.
 - `total_huevos_ninfas` suma huevos y ninfas 1 a 3.
 - `carga_observada` agrega adultos, larvas y pupas para no ocultar presencia en
   plagas que no registran estados inmaduros.

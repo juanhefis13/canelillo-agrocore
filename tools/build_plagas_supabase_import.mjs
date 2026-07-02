@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const compactPath = path.join(projectRoot, "outputs", "plagas_monitoreo.compact.json");
@@ -34,6 +35,29 @@ function sqlNumber(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "0";
   return String(number);
+}
+
+function sourceUuid(layer, fid) {
+  const hash = createHash("md5").update(`${layer}:${fid}`).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
+}
+
+function canonicalFieldBlock(potrero, block) {
+  const cleanPotrero = String(potrero || "").trim();
+  const cleanBlock = String(block || "").trim();
+  const override = {
+    "29:2A": "2",
+    "29:2B": "2",
+    "29:5A": "5",
+    "29:5B": "5",
+    "19:1": "4",
+    "6:1": "3"
+  }[`${cleanPotrero}:${cleanBlock.toUpperCase()}`];
+  if (override) return override;
+  if (/^[D-J]$/i.test(cleanPotrero) && cleanBlock && !cleanBlock.toUpperCase().startsWith(cleanPotrero.toUpperCase())) {
+    return `${cleanPotrero}${cleanBlock}`;
+  }
+  return cleanBlock;
 }
 
 const collection = JSON.parse(await fs.readFile(compactPath, "utf8"));
@@ -98,76 +122,60 @@ for (const [pestKey, records] of recordsByPest) {
     }
     record.originLayer = layer.layer;
     record.originFid = fid;
+    record.id = sourceUuid(layer.layer, fid);
   });
 }
 
 const sourceColumns = [
-  "origen_capa", "origen_fid", "fecha", "tipo_plaga", "potrero_canonico",
-  "bloque_canonico", "potrero_excel", "bloque_excel", "alias_geojson",
-  "bloque_geojson", "alias_mapa", "bloque_mapa", "numero_arbol",
-  "orden_monitoreo", "encontrado_en", "sector_monitoreo", "evidencia_foto",
-  "total_origen", "total_calculado", "huevos", "ninfas_1", "ninfas_2",
-  "ninfas_3", "adultos", "larvas", "pupas", "longitud", "latitud"
+  "id", "fecha", "tipo_plaga", "potrero_canonico", "bloque_canonico",
+  "numero_arbol", "orden_monitoreo", "encontrado_en", "huevos", "ninfas_1",
+  "ninfas_2", "ninfas_3", "adultos", "larvas", "pupas", "longitud", "latitud"
 ];
 
 function recordValues(record) {
   const hasField = record.normalizedField && normalized(record.potrero) !== "sin potrero";
   const canonicalPotrero = hasField ? record.potrero : "";
-  const canonicalBlock = hasField ? (record.mapBlock || record.excelBlock) : "";
-  const excelPotrero = normalized(record.potrero) === "sin potrero" ? "" : record.potrero;
+  const canonicalBlock = hasField ? canonicalFieldBlock(record.potrero, record.mapBlock || record.excelBlock) : "";
   return `(${[
-    sqlText(record.originLayer), sqlNumber(record.originFid), sqlText(record.date), sqlText(record.pest),
-    sqlText(canonicalPotrero), sqlText(canonicalBlock), sqlText(excelPotrero), sqlText(record.excelBlock),
-    sqlText(record.sourceAlias), sqlText(record.sourceBlock), sqlText(record.mapAlias), sqlText(record.mapBlock),
-    sqlText(record.tree), sqlText(record.monitoringOrder), sqlText(record.foundAt), sqlText(record.sector),
-    sqlText(record.photoUrl), sqlNumber(record.sourceTotal), sqlNumber(record.stageTotal), sqlNumber(record.eggs),
+    sqlText(record.id), sqlText(record.date), sqlText(record.pest), sqlText(canonicalPotrero), sqlText(canonicalBlock),
+    sqlText(record.tree), sqlText(record.monitoringOrder), sqlText(record.foundAt), sqlNumber(record.eggs),
     sqlNumber(record.nymph1), sqlNumber(record.nymph2), sqlNumber(record.nymph3), sqlNumber(record.adults),
     sqlNumber(record.larvae), sqlNumber(record.pupae), sqlNumber(record.longitude), sqlNumber(record.latitude)
   ].join(", ")})`;
 }
 
 function importStatement(records) {
-  return `insert into public.monitoreo_plagas (
-  origen_capa, origen_fid, campo_id, fecha, tipo_plaga, potrero_excel, bloque_excel,
-  alias_geojson, bloque_geojson, alias_mapa, bloque_mapa, numero_arbol, orden_monitoreo,
-  encontrado_en, sector_monitoreo, evidencia_foto, total_origen, total_calculado,
-  huevos, ninfas_1, ninfas_2, ninfas_3, adultos, larvas, pupas, longitud, latitud
-)
-select
-  v.origen_capa, v.origen_fid, c.id, v.fecha::date, v.tipo_plaga, v.potrero_excel,
-  v.bloque_excel, v.alias_geojson, v.bloque_geojson, v.alias_mapa, v.bloque_mapa,
-  v.numero_arbol, v.orden_monitoreo, v.encontrado_en, v.sector_monitoreo,
-  v.evidencia_foto, v.total_origen, v.total_calculado, v.huevos, v.ninfas_1,
-  v.ninfas_2, v.ninfas_3, v.adultos, v.larvas, v.pupas, v.longitud, v.latitud
-from (values
+  return `with source_values(${sourceColumns.join(", ")}) as (values
   ${records.map(recordValues).join(",\n  ")}
-) as v(${sourceColumns.join(", ")})
-left join lateral (
-  select campos.id
-  from public.campos
-  where lower(trim(campos.potrero)) = lower(trim(v.potrero_canonico))
-    and trim(campos.bloque) = trim(v.bloque_canonico)
-  order by campos.activo desc, campos.id
-  limit 1
-) c on true
-on conflict (origen_capa, origen_fid) do update
+), upserted as (
+  insert into public.monitoreo_plagas (
+    id, campo_id, fecha, tipo_plaga, potrero_excel, bloque_excel, numero_arbol,
+    orden_monitoreo, encontrado_en, huevos, ninfas_1, ninfas_2, ninfas_3,
+    adultos, larvas, pupas, longitud, latitud
+  )
+  select
+    v.id::uuid, c.id, v.fecha::date, v.tipo_plaga, c.potrero, c.bloque,
+    v.numero_arbol, v.orden_monitoreo, v.encontrado_en, v.huevos, v.ninfas_1,
+    v.ninfas_2, v.ninfas_3, v.adultos, v.larvas, v.pupas, v.longitud, v.latitud
+  from source_values v
+  left join lateral (
+    select campos.id, campos.potrero, campos.bloque
+    from public.campos
+    where lower(trim(campos.potrero)) = lower(trim(v.potrero_canonico))
+      and upper(trim(campos.bloque)) = upper(trim(v.bloque_canonico))
+    order by campos.activo desc, campos.id
+    limit 1
+  ) c on true
+  on conflict (id) do update
 set
   campo_id = excluded.campo_id,
   fecha = excluded.fecha,
   tipo_plaga = excluded.tipo_plaga,
   potrero_excel = excluded.potrero_excel,
   bloque_excel = excluded.bloque_excel,
-  alias_geojson = excluded.alias_geojson,
-  bloque_geojson = excluded.bloque_geojson,
-  alias_mapa = excluded.alias_mapa,
-  bloque_mapa = excluded.bloque_mapa,
   numero_arbol = excluded.numero_arbol,
   orden_monitoreo = excluded.orden_monitoreo,
   encontrado_en = excluded.encontrado_en,
-  sector_monitoreo = excluded.sector_monitoreo,
-  evidencia_foto = excluded.evidencia_foto,
-  total_origen = excluded.total_origen,
-  total_calculado = excluded.total_calculado,
   huevos = excluded.huevos,
   ninfas_1 = excluded.ninfas_1,
   ninfas_2 = excluded.ninfas_2,
@@ -176,7 +184,12 @@ set
   larvas = excluded.larvas,
   pupas = excluded.pupas,
   longitud = excluded.longitud,
-  latitud = excluded.latitud;`;
+  latitud = excluded.latitud
+  returning id
+)
+insert into tmp_monitoreo_plagas_import_ids (id)
+select id from upserted
+on conflict (id) do nothing;`;
 }
 
 const statements = [];
@@ -184,11 +197,15 @@ for (let index = 0; index < decoded.length; index += chunkSize) {
   statements.push(importStatement(decoded.slice(index, index + chunkSize)));
 }
 
-const expectedLayers = [...layerByPest.values()].map(({ layer }) => sqlText(layer)).join(", ");
-const sql = `-- Generado por tools/build_plagas_supabase_import.mjs.
+const sql = `set statement_timeout = '120min';
+-- Generado por tools/build_plagas_supabase_import.mjs.
 -- Fuente: plagas qgis.xlsx + capas GeoJSON; public.campos es el catalogo canonico.
 -- Ejecutar despues de supabase_monitoreo_plagas.sql.
 begin;
+
+create temporary table tmp_monitoreo_plagas_import_ids (
+  id uuid primary key
+) on commit drop;
 
 ${statements.join("\n\n")}
 
@@ -197,10 +214,9 @@ declare
   imported_count bigint;
 begin
   select count(*) into imported_count
-  from public.monitoreo_plagas
-  where origen_capa in (${expectedLayers});
-  if imported_count < ${decoded.length} then
-    raise exception 'Import incompleto: se esperaban al menos ${decoded.length} registros y quedaron %', imported_count;
+  from tmp_monitoreo_plagas_import_ids;
+  if imported_count <> ${decoded.length} then
+    raise exception 'Import incompleto: se esperaban ${decoded.length} registros y se procesaron %', imported_count;
   end if;
 end $$;
 
@@ -222,12 +238,10 @@ order by tipo_plaga;
 select
   potrero_excel,
   bloque_excel,
-  alias_geojson,
-  bloque_geojson,
   count(*) as registros
 from public.monitoreo_plagas
 where campo_id is null
-group by potrero_excel, bloque_excel, alias_geojson, bloque_geojson
+group by potrero_excel, bloque_excel
 order by registros desc;
 `;
 

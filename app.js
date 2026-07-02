@@ -268,11 +268,13 @@ let pestMonitoringDataSource = "";
 let pestMonitoringDateFrom = "";
 let pestMonitoringDateTo = "";
 let pestMonitoringPest = "Chanchito blanco";
+let pestMonitoringSpecies = "Todas";
 let pestMonitoringPotrero = "Todos";
 let pestMonitoringBlock = "Todos";
 let pestMonitoringMap = null;
 let pestMonitoringMapElement = null;
 let pestMonitoringPolygons = [];
+let pestMonitoringBaseOverlays = [];
 let pestMonitoringHeatOverlay = null;
 let pestMonitoringInfoWindow = null;
 let pestMonitoringMapRenderVersion = 0;
@@ -4908,21 +4910,16 @@ function mapSupabasePestMonitoringRecord(row) {
   return {
     date: row.fecha || "",
     pest: row.tipo_plaga || "",
-    potrero: row.potrero_excel || row.potrero || "Sin potrero",
+    species: row.especie || "",
+    variety: row.variedad || "",
+    potrero: row.potrero || "Sin potrero",
     canonicalPotrero: row.potrero || "Sin potrero",
     potreroNormalized: Boolean(row.campo_normalizado),
-    sourceAlias: row.alias_geojson || "",
-    sourceBlock: row.bloque_geojson || "",
-    excelBlock: row.bloque_excel || row.bloque || "",
-    mapAlias: row.alias_mapa || row.alias_geojson || "",
-    mapBlock: row.bloque_mapa || row.bloque || "",
-    block: row.bloque_excel || row.bloque || "",
+    excelBlock: row.bloque || "",
+    block: row.bloque || "",
     tree: String(row.numero_arbol ?? ""),
     monitoringOrder: String(row.orden_monitoreo ?? ""),
     foundAt: row.encontrado_en || "",
-    sector: String(row.sector_monitoreo ?? ""),
-    photoUrl: row.evidencia_foto || "",
-    sourceTotal: Number(row.total_origen) || 0,
     stageTotal: Number(row.total_calculado) || 0,
     eggs: Number(row.huevos) || 0,
     nymph1: Number(row.ninfas_1) || 0,
@@ -4939,15 +4936,13 @@ function mapSupabasePestMonitoringRecord(row) {
 async function loadPestMonitoringFromSupabase() {
   if (!supabaseSession) throw new Error("Se requiere una sesion de Supabase");
   const select = [
-    "fecha", "tipo_plaga", "potrero", "bloque", "campo_normalizado", "potrero_excel", "bloque_excel",
-    "alias_geojson", "bloque_geojson", "alias_mapa", "bloque_mapa", "numero_arbol",
-    "orden_monitoreo", "encontrado_en", "sector_monitoreo", "evidencia_foto",
-    "total_origen", "total_calculado", "huevos", "ninfas_1", "ninfas_2", "ninfas_3",
-    "adultos", "larvas", "pupas", "longitud", "latitud", "origen_capa", "origen_fid"
+    "fecha", "tipo_plaga", "potrero", "bloque", "especie", "variedad", "campo_normalizado", "numero_arbol",
+    "orden_monitoreo", "encontrado_en", "total_calculado", "huevos", "ninfas_1",
+    "ninfas_2", "ninfas_3", "adultos", "larvas", "pupas", "longitud", "latitud", "id"
   ].join(",");
   const rows = await sbSelectAll(
     "v_monitoreo_plagas",
-    `select=${select}&order=fecha.asc.nullslast,origen_capa.asc,origen_fid.asc`,
+    `select=${select}&order=fecha.asc.nullslast,id.asc`,
     1000
   );
   if (!rows.length) throw new Error("La tabla monitoreo_plagas aun no contiene registros");
@@ -4964,21 +4959,16 @@ async function loadPestMonitoringFromLocalBackup() {
   return (collection.records || []).map((row) => ({
         date: dictionaries.dates?.[row[0]] || "",
         pest: dictionaries.pests?.[row[1]] || "",
+        species: "",
+        variety: "",
         potrero: dictionaries.potreros?.[row[2]] || "Sin potrero",
         canonicalPotrero: dictionaries.potreros?.[row[2]] || "Sin potrero",
         potreroNormalized: Boolean(row[3]),
-        sourceAlias: dictionaries.aliases?.[row[4]] || "",
-        sourceBlock: dictionaries.blocks?.[row[5]] || "",
-        excelBlock: dictionaries.blocks?.[row[6]] || "",
-        mapAlias: dictionaries.aliases?.[row[7]] || "",
-        mapBlock: dictionaries.blocks?.[row[8]] || "",
-        block: dictionaries.blocks?.[row[6]] || "",
+        excelBlock: dictionaries.blocks?.[row[8]] || dictionaries.blocks?.[row[6]] || "",
+        block: dictionaries.blocks?.[row[8]] || dictionaries.blocks?.[row[6]] || "",
         tree: String(row[9] ?? ""),
         monitoringOrder: String(row[10] ?? ""),
         foundAt: dictionaries.foundAt?.[row[11]] || "",
-        sector: dictionaries.sectors?.[row[12]] || "",
-        photoUrl: dictionaries.photos?.[row[13]] || "",
-        sourceTotal: Number(row[14]) || 0,
         stageTotal: Number(row[15]) || 0,
         eggs: Number(row[16]) || 0,
         nymph1: Number(row[17]) || 0,
@@ -4992,6 +4982,16 @@ async function loadPestMonitoringFromLocalBackup() {
       }));
 }
 
+function enrichPestMonitoringFields(records) {
+  const fields = new Map((state.blocks || []).map((field) => [fieldIdentityKey(field.potrero, field.block), field]));
+  records.forEach((record) => {
+    const field = fields.get(pestMonitoringBlockKey(record));
+    record.species = record.species || field?.crop || "Sin especie";
+    record.variety = record.variety || field?.variety || "";
+  });
+  return records;
+}
+
 async function loadPestMonitoringRecords() {
   if (pestMonitoringRecords) return pestMonitoringRecords;
   if (pestMonitoringLoadPromise) return pestMonitoringLoadPromise;
@@ -5002,9 +5002,9 @@ async function loadPestMonitoringRecords() {
       console.warn("Monitoreo de plagas usa respaldo local", error);
       pestMonitoringRecords = await loadPestMonitoringFromLocalBackup();
     }
-    pestMonitoringRecords = pestMonitoringRecords.filter((record) =>
+    pestMonitoringRecords = enrichPestMonitoringFields(pestMonitoringRecords.filter((record) =>
       Number.isFinite(record.latitude) && Number.isFinite(record.longitude)
-    );
+    ));
     setPestMonitoringDefaultDates();
       pestMonitoringLoadError = "";
       return pestMonitoringRecords;
@@ -5034,6 +5034,7 @@ function pestMonitoringFilteredRecords({ includePest = true } = {}) {
     if (pestMonitoringDateFrom && (!record.date || record.date < pestMonitoringDateFrom)) return false;
     if (pestMonitoringDateTo && (!record.date || record.date > pestMonitoringDateTo)) return false;
     if (includePest && pestMonitoringPest !== "Todas" && record.pest !== pestMonitoringPest) return false;
+    if (pestMonitoringSpecies !== "Todas" && record.species !== pestMonitoringSpecies) return false;
     if (pestMonitoringPotrero !== "Todos" && record.potrero !== pestMonitoringPotrero) return false;
     if (pestMonitoringBlock !== "Todos" && String(record.excelBlock || "") !== pestMonitoringBlock) return false;
     return true;
@@ -5041,9 +5042,14 @@ function pestMonitoringFilteredRecords({ includePest = true } = {}) {
 }
 
 function pestMonitoringBlockKey(recordOrProperties) {
-  const alias = recordOrProperties.mapAlias ?? recordOrProperties.sourceAlias ?? recordOrProperties["Potrero_Alias:"] ?? "";
-  const block = recordOrProperties.mapBlock ?? recordOrProperties.block ?? recordOrProperties.Bloque ?? "";
-  return `${String(alias).trim()}|${String(block).trim()}`;
+  if (recordOrProperties?.["Potrero_Alias:"] !== undefined || recordOrProperties?.Potrero_Alias !== undefined) {
+    const field = geoJsonFeatureField({ properties: recordOrProperties });
+    return fieldIdentityKey(field.potrero, field.block);
+  }
+  return fieldIdentityKey(
+    recordOrProperties.potrero || recordOrProperties.canonicalPotrero,
+    recordOrProperties.block || recordOrProperties.excelBlock
+  );
 }
 
 function pestMonitoringBlockSummaries(records) {
@@ -5053,7 +5059,6 @@ function pestMonitoringBlockSummaries(records) {
     const summary = summaries.get(key) || {
       key,
       potrero: record.potrero || "Sin potrero",
-      sourceAlias: record.sourceAlias || "",
       block: "",
       excelBlocks: new Set(),
       samples: 0,
@@ -5107,6 +5112,7 @@ function pestMonitoringRiskScale(records) {
     .sort((a, b) => a - b);
   return {
     thresholds: [0.2, 0.4, 0.6, 0.8].map((ratio) => pestMonitoringQuantile(positives, ratio)),
+    minimum: positives[0] || 0,
     maximum: positives.at(-1) || 0,
     positives: positives.length
   };
@@ -5128,18 +5134,34 @@ function pestMonitoringRiskColor(value, scale) {
 
 function pestMonitoringLegend(scale) {
   if (!scale.positives) {
-    return `<strong>Carga observada · ${escapeHtml(pestMonitoringPest)}</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin presencia</div>`;
+    return `<strong>${escapeHtml(pestMonitoringPest)} · sin presencia</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin individuos</div>`;
   }
   const [veryLow, low, medium, high] = scale.thresholds;
   const items = [
     [PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"],
-    [PEST_RISK_COLORS[1], `Muy baja · hasta ${number(veryLow, 1)}`],
-    [PEST_RISK_COLORS[2], `Baja · hasta ${number(low, 1)}`],
-    [PEST_RISK_COLORS[3], `Media · hasta ${number(medium, 1)}`],
-    [PEST_RISK_COLORS[4], `Alta · hasta ${number(high, 1)}`],
-    [PEST_RISK_COLORS[5], `Muy alta · sobre ${number(high, 1)}`]
+    [PEST_RISK_COLORS[1], `Muy baja · ${number(scale.minimum, 1)} a ${number(veryLow, 1)}`],
+    [PEST_RISK_COLORS[2], `Baja · ${number(veryLow, 1)} a ${number(low, 1)}`],
+    [PEST_RISK_COLORS[3], `Media · ${number(low, 1)} a ${number(medium, 1)}`],
+    [PEST_RISK_COLORS[4], `Alta · ${number(medium, 1)} a ${number(high, 1)}`],
+    [PEST_RISK_COLORS[5], `Muy alta · ${number(high, 1)} a ${number(scale.maximum, 1)}`]
   ];
-  return `<strong>Carga observada · escala ${escapeHtml(pestMonitoringPest)}</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+  return `<strong>${escapeHtml(pestMonitoringPest)} · mín. ${number(scale.minimum, 1)} · máx. ${number(scale.maximum, 1)}</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+}
+
+function pestMonitoringHeatColor(ratio) {
+  const stops = [
+    [20, 125, 100],
+    [120, 201, 139],
+    [184, 217, 107],
+    [240, 207, 74],
+    [238, 150, 56],
+    [217, 54, 43]
+  ];
+  const position = Math.max(0, Math.min(1, ratio)) * (stops.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.min(stops.length - 1, Math.ceil(position));
+  const amount = position - lower;
+  return stops[lower].map((channel, index) => Math.round(channel + (stops[upper][index] - channel) * amount));
 }
 
 function createPestMonitoringHeatOverlay(maps, map) {
@@ -5149,7 +5171,7 @@ function createPestMonitoringHeatOverlay(maps, map) {
       this.container = null;
       this.canvas = null;
       this.points = [];
-      this.scale = { thresholds: [0, 0, 0, 0], maximum: 0, positives: 0 };
+      this.scale = { thresholds: [0, 0, 0, 0], minimum: 0, maximum: 0, positives: 0 };
       this.frame = 0;
       this.setMap(map);
     }
@@ -5196,39 +5218,70 @@ function createPestMonitoringHeatOverlay(maps, map) {
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, width, height);
 
-      const gridSize = 14;
-      const buckets = new Map();
+      const gridSize = 7;
+      const gridWidth = Math.max(1, Math.ceil(width / gridSize));
+      const gridHeight = Math.max(1, Math.ceil(height / gridSize));
+      const density = new Float32Array(gridWidth * gridHeight);
+      const radiusPixels = Math.max(54, Math.min(92, width / 13));
+      const radius = Math.ceil(radiusPixels / gridSize);
+      const sigma = radius / 2.15;
+      const scaleRange = Math.max(1, this.scale.maximum - this.scale.minimum);
+      const sources = new Map();
       this.points.forEach((point) => {
         const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(point.lat, point.lng));
         const x = pixel.x - southWest.x;
         const y = pixel.y - northEast.y;
-        if (x < -40 || x > width + 40 || y < -40 || y > height + 40) return;
-        const key = `${Math.floor(x / gridSize)}:${Math.floor(y / gridSize)}`;
-        const bucket = buckets.get(key) || { x: 0, y: 0, weight: 0, count: 0 };
-        bucket.x += x;
-        bucket.y += y;
-        bucket.weight += point.weight;
-        bucket.count += 1;
-        buckets.set(key, bucket);
+        if (x < -radiusPixels || x > width + radiusPixels || y < -radiusPixels || y > height + radiusPixels) return;
+        const centerX = Math.round(x / gridSize);
+        const centerY = Math.round(y / gridSize);
+        const normalizedWeight = point.weight <= 0
+          ? 0.07
+          : 0.28 + 0.72 * Math.max(0, Math.min(1, (point.weight - this.scale.minimum) / scaleRange));
+        const sourceKey = `${centerX}:${centerY}`;
+        const source = sources.get(sourceKey) || { centerX, centerY, total: 0, count: 0 };
+        source.total += normalizedWeight;
+        source.count += 1;
+        sources.set(sourceKey, source);
       });
-      const cells = [...buckets.values()].map((bucket) => ({
-        x: bucket.x / bucket.count,
-        y: bucket.y / bucket.count,
-        value: bucket.weight / bucket.count
-      }));
-      cells.forEach((cell) => {
-        const level = pestMonitoringRiskLevel(cell.value, this.scale);
-        const color = pestMonitoringRiskColor(cell.value, this.scale);
-        const radius = level === 0 ? 11 : 19 + level * 4;
-        const gradient = context.createRadialGradient(cell.x, cell.y, 0, cell.x, cell.y, radius);
-        gradient.addColorStop(0, `${color}${level === 0 ? "b8" : "e0"}`);
-        gradient.addColorStop(0.42, `${color}${level === 0 ? "55" : "78"}`);
-        gradient.addColorStop(1, `${color}00`);
-        context.fillStyle = gradient;
-        context.beginPath();
-        context.arc(cell.x, cell.y, radius, 0, Math.PI * 2);
-        context.fill();
+      sources.forEach((source) => {
+        const { centerX, centerY } = source;
+        const normalizedWeight = source.total / source.count;
+        const minX = Math.max(0, centerX - radius);
+        const maxX = Math.min(gridWidth - 1, centerX + radius);
+        const minY = Math.max(0, centerY - radius);
+        const maxY = Math.min(gridHeight - 1, centerY + radius);
+        for (let gridY = minY; gridY <= maxY; gridY += 1) {
+          for (let gridX = minX; gridX <= maxX; gridX += 1) {
+            const deltaX = gridX - centerX;
+            const deltaY = gridY - centerY;
+            const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+            if (distanceSquared > radius * radius) continue;
+            density[gridY * gridWidth + gridX] += normalizedWeight * Math.exp(-distanceSquared / (2 * sigma * sigma));
+          }
+        }
       });
+      const populated = [...density].filter((value) => value > 0.02).sort((a, b) => a - b);
+      if (!populated.length) return;
+      const densityCap = pestMonitoringQuantile(populated, 0.96) || populated.at(-1) || 1;
+      const surface = document.createElement("canvas");
+      surface.width = gridWidth;
+      surface.height = gridHeight;
+      const surfaceContext = surface.getContext("2d");
+      const image = surfaceContext.createImageData(gridWidth, gridHeight);
+      density.forEach((value, index) => {
+        if (value <= 0.025) return;
+        const ratio = Math.max(0, Math.min(1, value / densityCap));
+        const [red, green, blue] = pestMonitoringHeatColor(ratio);
+        const pixelIndex = index * 4;
+        image.data[pixelIndex] = red;
+        image.data[pixelIndex + 1] = green;
+        image.data[pixelIndex + 2] = blue;
+        image.data[pixelIndex + 3] = Math.round(82 + ratio * 166);
+      });
+      surfaceContext.putImageData(image, 0, 0);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(surface, 0, 0, gridWidth, gridHeight, 0, 0, width, height);
     }
 
     onRemove() {
@@ -5341,6 +5394,7 @@ function renderPestMonitoring() {
     return;
   }
   const pests = [...new Set(pestMonitoringRecords.map((record) => record.pest))].sort((a, b) => a.localeCompare(b, "es"));
+  const species = [...new Set(pestMonitoringRecords.map((record) => record.species).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
   const potreros = [...new Set(pestMonitoringRecords.map((record) => record.potrero).filter(Boolean))].sort(comparePotrero);
   views.pestMonitoring.innerHTML = `
     <section class="pest-monitoring-shell">
@@ -5348,6 +5402,7 @@ function renderPestMonitoring() {
         <label>Desde<input type="date" value="${htmlAttr(pestMonitoringDateFrom)}" data-pest-filter="from"></label>
         <label>Hasta<input type="date" value="${htmlAttr(pestMonitoringDateTo)}" data-pest-filter="to"></label>
         <label>Plaga<select data-pest-filter="pest">${pests.map((pest) => `<option value="${htmlAttr(pest)}" ${pest === pestMonitoringPest ? "selected" : ""}>${escapeHtml(pest)}</option>`).join("")}</select></label>
+        <label>Especie<select data-pest-filter="species"><option>Todas</option>${species.map((item) => `<option value="${htmlAttr(item)}" ${item === pestMonitoringSpecies ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
         <label>Potrero<select data-pest-filter="potrero"><option>Todos</option>${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === pestMonitoringPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}</select></label>
         <label>Bloque<select data-pest-filter="block" id="pestMonitoringBlockFilter"><option>Todos</option></select></label>
         <button class="icon-button" type="button" data-action="clear-pest-filters" title="Limpiar filtros" aria-label="Limpiar filtros">×</button>
@@ -5360,9 +5415,13 @@ function renderPestMonitoring() {
         </section>
         <aside class="panel pest-ranking-panel">
           <div class="panel-header"><div><h2>Cobertura del monitoreo</h2><span id="pestMonitoringSummary"></span></div></div>
+          <div class="pest-coverage-explainer">
+            <span><strong>Cobertura</strong> = registros del bloque respecto del total filtrado.</span>
+            <span><strong>Presencia</strong> = monitoreos con individuos respecto de los realizados en ese bloque.</span>
+          </div>
           <div class="pest-coverage-wrap">
             <table class="pest-coverage-table">
-              <thead><tr><th>Potrero / bloque</th><th>N</th><th>% monit.</th><th>% pres.</th></tr></thead>
+              <thead><tr><th>Potrero / bloque</th><th>Reg.</th><th>% cobertura</th><th>% presencia</th></tr></thead>
               <tbody id="pestMonitoringCoverage"></tbody>
             </table>
           </div>
@@ -5393,6 +5452,13 @@ function wirePestMonitoringFilters() {
         if (toControl) toControl.value = pestMonitoringDateTo;
       }
       if (filter === "pest") pestMonitoringPest = control.value;
+      if (filter === "species") {
+        pestMonitoringSpecies = control.value;
+        pestMonitoringPotrero = "Todos";
+        pestMonitoringBlock = "Todos";
+        const potreroControl = views.pestMonitoring.querySelector('[data-pest-filter="potrero"]');
+        if (potreroControl) potreroControl.value = "Todos";
+      }
       if (filter === "potrero") {
         pestMonitoringPotrero = control.value;
         pestMonitoringBlock = "Todos";
@@ -5409,6 +5475,7 @@ function refreshPestMonitoring() {
   if (blockControl) {
     const blocks = [...new Set(pestMonitoringRecords
       .filter((record) => record.pest === pestMonitoringPest)
+      .filter((record) => pestMonitoringSpecies === "Todas" || record.species === pestMonitoringSpecies)
       .filter((record) => pestMonitoringPotrero === "Todos" || record.potrero === pestMonitoringPotrero)
       .map((record) => String(record.excelBlock || "")).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
@@ -5452,9 +5519,11 @@ async function renderPestMonitoringMap(records, summaries, scale) {
     if (pestMonitoringMapElement !== element) {
       pestMonitoringHeatOverlay?.setMap?.(null);
       pestMonitoringPolygons.forEach((entry) => entry.polygon.setMap(null));
+      pestMonitoringBaseOverlays.forEach((overlay) => overlay.setMap?.(null));
       pestMonitoringMap = null;
       pestMonitoringMapElement = element;
       pestMonitoringPolygons = [];
+      pestMonitoringBaseOverlays = [];
       pestMonitoringHeatOverlay = null;
       pestMonitoringInfoWindow?.close();
     }
@@ -5468,9 +5537,14 @@ async function renderPestMonitoringMap(records, summaries, scale) {
         tilt: 0
       });
       const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
+      const blockGroups = new Map();
       blockRings.forEach((item) => {
+        const sourceKey = pestMonitoringBlockKey(item.feature.properties || {});
+        const field = geoJsonFeatureField(item.feature);
+        const group = blockGroups.get(sourceKey) || { rings: [], label: field.block || blockFeatureName(item.feature) };
+        group.rings.push(...item.rings);
+        blockGroups.set(sourceKey, group);
         item.rings.forEach((ring) => {
-          const sourceKey = pestMonitoringBlockKey(item.feature.properties || {});
           const polygon = new maps.Polygon({
             paths: ring.map(([lng, lat]) => ({ lat, lng })),
             strokeColor: "#ffffff",
@@ -5485,6 +5559,42 @@ async function renderPestMonitoringMap(records, summaries, scale) {
           pestMonitoringPolygons.push({ polygon, key: sourceKey });
         });
       });
+      blockGroups.forEach((group) => {
+        const label = createMapLabelOverlay(maps, geoLatLngCenter(group.rings), group.label, "map-label-block-google");
+        label.setMap(pestMonitoringMap);
+        pestMonitoringBaseOverlays.push(label);
+      });
+      const potreroGroups = new Map();
+      geoFeaturesToRings(layers?.potreros?.features || []).forEach((item) => {
+        const name = potreroFeatureName(item.feature);
+        const group = potreroGroups.get(name) || { rings: [] };
+        group.rings.push(...item.rings);
+        potreroGroups.set(name, group);
+      });
+      const potreroPalette = ["#20d49a", "#f5b942", "#67a8ff", "#d58cff", "#52d5dd"];
+      [...potreroGroups.entries()].forEach(([name, group], index) => {
+        group.rings.forEach((ring) => {
+          const boundary = new maps.Polygon({
+            paths: ring.map(([lng, lat]) => ({ lat, lng })),
+            strokeColor: potreroPalette[index % potreroPalette.length],
+            strokeOpacity: 0.95,
+            strokeWeight: 2.8,
+            fillOpacity: 0,
+            clickable: false,
+            zIndex: 4
+          });
+          boundary.setMap(pestMonitoringMap);
+          pestMonitoringBaseOverlays.push(boundary);
+        });
+        const label = createMapLabelOverlay(
+          maps,
+          shiftLatLng(geoLatLngCenter(group.rings), index, 34),
+          name,
+          "map-label-potrero-google"
+        );
+        label.setMap(pestMonitoringMap);
+        pestMonitoringBaseOverlays.push(label);
+      });
       pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(maps, pestMonitoringMap);
     }
     pestMonitoringPolygons.forEach((entry) => {
@@ -5493,7 +5603,7 @@ async function renderPestMonitoringMap(records, summaries, scale) {
       const level = block ? pestMonitoringRiskLevel(value, scale) : 0;
       entry.polygon.setOptions({
         fillColor: block ? pestMonitoringRiskColor(value, scale) : "#6e8f83",
-        fillOpacity: block ? 0.18 + level * 0.045 : 0.035,
+        fillOpacity: block ? 0.3 + level * 0.055 : 0.045,
         strokeOpacity: block ? 0.9 : 0.32,
         strokeWeight: block ? 1.8 : 1
       });
@@ -8153,21 +8263,89 @@ function extractGeoRings(geometry) {
   return [];
 }
 
+const GEOJSON_FIELD_ALIASES = Object.freeze({
+  "casa verde": "28",
+  "el parque 1": "El parque 1",
+  "el peumo": "29",
+  "los pinos": "10",
+  "los pinos 80": "Los pinos Paltos",
+  "los pinos 2004": "Los pinos Paltos",
+  "parque 2": "El parque 2",
+  "parque 3": "El parque 3",
+  "p1": "1",
+  "p19": "19",
+  "p20": "20",
+  "p20a": "20A",
+  "p21": "21",
+  "p22": "22",
+  "p23": "23",
+  "p24": "24",
+  "p25": "25",
+  "p27 c": "27 IMP",
+  "p27 r": "27 GRAV",
+  "p2b4": "2",
+  "p2b5": "2",
+  "p30 4,5": "30",
+  "p30 6,7": "30",
+  "p30 barnfield": "30",
+  "p5": "5",
+  "p6": "6",
+  "p7": "7",
+  "unidad d": "D",
+  "unidad e": "E",
+  "unidad f": "F",
+  "unidad g": "G",
+  "unidad h": "H",
+  "unidad i": "I",
+  "unidad j": "J"
+});
+
+function geoJsonFieldAlias(value) {
+  const clean = String(value || "").trim();
+  return GEOJSON_FIELD_ALIASES[clean.toLocaleLowerCase("es")] || clean;
+}
+
+function geoJsonFeatureField(feature) {
+  const properties = feature?.properties || {};
+  let rawPotrero = String(
+    properties["Potrero_Alias:"] || properties.Potrero_Alias
+    || properties["Alias:"] || properties.Alias || properties.alias
+    || properties.potrero || properties.Potrero || properties.POTRERO
+    || properties.Nombre || ""
+  ).trim();
+  if (!rawPotrero && Number(properties.fid) === 125) rawPotrero = "Unidad E";
+  const potrero = geoJsonFieldAlias(rawPotrero);
+  const rawBlock = String(properties.bloque || properties.Bloque || properties.BLOQUE || properties.block || properties.BLOCK || "").trim();
+  let block = /^[D-J]$/i.test(potrero) && rawBlock && !rawBlock.toLocaleUpperCase("es").startsWith(potrero.toLocaleUpperCase("es"))
+    ? `${potrero}${rawBlock}`
+    : rawBlock;
+  const blockOverride = {
+    "29:2A": "2",
+    "29:2B": "2",
+    "29:5A": "5",
+    "29:5B": "5",
+    "19:1": "4",
+    "6:1": "3"
+  }[`${potrero}:${block.toLocaleUpperCase("es")}`];
+  if (blockOverride) block = blockOverride;
+  return { potrero, block };
+}
+
+function fieldIdentityKey(potrero, block) {
+  return `${String(potrero || "").trim().toLocaleLowerCase("es")}:${String(block || "").trim().toLocaleUpperCase("es")}`;
+}
+
 function potreroFeatureName(feature) {
-  const p = feature.properties || {};
-  return String(p["Alias:"] || p.Alias || p.alias || p.Nombre || p.Potrero || "").trim();
+  return geoJsonFeatureField(feature).potrero;
 }
 
 function blockFeatureName(feature) {
-  const p = feature.properties || {};
-  return String(p.bloque || p.Bloque || p.BLOQUE || p.block || p.BLOCK || "").trim();
+  return geoJsonFeatureField(feature).block;
 }
 
 function blockFeatureKey(feature) {
-  const p = feature.properties || {};
-  const potrero = String(p["Potrero_Alias:"] || p.Potrero_Alias || p.potrero || p.Potrero || p.POTRERO || "").trim();
-  const block = blockFeatureName(feature);
-  return `${potrero}:${block}`;
+  const field = geoJsonFeatureField(feature);
+  return `${field.potrero}:${field.block}`;
 }
 
 function activeBlockKeys() {
@@ -10459,6 +10637,7 @@ document.addEventListener("click", async (event) => {
     pestMonitoringDateFrom = dates[0] || "";
     pestMonitoringDateTo = dates.at(-1) || "";
     pestMonitoringPest = "Chanchito blanco";
+    pestMonitoringSpecies = "Todas";
     pestMonitoringPotrero = "Todos";
     pestMonitoringBlock = "Todos";
     views.pestMonitoring.innerHTML = "";

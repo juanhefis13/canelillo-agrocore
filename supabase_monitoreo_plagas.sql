@@ -24,7 +24,7 @@ create table if not exists public.monitoreo_plagas (
   fecha date null,
   tipo_plaga text not null,
 
-  -- Columnas originales del Excel.
+  -- Copia sincronizada del nombre canonico de public.campos.
   potrero_excel text null,
   bloque_excel text null,
   huevos numeric(12, 3) not null default 0,
@@ -37,34 +37,20 @@ create table if not exists public.monitoreo_plagas (
   numero_arbol text null,
   orden_monitoreo text null,
   encontrado_en text null,
-  total_origen numeric(12, 3) not null default 0,
-  total_calculado numeric(12, 3) not null default 0,
+  total_calculado numeric(12, 3) generated always as (
+    huevos + ninfas_1 + ninfas_2 + ninfas_3
+  ) stored,
 
-  -- Atributos y ubicacion provenientes de QGIS/GeoJSON.
-  alias_geojson text null,
-  bloque_geojson text null,
-  alias_mapa text null,
-  bloque_mapa text null,
-  sector_monitoreo text null,
-  evidencia_foto text null,
+  -- La geometria usa los mismos poligonos normalizados del modulo Calicatas.
   latitud double precision not null,
   longitud double precision not null,
 
-  -- Identidad estable de la fuente para que las reimportaciones no dupliquen datos.
-  origen_capa text not null,
-  origen_fid bigint not null,
-  creado_por uuid null references auth.users(id) on delete set null,
-  creado_en timestamptz not null default now(),
-  actualizado_en timestamptz not null default now(),
-
-  constraint monitoreo_plagas_origen_key unique (origen_capa, origen_fid),
   constraint monitoreo_plagas_tipo_chk check (length(trim(tipo_plaga)) > 0),
   constraint monitoreo_plagas_latitud_chk check (latitud between -90 and 90),
   constraint monitoreo_plagas_longitud_chk check (longitud between -180 and 180),
   constraint monitoreo_plagas_conteos_chk check (
     huevos >= 0 and ninfas_1 >= 0 and ninfas_2 >= 0 and ninfas_3 >= 0
     and adultos >= 0 and larvas >= 0 and pupas >= 0
-    and total_origen >= 0 and total_calculado >= 0
   )
 );
 
@@ -79,21 +65,6 @@ create index if not exists monitoreo_plagas_ubicacion_idx
 create index if not exists monitoreo_plagas_excel_fecha_idx
   on public.monitoreo_plagas (potrero_excel, bloque_excel, fecha desc);
 
-create or replace function public.set_monitoreo_plagas_actualizado_en()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.actualizado_en = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists monitoreo_plagas_actualizado_en on public.monitoreo_plagas;
-create trigger monitoreo_plagas_actualizado_en
-before update on public.monitoreo_plagas
-for each row execute function public.set_monitoreo_plagas_actualizado_en();
-
 create or replace view public.v_monitoreo_plagas
 with (security_invoker = true)
 as
@@ -102,24 +73,17 @@ select
   mp.campo_id,
   mp.fecha,
   mp.tipo_plaga,
-  coalesce(c.potrero, nullif(trim(mp.potrero_excel), ''), 'Sin potrero') as potrero,
-  coalesce(c.bloque, nullif(trim(mp.bloque_mapa), ''), nullif(trim(mp.bloque_excel), '')) as bloque,
+  coalesce(c.potrero, 'Sin potrero') as potrero,
+  c.bloque,
   c.especie,
   c.variedad,
   c.hectareas,
   (mp.campo_id is not null) as campo_normalizado,
   mp.potrero_excel,
   mp.bloque_excel,
-  mp.alias_geojson,
-  mp.bloque_geojson,
-  mp.alias_mapa,
-  mp.bloque_mapa,
   mp.numero_arbol,
   mp.orden_monitoreo,
   mp.encontrado_en,
-  mp.sector_monitoreo,
-  mp.evidencia_foto,
-  mp.total_origen,
   mp.total_calculado,
   mp.huevos,
   mp.ninfas_1,
@@ -130,11 +94,7 @@ select
   mp.pupas,
   mp.longitud,
   mp.latitud,
-  mp.origen_capa,
-  mp.origen_fid,
-  mp.creado_en,
-  mp.actualizado_en,
-  (mp.huevos + mp.ninfas_1 + mp.ninfas_2 + mp.ninfas_3) as total_huevos_ninfas,
+  mp.total_calculado as total_huevos_ninfas,
   (
     mp.huevos + mp.ninfas_1 + mp.ninfas_2 + mp.ninfas_3
     + mp.adultos + mp.larvas + mp.pupas

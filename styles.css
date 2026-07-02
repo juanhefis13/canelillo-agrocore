@@ -7890,7 +7890,7 @@ body {
 
 .pest-filter-bar {
   display: grid;
-  grid-template-columns: 126px 126px minmax(145px, 1.2fr) minmax(120px, 1fr) 92px 30px;
+  grid-template-columns: 126px 126px minmax(140px, 1.1fr) minmax(120px, 0.9fr) minmax(120px, 1fr) 92px 30px;
   align-items: end;
   gap: 7px;
   padding: 7px 9px;
@@ -7943,7 +7943,7 @@ body {
 
 .pest-monitoring-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(286px, 340px);
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 390px);
   height: clamp(500px, calc(100dvh - 185px), 720px);
   min-height: 0;
   gap: 8px;
@@ -7965,8 +7965,9 @@ body {
 .pest-heat-overlay {
   position: absolute;
   pointer-events: none;
-  opacity: 0.86;
-  mix-blend-mode: screen;
+  opacity: 0.96;
+  mix-blend-mode: normal;
+  filter: saturate(1.08) contrast(1.03);
 }
 
 .pest-heat-overlay canvas {
@@ -8014,7 +8015,7 @@ body {
 
 .pest-ranking-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
   padding: 11px;
   overflow: hidden !important;
@@ -8032,6 +8033,22 @@ body {
 .pest-ranking-panel .panel-header span {
   color: var(--muted);
   font-size: 0.68rem;
+}
+
+.pest-coverage-explainer {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  border-left: 3px solid #258a70;
+  background: #eef8f4;
+  color: #45685e;
+  font-size: 0.63rem;
+  line-height: 1.35;
+}
+
+.pest-coverage-explainer strong {
+  color: #185d4b;
 }
 
 .pest-ranking-list,
@@ -8251,7 +8268,7 @@ body {
   }
 
   .pest-monitoring-layout {
-    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-columns: minmax(0, 1fr) 320px;
   }
 }
 
