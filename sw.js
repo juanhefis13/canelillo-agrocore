@@ -1,16 +1,14 @@
-const CACHE = "canelillo-agrocore-v126-riego-filtro-variedad";
-const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
+const CACHE = "canelillo-agrocore-v133-privacy-page";
+const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {

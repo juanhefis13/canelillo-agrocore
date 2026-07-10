@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-    <link rel="stylesheet" href="styles.css?v=126-riego-filtro-variedad">
+    <link rel="stylesheet" href="styles.css?v=133-privacy-page">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -55,6 +55,10 @@
           </div>
           <button class="primary-button" type="button" id="gateRegisterButton">Crear cuenta</button>
         </form>
+        <div class="auth-privacy">
+          <a class="link-button" href="privacidad.html" target="_blank" rel="noopener">Politicas de privacidad</a>
+          <span>Uso de datos en AgroCore y aplicaciones vinculadas.</span>
+        </div>
       </div>
     </section>
 
@@ -95,6 +99,7 @@
         </nav>
         <div class="sync-box sync-box--clean">
           <span id="storageStatus">Solo Supabase</span>
+          <a class="sidebar-privacy-link" href="privacidad.html" target="_blank" rel="noopener">Politicas de privacidad</a>
         </div>
       </aside>
 
@@ -141,6 +146,7 @@
     <dialog id="purchaseDialog" class="modal"></dialog>
     <dialog id="authDialog" class="modal"></dialog>
     <dialog id="irrigationProgramDialog" class="modal"></dialog>
+    <dialog id="irrigationBaseHoursDialog" class="modal"></dialog>
     <dialog id="irrigationObservationDialog" class="modal"></dialog>
     <dialog id="weatherStationImportDialog" class="modal weather-import-dialog"></dialog>
     <div id="printArea" class="print-area"></div>
@@ -149,6 +155,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/pdf-lib.min.js"></script>
-    <script src="app.js?v=126-riego-filtro-variedad"></script>
+    <script src="app.js?v=133-privacy-page"></script>
   </body>
 </html>

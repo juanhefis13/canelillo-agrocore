@@ -1163,6 +1163,18 @@ function irrigationVolume(hours, flow) {
   return h * f;
 }
 
+function irrigationBaseHours(block, fallback = 0) {
+  const base = Number(block?.baseHours);
+  if (Number.isFinite(base) && base > 0) return base;
+  const backup = Number(fallback);
+  return Number.isFinite(backup) && backup > 0 ? backup : 0;
+}
+
+function irrigationBaseHoursLabel(block) {
+  const base = Number(block?.baseHours);
+  return Number.isFinite(base) && base > 0 ? `${number(base, 1)} h base` : "Sin horas base";
+}
+
 function irrigationBlockSnapshot(block) {
   return {
     potrero: block?.potrero || "",
@@ -1822,6 +1834,34 @@ function irrigationBalanceBlockRows(blocks, monthPrefix, daysInMonth) {
   }).sort((a, b) => blockSort(a.block, b.block));
 }
 
+function irrigationBalanceAnnualBlockRows(blocks, year) {
+  const selectedYear = Number(year);
+  if (!Number.isFinite(selectedYear)) return [];
+  return blocks.map((block) => {
+    const totals = Array.from({ length: 12 }, (_, index) => {
+      const month = String(index + 1).padStart(2, "0");
+      const daysInMonth = new Date(selectedYear, index + 1, 0).getDate();
+      return irrigationMonthDates(`${selectedYear}-${month}`, daysInMonth);
+    }).flat().reduce((acc, date) => {
+      const day = irrigationBlockDayBalance(block, date);
+      acc.programHours += day.programHours;
+      acc.realHours += day.realHours;
+      acc.programVolume += day.programVolume;
+      acc.realVolume += day.realVolume;
+      return acc;
+    }, {
+      block,
+      programHours: 0,
+      realHours: 0,
+      programVolume: 0,
+      realVolume: 0
+    });
+    totals.difference = totals.realVolume - totals.programVolume;
+    totals.differencePercent = irrigationDifferencePercent(totals.realVolume, totals.programVolume);
+    return totals;
+  }).sort((a, b) => blockSort(a.block, b.block));
+}
+
 function irrigationBalancePotreroRows(blockRows) {
   return Object.values(blockRows.reduce((acc, row) => {
     const potrero = row.block.potrero || "Sin potrero";
@@ -2067,10 +2107,6 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
   const skipDays = skipText === "" ? NaN : Number(skipText);
   const startDate = String(startInput?.value || `${monthPrefix}-01`);
   const startDay = Number(startDate.slice(8, 10));
-  if (!Number.isFinite(hoursPerEvent) || hoursPerEvent <= 0) {
-    showToast("Ingresa horas por riego validas");
-    return;
-  }
   if (!Number.isFinite(targetRepos) || targetRepos <= 0) {
     showToast("Ingresa reposicion objetivo");
     return;
@@ -2085,12 +2121,16 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
     showToast("Selecciona al menos un bloque");
     return;
   }
+  if (targetBlocks.some((block) => irrigationBaseHours(block, hoursPerEvent) <= 0)) {
+    showToast("Ingresa horas por riego o define horas base para todos los bloques");
+    return;
+  }
   const plans = targetBlocks.map((block) => automaticIrrigationBlockPlan({
     block,
     daysInMonth,
     historicalMap: historicalEvaporationMap,
     historicalTotal: historicalEvaporationTotal,
-    hoursPerEvent,
+    hoursPerEvent: irrigationBaseHours(block, hoursPerEvent),
     targetRepos,
     skipDays,
     startDay
@@ -2098,13 +2138,14 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
   plans.forEach((plan) => {
     if (plan.error) return;
     const block = plan.block;
+    const blockHours = irrigationBaseHours(block, hoursPerEvent);
     for (let index = 1; index <= daysInMonth; index += 1) {
       const date = `${monthPrefix}-${String(index).padStart(2, "0")}`;
       const key = irrigationKey(block.id, date);
       if (plan.days.includes(index)) {
-        irrigationProgramHours[key] = hoursPerEvent;
+        irrigationProgramHours[key] = blockHours;
         setIrrigationCellAudit("program", block.id, date);
-        scheduleIrrigationProgramCellSave(block.id, date, hoursPerEvent);
+        scheduleIrrigationProgramCellSave(block.id, date, blockHours);
       } else {
         const hadValue = irrigationProgramHours[key] !== undefined || irrigationProgramAudit[key] !== undefined;
         delete irrigationProgramHours[key];
@@ -2189,10 +2230,6 @@ async function applyAutomaticIrrigationProgramAnnual() {
     showToast("Ingresa un ano valido para el programa anual");
     return;
   }
-  if (!Number.isFinite(hoursPerEvent) || hoursPerEvent <= 0) {
-    showToast("Ingresa horas por riego validas para el programa anual");
-    return;
-  }
   if (!Number.isInteger(startDay) || startDay < 1 || startDay > 31) {
     showToast("Ingresa un dia de inicio mensual valido");
     return;
@@ -2208,6 +2245,10 @@ async function applyAutomaticIrrigationProgramAnnual() {
   const invalidTargets = blockRows.filter((row) => !Number.isFinite(row.targetRepos) || row.targetRepos <= 0);
   if (invalidTargets.length) {
     showToast("Cada bloque seleccionado debe tener reposicion objetivo");
+    return;
+  }
+  if (blockRows.some(({ block }) => irrigationBaseHours(block, hoursPerEvent) <= 0)) {
+    showToast("Ingresa horas por riego o define horas base para todos los bloques seleccionados");
     return;
   }
 
@@ -2226,33 +2267,34 @@ async function applyAutomaticIrrigationProgramAnnual() {
 
   try {
     for (const { block, targetRepos } of blockRows) {
+      const blockHours = irrigationBaseHours(block, hoursPerEvent);
       for (const month of months) {
         processed += 1;
         if (processed === 1 || processed % 8 === 0 || processed === totalTasks) {
           setAnnualProgramLoading(true, `Procesando ${processed} de ${totalTasks}...`);
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
-      const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
-      const monthPrefix = `${year}-${month}`;
-      const effectiveStartDay = Math.min(startDay, daysInMonth);
-      const { historicalMap, total: historicalTotal } = irrigationProgramHistoricalTotal(month, daysInMonth);
-      const plan = automaticIrrigationBlockPlan({
-        block,
-        daysInMonth,
-        historicalMap,
-        historicalTotal,
-        hoursPerEvent,
-        targetRepos,
-        skipDays,
-        startDay: effectiveStartDay
-      });
-      if (plan.error || plan.warning) {
-        const monthLabel = monthOptions().find((item) => item.value === month)?.label || month;
-        warnings.push(`${block.potrero || "-"} bloque ${block.block || "-"} · ${monthLabel}: ${plan.error || plan.warning}`);
-      }
-      if (plan.error) continue;
-      plannedCells += plan.days.length;
-      writeIrrigationProgramPlanForMonth({ block, daysInMonth, monthPrefix, hoursPerEvent, plan });
+        const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+        const monthPrefix = `${year}-${month}`;
+        const effectiveStartDay = Math.min(startDay, daysInMonth);
+        const { historicalMap, total: historicalTotal } = irrigationProgramHistoricalTotal(month, daysInMonth);
+        const plan = automaticIrrigationBlockPlan({
+          block,
+          daysInMonth,
+          historicalMap,
+          historicalTotal,
+          hoursPerEvent: blockHours,
+          targetRepos,
+          skipDays,
+          startDay: effectiveStartDay
+        });
+        if (plan.error || plan.warning) {
+          const monthLabel = monthOptions().find((item) => item.value === month)?.label || month;
+          warnings.push(`${block.potrero || "-"} bloque ${block.block || "-"} - ${monthLabel}: ${plan.error || plan.warning}`);
+        }
+        if (plan.error) continue;
+        plannedCells += plan.days.length;
+        writeIrrigationProgramPlanForMonth({ block, daysInMonth, monthPrefix, hoursPerEvent: blockHours, plan });
       }
     }
 
@@ -2291,6 +2333,7 @@ function renderProgramDialogBlockOptions(blocks, selectedPotrero) {
       <input type="checkbox" data-program-auto-block="${htmlAttr(block.id)}" checked>
       <span>${escapeHtml(block.block || "-")}</span>
       <small>${number(block.hectares)} ha</small>
+      <em>${escapeHtml(irrigationBaseHoursLabel(block))}</em>
     </label>
   `).join("") || `<span class="empty">Sin bloques para este potrero.</span>`;
 }
@@ -2315,7 +2358,7 @@ function renderAnnualProgramBlockRows(blocks) {
       <input type="checkbox" data-program-annual-block="${htmlAttr(block.id)}" checked>
       <span class="program-annual-block-main">
         <strong>${escapeHtml(block.potrero || "-")} / Bloque ${escapeHtml(block.block || "-")}</strong>
-        <small>${escapeHtml(block.crop || "-")} · ${escapeHtml(block.variety || "Sin variedad")} · ${number(block.hectares)} ha</small>
+        <small>${escapeHtml(block.crop || "-")} · ${escapeHtml(block.variety || "Sin variedad")} · ${number(block.hectares)} ha · ${escapeHtml(irrigationBaseHoursLabel(block))}</small>
       </span>
       <span class="program-annual-block-meta">Precip. ${number(block.precipitation || 0, 1)}</span>
       <input type="number" min="0" step="1" inputmode="decimal" value="100" data-program-annual-repos="${htmlAttr(block.id)}" aria-label="Reposicion objetivo bloque ${htmlAttr(block.block || "")}">
@@ -2355,7 +2398,7 @@ function updateAnnualProgramDialogPreview() {
     .map((input) => state.blocks.find((block) => block.id === input.dataset.programAnnualBlock))
     .filter(Boolean);
   const sampleMonth = months[0];
-  if (!/^\d{4}$/.test(year) || Number(year) < 1900 || Number(year) > 2100 || !Number.isFinite(hours) || hours <= 0 || !Number.isInteger(startDay) || !months.length || !blocks.length) {
+  if (!/^\d{4}$/.test(year) || Number(year) < 1900 || Number(year) > 2100 || !Number.isInteger(startDay) || !months.length || !blocks.length || blocks.some((block) => irrigationBaseHours(block, hours) <= 0)) {
     preview.innerHTML = `<span>Selecciona variedad, meses, bloques y reposicion para previsualizar el programa anual.</span>`;
     return;
   }
@@ -2363,19 +2406,20 @@ function updateAnnualProgramDialogPreview() {
   const { historicalMap, total: historicalTotal } = irrigationProgramHistoricalTotal(sampleMonth, daysInMonth);
   const rows = blocks.slice(0, 4).map((block) => {
     const targetRepos = Number(document.querySelector(`[data-program-annual-repos="${CSS.escape(block.id)}"]`)?.value);
+    const blockHours = irrigationBaseHours(block, hours);
     if (!Number.isFinite(targetRepos) || targetRepos <= 0) return `<span class="is-warning">${escapeHtml(block.potrero || "-")} bloque ${escapeHtml(block.block || "-")}: falta reposicion.</span>`;
     const plan = automaticIrrigationBlockPlan({
       block,
       daysInMonth,
       historicalMap,
       historicalTotal,
-      hoursPerEvent: hours,
+      hoursPerEvent: blockHours,
       targetRepos,
       skipDays,
       startDay: Math.min(startDay, daysInMonth)
     });
     if (plan.error) return `<span class="is-warning">${escapeHtml(block.potrero || "-")} bloque ${escapeHtml(block.block || "-")}: ${escapeHtml(plan.error)}</span>`;
-    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>${escapeHtml(block.potrero || "-")} / ${escapeHtml(block.block || "-")}</strong> · ${year} · ${months.length} meses · muestra ${sampleMonth}: dias ${plan.days.join(", ")} · ${number(plan.achievedRepos, 1)}%</span>`;
+    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>${escapeHtml(block.potrero || "-")} / ${escapeHtml(block.block || "-")}</strong> · ${number(blockHours, 1)} h/riego · ${year} · ${months.length} meses · muestra ${sampleMonth}: dias ${plan.days.join(", ")} · ${number(plan.achievedRepos, 1)}%</span>`;
   });
   const extra = blocks.length > 4 ? `<span>+${blocks.length - 4} bloques mas.</span>` : "";
   preview.innerHTML = `${rows.join("")}${extra}`;
@@ -2404,7 +2448,7 @@ function openIrrigationProgramDialog() {
         <button class="icon-button" type="button" data-action="close-dialog">x</button>
       </div>
       <div class="program-dialog-summary">
-        <span>Respeta la frecuencia y mueve cada riego solo a una evaporacion alta cercana cuando la fecha teorica es baja.</span>
+        <span>Si un bloque tiene horas base, el programa usa esas horas. El campo horas respaldo solo se usa en bloques sin horas base.</span>
       </div>
       <div class="irrigation-program-tool-controls">
         <label>Potrero
@@ -2415,7 +2459,7 @@ function openIrrigationProgramDialog() {
         <label>Fecha de inicio
           <input id="programAutoStartDate" type="date" min="${firstDate}" max="${lastDate}" value="${firstDate}">
         </label>
-        <label>Horas por riego
+        <label>Horas respaldo
           <input id="programAutoHours" type="number" min="0" step="0.5" inputmode="decimal" value="5">
         </label>
         <label>Reposicion objetivo %
@@ -2438,7 +2482,7 @@ function openIrrigationProgramDialog() {
         <div class="program-annual-head">
           <div>
             <strong>Programa anual</strong>
-            <span>Rellena varios meses por variedad y define la reposicion de cada bloque.</span>
+            <span>Usa horas base por bloque, meses por checklist y reposicion individual.</span>
           </div>
           <span>Plan anual</span>
         </div>
@@ -2451,7 +2495,7 @@ function openIrrigationProgramDialog() {
           <label>Ano programa
             <input id="programAnnualYear" type="number" min="1900" max="2100" step="1" inputmode="numeric" value="${htmlAttr(irrigationYear)}">
           </label>
-          <label>Horas por riego
+          <label>Horas respaldo
             <input id="programAnnualHours" type="number" min="0" step="0.5" inputmode="decimal" value="5">
           </label>
           <label>Dia inicio mensual
@@ -2520,26 +2564,118 @@ function updateIrrigationProgramDialogPreview() {
   }).reduce((sum, value) => sum + value, 0);
   const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
   const startDay = Number(startDate.slice(8, 10));
-  if (!Number.isFinite(hours) || hours <= 0 || !Number.isFinite(targetRepos) || targetRepos <= 0 || !blocks.length || historicalTotal <= 0 || !startDate.startsWith(`${monthPrefix}-`) || !Number.isInteger(startDay)) {
+  if (!Number.isFinite(targetRepos) || targetRepos <= 0 || !blocks.length || historicalTotal <= 0 || !startDate.startsWith(`${monthPrefix}-`) || !Number.isInteger(startDay) || blocks.some((block) => irrigationBaseHours(block, hours) <= 0)) {
     preview.innerHTML = `<span>Completa horas, reposicion y bloques para ver la distribucion.</span>`;
     return;
   }
   const rows = blocks.slice(0, 4).map((block) => {
+    const blockHours = irrigationBaseHours(block, hours);
     const plan = automaticIrrigationBlockPlan({
       block,
       daysInMonth,
       historicalMap,
       historicalTotal,
-      hoursPerEvent: hours,
+      hoursPerEvent: blockHours,
       targetRepos,
       skipDays,
       startDay
     });
     if (plan.error) return `<span class="is-warning">Bloque ${escapeHtml(block.block || "-")}: ${escapeHtml(plan.error)}</span>`;
-    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>Bloque ${escapeHtml(block.block || "-")}</strong> · dias ${plan.days.join(", ") || "-"} · repos. ${number(plan.achievedRepos, 1)}%${plan.adjustedEvents ? ` · ${plan.adjustedEvents} ajuste${plan.adjustedEvents === 1 ? "" : "s"} por evaporacion` : ""}</span>`;
+    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>Bloque ${escapeHtml(block.block || "-")}</strong> · ${number(blockHours, 1)} h/riego · dias ${plan.days.join(", ") || "-"} · repos. ${number(plan.achievedRepos, 1)}%${plan.adjustedEvents ? ` · ${plan.adjustedEvents} ajuste${plan.adjustedEvents === 1 ? "" : "s"} por evaporacion` : ""}</span>`;
   });
   const extra = blocks.length > 4 ? `<span>+${blocks.length - 4} bloques mas con el mismo criterio</span>` : "";
   preview.innerHTML = `${rows.join("")}${extra}`;
+}
+
+function irrigationBaseHoursVisibleBlocks() {
+  return [...state.blocks]
+    .filter((block) => block.active !== false)
+    .filter((block) => irrigationSpeciesFilter === "Todas" || block.crop === irrigationSpeciesFilter)
+    .filter((block) => irrigationVarietyFilter === "Todas" || (block.variety || "Sin variedad") === irrigationVarietyFilter)
+    .filter((block) => irrigationPotreroFilter === "Todos" || block.potrero === irrigationPotreroFilter)
+    .sort(blockSort);
+}
+
+function openIrrigationBaseHoursDialog() {
+  const dialog = document.getElementById("irrigationBaseHoursDialog");
+  if (!dialog) return;
+  const blocks = irrigationBaseHoursVisibleBlocks();
+  dialog.innerHTML = `
+    <form method="dialog" class="dialog-card irrigation-base-hours-dialog">
+      <div class="dialog-header">
+        <div>
+          <h3>Horas base de riego</h3>
+          <p>Dato maestro por potrero y bloque. Se guarda en public.campos.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog">x</button>
+      </div>
+      <div class="program-dialog-summary">
+        <span>Estas horas se usan como prioridad al crear programas. El campo Horas por riego queda como respaldo para bloques sin horas base.</span>
+      </div>
+      <div class="irrigation-base-hours-list">
+        ${blocks.map((block) => `
+          <label class="irrigation-base-hours-row">
+            <span>
+              <strong>Potrero ${escapeHtml(block.potrero || "-")} / Bloque ${escapeHtml(block.block || "-")}</strong>
+              <small>${escapeHtml(block.crop || "-")} · ${escapeHtml(block.variety || "Sin variedad")} · ${number(block.hectares)} ha · ${irrigationBaseHoursLabel(block)}</small>
+            </span>
+            <input type="number" min="0" step="0.5" inputmode="decimal" value="${Number(block.baseHours) > 0 ? htmlAttr(String(Number(block.baseHours))) : ""}" placeholder="Ej. 3" data-base-hours-block="${htmlAttr(block.id)}">
+          </label>
+        `).join("") || `<div class="empty">No hay bloques para los filtros actuales.</div>`}
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="button" data-action="save-irrigation-base-hours" ${blocks.length ? "" : "disabled"}>Guardar horas base</button>
+      </div>
+    </form>
+  `;
+  dialog.showModal();
+}
+
+async function saveIrrigationBaseHours() {
+  if (!supabaseSession) {
+    showToast("No se guardaron horas base: no hay sesion activa");
+    return;
+  }
+  const rows = [...document.querySelectorAll("[data-base-hours-block]")].map((input) => ({
+    blockId: input.dataset.baseHoursBlock,
+    value: String(input.value || "").trim()
+  }));
+  const updates = rows.map((row) => {
+    const block = state.blocks.find((item) => item.id === row.blockId);
+    const value = row.value === "" ? null : Number(row.value.replace(",", "."));
+    return { block, value };
+  }).filter((row) => row.block);
+  const invalid = updates.find((row) => row.value !== null && (!Number.isFinite(row.value) || row.value < 0));
+  if (invalid) {
+    showToast("Revisa las horas base: deben ser numeros positivos o vacio");
+    return;
+  }
+  const button = document.querySelector('[data-action="save-irrigation-base-hours"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Guardando...";
+  }
+  try {
+    for (const { block, value } of updates) {
+      await sbFetch(`/rest/v1/campos?id=eq.${encodeURIComponent(block.id)}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ horas_riego_base: value })
+      });
+      block.baseHours = value;
+    }
+    document.getElementById("irrigationBaseHoursDialog")?.close();
+    renderIrrigation();
+    showToast("Horas base guardadas en campos");
+  } catch (error) {
+    showToast(`No se guardaron horas base: ${error.message}. Ejecuta supabase_campos_horas_riego_base.sql si falta la columna.`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Guardar horas base";
+    }
+  }
 }
 
 function focusIrrigationCellFromKeyboard(input, key) {
@@ -2826,6 +2962,43 @@ function irrigationBalanceBlockChart(rows) {
   `;
 }
 
+function irrigationBalanceAnnualPotreroChart(rows, selectedPotreros) {
+  const max = Math.max(...rows.flatMap((row) => [row.programVolume, row.realVolume]), 1);
+  return `
+    <div class="irrigation-annual-balance-chart" aria-label="Resumen anual de volumen real contra programa por potrero">
+      ${rows.map((row) => {
+        const active = selectedPotreros.has(row.potrero);
+        const programWidth = Math.max(2, row.programVolume / max * 100);
+        const realWidth = Math.max(2, row.realVolume / max * 100);
+        return `
+          <button class="irrigation-annual-potrero-row ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${row.potrero}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
+            <div class="irrigation-annual-potrero-name">
+              <strong>${escapeHtml(row.potrero)}</strong>
+              <span>${row.blocks} bloque${row.blocks === 1 ? "" : "s"} - ${irrigationDifferenceLabel(row.differencePercent)}</span>
+            </div>
+            <div class="irrigation-annual-bars">
+              <span>
+                <em>Programa</em>
+                <i class="program" style="width:${programWidth}%"></i>
+                <b>${irrigationVolumeLabel(row.programVolume)}</b>
+              </span>
+              <span>
+                <em>Real</em>
+                <i class="real" style="width:${realWidth}%"></i>
+                <b>${irrigationVolumeLabel(row.realVolume)}</b>
+              </span>
+            </div>
+          </button>
+        `;
+      }).join("") || `<div class="empty">Sin datos anuales para el filtro seleccionado.</div>`}
+    </div>
+    <div class="irrigation-chart-legend">
+      <span><i class="program"></i> Programa anual</span>
+      <span><i class="real"></i> Real anual</span>
+    </div>
+  `;
+}
+
 function irrigationBalanceVolumeMatrix(rows, monthPrefix, daysInMonth) {
   const sorted = [...rows].sort((a, b) => blockSort(a.block, b.block));
   return `
@@ -2866,6 +3039,8 @@ function irrigationBalanceVolumeMatrix(rows, monthPrefix, daysInMonth) {
 
 function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, monthLabel, year }) {
   const potreroRows = irrigationBalancePotreroRows(blockRows);
+  const annualBlockRows = irrigationBalanceAnnualBlockRows(blockRows.map((row) => row.block), year);
+  const annualPotreroRows = irrigationBalancePotreroRows(annualBlockRows);
   const potreroOptions = ["Todos", ...potreroRows.map((row) => row.potrero)];
   if (!potreroOptions.includes(irrigationBalancePotreroFilter)) irrigationBalancePotreroFilter = "Todos";
   irrigationBalanceSelectedPotreros = new Set([...irrigationBalanceSelectedPotreros].filter((potrero) => potreroOptions.includes(potrero)));
@@ -2890,6 +3065,15 @@ function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, mon
   }, { programVolume: 0, realVolume: 0, blocks: 0 });
   selectedTotals.difference = selectedTotals.realVolume - selectedTotals.programVolume;
   selectedTotals.differencePercent = irrigationDifferencePercent(selectedTotals.realVolume, selectedTotals.programVolume);
+  const annualTotals = annualBlockRows.reduce((acc, row) => {
+    acc.programVolume += row.programVolume;
+    acc.realVolume += row.realVolume;
+    acc.programHours += row.programHours;
+    acc.realHours += row.realHours;
+    return acc;
+  }, { programVolume: 0, realVolume: 0, programHours: 0, realHours: 0 });
+  annualTotals.difference = annualTotals.realVolume - annualTotals.programVolume;
+  annualTotals.differencePercent = irrigationDifferencePercent(annualTotals.realVolume, annualTotals.programVolume);
   return `
     <div class="irrigation-subpanel">
       <div class="irrigation-balance-toolbar">
@@ -2927,6 +3111,15 @@ function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, mon
           ${irrigationBalanceBlockChart(selectedBlockRows)}
         </section>
       </div>
+      <section class="panel chart-panel irrigation-annual-balance-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Resumen anual por potrero</h2>
+            <p>${year} - programa ${irrigationVolumeLabel(annualTotals.programVolume)} - real ${irrigationVolumeLabel(annualTotals.realVolume)} - diferencia ${irrigationDifferenceLabel(annualTotals.differencePercent)}</p>
+          </div>
+        </div>
+        ${irrigationBalanceAnnualPotreroChart(annualPotreroRows, selectedPotreros)}
+      </section>
       <section class="panel irrigation-report-panel irrigation-balance-summary-panel">
         <div class="panel-header">
           <div>
@@ -4865,6 +5058,7 @@ function renderIrrigation() {
         <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
       </label>
       ${irrigationTab === "gantt" ? `
+        <button class="secondary-button" type="button" data-action="open-irrigation-base-hours-dialog">Horas base</button>
         <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
         <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>
         <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>` : ""}
@@ -4925,8 +5119,6 @@ function renderIrrigation() {
             </div>
             <div class="irrigation-total-head">Total</div>
             <div class="irrigation-reposition-head" title="Reposicion programada con bandeja historica promedio">Repos. %</div>
-            <div class="irrigation-difference-head irrigation-difference-hours">Dif. hrs</div>
-            <div class="irrigation-difference-head irrigation-difference-reposition">Dif. repos.</div>
           </div>
           ${blockGroups.map((group) => `
             <div class="irrigation-potrero-group irrigation-potrero-group-compact">
@@ -4943,16 +5135,18 @@ function renderIrrigation() {
               const calicataKey = calicataBlockKey(block.potrero, block.block);
               const expanded = expandedCalicataKeys.has(calicataKey);
               const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
+              const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
               return `
                 <div class="irrigation-row irrigation-program-row">
                   <div class="irrigation-block-label">
                     <strong>${block.block}</strong>
                     <span>${number(block.hectares)} ha</span>
                     <div class="irrigation-block-data">
-                      <small>${block.crop || "-"}${block.variety ? ` · ${block.variety}` : ""}</small>
+                      <small class="irrigation-crop-variety" title="${htmlAttr(blockCropLabel)}">${escapeHtml(blockCropLabel)}</small>
                       <small class="irrigation-block-metric">
                         <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
                         <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
+                        <span>${irrigationBaseHoursLabel(block)}</span>
                       </small>
                     </div>
                   </div>
@@ -4964,8 +5158,6 @@ function renderIrrigation() {
                   </div>
                   <div class="irrigation-total" data-program-total="${block.id}">${number(programTotal)}</div>
                   <div class="irrigation-reposition" data-program-reposition="${block.id}">${irrigationReposicionLabel(programReposition)}</div>
-                  <div class="irrigation-difference irrigation-difference-hours irrigation-difference-base">Base</div>
-                  <div class="irrigation-difference irrigation-difference-reposition irrigation-difference-base">Base</div>
                 </div>
                 <div class="irrigation-row calicata-row irrigation-program-spacer-row">
                   <div class="irrigation-block-label calicata-label">
@@ -4980,8 +5172,6 @@ function renderIrrigation() {
                   </div>
                   <div class="irrigation-total calicata-label"></div>
                   <div class="irrigation-reposition calicata-label"></div>
-                  <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
-                  <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
                 </div>
                 ${[
                   ["20 cm"], ["40 cm"], ["60 cm"], ["80 cm"], ["Trab."], ["Obs."]
@@ -4998,8 +5188,6 @@ function renderIrrigation() {
                     </div>
                     <div class="irrigation-total calicata-label"></div>
                     <div class="irrigation-reposition calicata-label"></div>
-                    <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
-                    <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
                   </div>
                 `).join("")}
               `;
@@ -5049,16 +5237,18 @@ function renderIrrigation() {
           const calicataKey = calicataBlockKey(block.potrero, block.block);
           const expanded = expandedCalicataKeys.has(calicataKey);
           const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
+          const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
           return `
             <div class="irrigation-row">
               <div class="irrigation-block-label">
                 <strong>${block.block}</strong>
                 <span>${number(block.hectares)} ha</span>
                 <div class="irrigation-block-data">
-                  <small>${block.crop || "-"}${block.variety ? ` · ${block.variety}` : ""}</small>
+                  <small class="irrigation-crop-variety" title="${htmlAttr(blockCropLabel)}">${escapeHtml(blockCropLabel)}</small>
                   <small class="irrigation-block-metric">
                     <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
                     <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
+                    <span>${irrigationBaseHoursLabel(block)}</span>
                   </small>
                 </div>
               </div>
@@ -7153,6 +7343,7 @@ async function loadCloudData(options = {}) {
     hectares: Number(field.hectareas) || 0,
     precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
     flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
+    baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base),
     active: field.activo !== false,
     plants: Number(field.plantas) || 0,
     plantsPerHa: Number(field.plantas_por_ha) || 0
@@ -7413,13 +7604,22 @@ async function loadCloudData(options = {}) {
     note: movement.nota
   }));
   state = normalizeState(state);
-  await reconcileCloudOrderStatuses();
-  applyRoleNavigation();
-  saveState();
-  render();
-  document.getElementById("authButton").textContent = `${roleLabel(currentProfile?.role) || "Supabase"}: ${currentProfile?.full_name || supabaseSession.user?.email || ""}`;
-  document.getElementById("storageStatus").textContent = `Supabase conectado ${new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
-  setAuthGate(false);
+  const isRealtimeLoad = options.source === "realtime";
+  if (!isRealtimeLoad) {
+    await reconcileCloudOrderStatuses();
+    applyRoleNavigation();
+    saveState();
+  }
+  if (shouldRenderAfterCloudLoad(options)) render();
+  if (!isRealtimeLoad) {
+    document.getElementById("authButton").textContent = `${roleLabel(currentProfile?.role) || "Supabase"}: ${currentProfile?.full_name || supabaseSession.user?.email || ""}`;
+    document.getElementById("storageStatus").textContent = `Supabase conectado ${new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
+    setAuthGate(false);
+  }
+}
+
+function shouldRenderAfterCloudLoad(options = {}) {
+  return options.source !== "realtime";
 }
 
 function hasOpenModal() {
@@ -7458,7 +7658,7 @@ function scheduleRealtimeCloudReload(reason = "cambio remoto") {
     } finally {
       cloudSyncInProgress = false;
     }
-  }, 900);
+  }, 2500);
 }
 
 function startCloudSync() {
@@ -11658,6 +11858,13 @@ document.addEventListener("click", async (event) => {
   if (action === "open-irrigation-program-dialog") {
     setIrrigationFiltersOpen(false);
     openIrrigationProgramDialog();
+  }
+  if (action === "open-irrigation-base-hours-dialog") {
+    setIrrigationFiltersOpen(false);
+    openIrrigationBaseHoursDialog();
+  }
+  if (action === "save-irrigation-base-hours") {
+    await saveIrrigationBaseHours();
   }
   if (action === "apply-irrigation-program-auto") {
     const allBlocks = irrigationVisibleBlocksForProgramDialog();
