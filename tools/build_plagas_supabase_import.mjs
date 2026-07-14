@@ -60,6 +60,18 @@ function canonicalFieldBlock(potrero, block) {
   return cleanBlock;
 }
 
+function normalizedPestField(record) {
+  if (normalized(record.potrero) === "sin potrero") {
+    return { potrero: "5", block: "1", hasField: true };
+  }
+  const hasField = Boolean(record.normalizedField);
+  return {
+    potrero: hasField ? record.potrero : "",
+    block: hasField ? canonicalFieldBlock(record.potrero, record.mapBlock || record.excelBlock) : "",
+    hasField
+  };
+}
+
 const collection = JSON.parse(await fs.readFile(compactPath, "utf8"));
 const dictionaries = collection.dictionaries || {};
 const decoded = (collection.records || []).map((row) => ({
@@ -116,7 +128,8 @@ for (const [pestKey, records] of recordsByPest) {
     if (!Number.isFinite(fid)) throw new Error(`${layer.file}: fid invalido en la posicion ${index + 1}`);
     const geoAliasKey = Object.keys(properties).find((key) => normalized(key).startsWith("potrero_alias"));
     const geoAlias = geoAliasKey ? String(properties[geoAliasKey] ?? "").trim() : "";
-    const geoBlock = String(properties.Bloque ?? "").trim();
+    let geoBlock = String(properties.Bloque ?? "").trim();
+    if (!geoAlias && !geoBlock) geoBlock = "1";
     if (geoAlias !== record.sourceAlias || geoBlock !== record.sourceBlock) {
       throw new Error(`${layer.file}: el orden de atributos no coincide en fid ${fid}`);
     }
@@ -133,11 +146,9 @@ const sourceColumns = [
 ];
 
 function recordValues(record) {
-  const hasField = record.normalizedField && normalized(record.potrero) !== "sin potrero";
-  const canonicalPotrero = hasField ? record.potrero : "";
-  const canonicalBlock = hasField ? canonicalFieldBlock(record.potrero, record.mapBlock || record.excelBlock) : "";
+  const field = normalizedPestField(record);
   return `(${[
-    sqlText(record.id), sqlText(record.date), sqlText(record.pest), sqlText(canonicalPotrero), sqlText(canonicalBlock),
+    sqlText(record.id), sqlText(record.date), sqlText(record.pest), sqlText(field.potrero), sqlText(field.block),
     sqlText(record.tree), sqlText(record.monitoringOrder), sqlText(record.foundAt), sqlNumber(record.eggs),
     sqlNumber(record.nymph1), sqlNumber(record.nymph2), sqlNumber(record.nymph3), sqlNumber(record.adults),
     sqlNumber(record.larvae), sqlNumber(record.pupae), sqlNumber(record.longitude), sqlNumber(record.latitude)

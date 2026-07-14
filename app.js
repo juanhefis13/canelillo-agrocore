@@ -220,6 +220,7 @@ let irrigationProgramCloudAvailable = true;
 let irrigationObservationsCloudAvailable = true;
 let irrigationObservationContext = null;
 let irrigationObservationTouch = null;
+let irrigationSelectedInput = null;
 let selectedGanttOrderId = "";
 let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
@@ -284,6 +285,13 @@ let pestMonitoringHeatOverlay = null;
 let pestMonitoringInfoWindow = null;
 let pestMonitoringMapRenderVersion = 0;
 let pestMonitoringCurrentSummaries = new Map();
+let fertilizerRows = null;
+let fertilizerLoadPromise = null;
+let fertilizerLoadError = "";
+let fertilizerDataSource = "";
+let fertilizerCasetaFilter = "Todas";
+let fertilizerPotreroFilter = "Todos";
+let fertilizerStatusFilter = "Todos";
 let weatherStationYear = String(new Date().getFullYear());
 let weatherStationMonth = "Todos";
 let weatherStationView = "heladas";
@@ -1082,7 +1090,8 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
   const label = `${kind === "program" ? "Programa" : "Riego real"} ${block.potrero} bloque ${block.block} dia ${dayIndex + 1}`;
-  return `<input class="irrigation-hour-input ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${observationClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="number" min="0" step="0.5" inputmode="decimal" aria-label="${htmlAttr(label)}" title="${htmlAttr(irrigationAuditTitle(kind, block, date, value))}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" value="${htmlAttr(value)}">`;
+  const displayValue = value === "" || value === null || value === undefined ? "" : value;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${observationClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" title="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = []) {
@@ -1375,10 +1384,125 @@ function scheduleIrrigationProgramCellSave(blockId, date, hours) {
   irrigationProgramSaveTimers.set(key, timer);
 }
 
+function irrigationCellValue(cell) {
+  if (!cell) return "";
+  return cell.tagName === "INPUT" ? cell.value : (cell.dataset.value || cell.value || "");
+}
+
+function setIrrigationCellValue(cell, value) {
+  if (!cell) return;
+  const normalized = value === null || value === undefined ? "" : String(value);
+  if (cell.tagName === "INPUT") cell.value = normalized;
+  else {
+    cell.dataset.value = normalized;
+    cell.value = normalized;
+    cell.textContent = normalized;
+  }
+}
+
+function irrigationCellSelector() {
+  return ".irrigation-hour-input";
+}
+
+function isIrrigationCellEditor(cell) {
+  return cell?.tagName === "INPUT";
+}
+
+function irrigationCellClassForValue(cell, value, context = irrigationInputContext(cell)) {
+  if (!cell || !context) return;
+  const key = irrigationKey(context.blockId, context.date);
+  const source = context.kind === "program" ? irrigationProgramHours : irrigationHours;
+  const audit = context.kind === "program" ? irrigationProgramAudit : irrigationAudit;
+  cell.classList.toggle("has-hours", Boolean(source[key]));
+  cell.classList.toggle("has-audit", Boolean(audit[key]));
+}
+
+function createIrrigationEditorFromCell(cell) {
+  const context = irrigationInputContext(cell);
+  if (!cell || !context || isIrrigationCellEditor(cell)) return cell;
+  const editor = document.createElement("input");
+  editor.type = "text";
+  editor.inputMode = "decimal";
+  editor.min = "0";
+  editor.step = "0.5";
+  editor.className = cell.className.replace(/\birrigation-hour-cell\b/g, "irrigation-hour-editor");
+  editor.setAttribute("aria-label", cell.getAttribute("aria-label") || "");
+  editor.title = cell.title || "";
+  editor.dataset.gridKind = cell.dataset.gridKind;
+  editor.dataset.rowIndex = cell.dataset.rowIndex;
+  editor.dataset.dayIndex = cell.dataset.dayIndex;
+  editor.dataset.date = cell.dataset.date;
+  editor.dataset.value = irrigationCellValue(cell);
+  if (cell.dataset.blockId) editor.dataset.blockId = cell.dataset.blockId;
+  if (cell.dataset.programBlockId) editor.dataset.programBlockId = cell.dataset.programBlockId;
+  if (cell.dataset.titleSignature) editor.dataset.titleSignature = cell.dataset.titleSignature;
+  editor.value = irrigationCellValue(cell);
+  cell.replaceWith(editor);
+  if (irrigationSelectedInput === cell) irrigationSelectedInput = editor;
+  return editor;
+}
+
+function createIrrigationCellFromEditor(editor) {
+  const context = irrigationInputContext(editor);
+  if (!editor || !context || !isIrrigationCellEditor(editor)) return editor;
+  const cell = document.createElement("button");
+  cell.type = "button";
+  cell.className = editor.className.replace(/\birrigation-hour-editor\b/g, "irrigation-hour-cell");
+  cell.setAttribute("aria-label", editor.getAttribute("aria-label") || "");
+  cell.title = editor.title || "";
+  cell.dataset.gridKind = editor.dataset.gridKind;
+  cell.dataset.rowIndex = editor.dataset.rowIndex;
+  cell.dataset.dayIndex = editor.dataset.dayIndex;
+  cell.dataset.date = editor.dataset.date;
+  if (editor.dataset.blockId) cell.dataset.blockId = editor.dataset.blockId;
+  if (editor.dataset.programBlockId) cell.dataset.programBlockId = editor.dataset.programBlockId;
+  if (editor.dataset.titleSignature) cell.dataset.titleSignature = editor.dataset.titleSignature;
+  setIrrigationCellValue(cell, editor.value);
+  editor.replaceWith(cell);
+  if (irrigationSelectedInput === editor) irrigationSelectedInput = cell;
+  return cell;
+}
+
+function activateIrrigationCell(cell, select = true) {
+  const editor = createIrrigationEditorFromCell(cell);
+  editor?.focus?.({ preventScroll: true });
+  if (select) editor?.select?.();
+  return editor;
+}
+
 function irrigationObservationInput(context = irrigationObservationContext) {
   if (!context || !views.irrigation) return null;
   const idAttribute = context.kind === "program" ? "data-program-block-id" : "data-block-id";
-  return views.irrigation.querySelector(`.irrigation-hour-input[${idAttribute}="${CSS.escape(context.blockId)}"][data-date="${CSS.escape(context.date)}"]`);
+  return views.irrigation.querySelector(`${irrigationCellSelector()}[${idAttribute}="${CSS.escape(context.blockId)}"][data-date="${CSS.escape(context.date)}"]`);
+}
+
+function irrigationInputContext(input) {
+  if (!input?.classList?.contains("irrigation-hour-input")) return null;
+  const kind = input.dataset.gridKind;
+  const blockId = kind === "program" ? input.dataset.programBlockId : input.dataset.blockId;
+  if (!blockId || !input.dataset.date || !["program", "real"].includes(kind)) return null;
+  return { kind, blockId, date: input.dataset.date };
+}
+
+function hydrateIrrigationInputTitle(input, context = irrigationInputContext(input), block = null) {
+  if (!input || !context) return;
+  const key = irrigationKey(context.blockId, context.date);
+  const audit = context.kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
+  const observation = irrigationCellObservation(context.kind, context.blockId, context.date);
+  const value = irrigationCellValue(input);
+  const signature = [
+    context.kind,
+    context.blockId,
+    context.date,
+    value,
+    audit?.updatedAt || "",
+    observation?.updatedAt || "",
+    observation?.text ? "obs" : ""
+  ].join("|");
+  if (input.dataset.titleSignature === signature) return;
+  const blockInfo = block || state.blocks.find((item) => item.id === context.blockId) || { id: context.blockId, potrero: "", block: "" };
+  input.title = irrigationAuditTitle(context.kind, blockInfo, context.date, value);
+  input.dataset.titleSignature = signature;
 }
 
 function updateIrrigationObservationCellUi(context = irrigationObservationContext) {
@@ -1387,13 +1511,18 @@ function updateIrrigationObservationCellUi(context = irrigationObservationContex
   const block = state.blocks.find((item) => item.id === context.blockId) || { id: context.blockId, potrero: "", block: "" };
   const hasObservation = Boolean(irrigationCellObservation(context.kind, context.blockId, context.date)?.text);
   input.classList.toggle("has-observation", hasObservation);
-  input.title = irrigationAuditTitle(context.kind, block, context.date, input.value);
+  delete input.dataset.titleSignature;
+  hydrateIrrigationInputTitle(input, context, block);
 }
 
 function selectIrrigationObservationCell(input) {
   if (!setIrrigationObservationContextFromInput(input)) return false;
-  views.irrigation?.querySelectorAll(".irrigation-hour-input.is-selected").forEach((cell) => cell.classList.remove("is-selected"));
+  const previous = irrigationSelectedInput?.isConnected
+    ? irrigationSelectedInput
+    : views.irrigation?.querySelector(".irrigation-hour-input.is-selected");
+  if (previous && previous !== input) previous.classList.remove("is-selected");
   input.classList.add("is-selected");
+  irrigationSelectedInput = input;
   return true;
 }
 
@@ -1584,6 +1713,20 @@ function average(values) {
   return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
 }
 
+function calicataDepthNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function calicataDepthAverage(values) {
+  return average(values.map(calicataDepthNumber).filter((value) => value !== null));
+}
+
+function calicataDepthLabel(value) {
+  const numeric = calicataDepthNumber(value);
+  return numeric === null ? "-" : number(numeric);
+}
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -1601,12 +1744,19 @@ function calicataValueColor(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "#94a3b8";
   const clamped = clamp(numeric, 1, 5);
-  if (clamped <= 2.5) return mixColor("#dc2626", "#facc15", (clamped - 1) / 1.5);
-  return mixColor("#facc15", "#2563eb", (clamped - 2.5) / 2.5);
+  if (clamped >= 4.75) return "#0b1f5e";
+  if (clamped >= 4.25) return "#1d4ed8";
+  if (clamped >= 3.75) return "#60a5fa";
+  if (clamped >= 3.25) return "#ca8a04";
+  if (clamped >= 2.75) return "#facc15";
+  if (clamped >= 2.25) return "#c2410c";
+  if (clamped >= 1.75) return "#fb923c";
+  if (clamped >= 1.25) return "#f87171";
+  return "#7f1d1d";
 }
 
 function calicataAverageValue(item) {
-  return average([item?.depth20, item?.depth40, item?.depth60, item?.depth80]);
+  return calicataDepthAverage([item?.depth20, item?.depth40, item?.depth60, item?.depth80]);
 }
 
 function calicataColorStyle(value) {
@@ -1616,16 +1766,16 @@ function calicataColorStyle(value) {
 
 function calicataSummary(calicatas) {
   const active = calicatas.filter((item) => !item.empty);
-  const depth20 = average(active.map((item) => item.depth20));
-  const depth40 = average(active.map((item) => item.depth40));
-  const depth60 = average(active.map((item) => item.depth60));
-  const depth80 = average(active.map((item) => item.depth80));
-  const general = average([depth20, depth40, depth60, depth80]);
+  const depth20 = calicataDepthAverage(active.map((item) => item.depth20));
+  const depth40 = calicataDepthAverage(active.map((item) => item.depth40));
+  const depth60 = calicataDepthAverage(active.map((item) => item.depth60));
+  const depth80 = calicataDepthAverage(active.map((item) => item.depth80));
+  const general = calicataDepthAverage(active.flatMap((item) => [item.depth20, item.depth40, item.depth60, item.depth80]));
   return { count: active.length, depth20, depth40, depth60, depth80, general };
 }
 
 function calicataDepthCell(calicatas, field) {
-  const value = average(calicatas.filter((item) => !item.empty).map((item) => item[field]));
+  const value = calicataDepthAverage(calicatas.filter((item) => !item.empty).map((item) => item[field]));
   return value === null ? "" : number(value);
 }
 
@@ -1663,7 +1813,7 @@ function calicataDepthList(item) {
     ["40", item.depth40],
     ["60", item.depth60],
     ["80", item.depth80]
-  ].map(([depth, value]) => `${depth}: ${value === null || value === undefined || value === "" ? "-" : number(value)}`).join(" / ");
+  ].map(([depth, value]) => `${depth}: ${calicataDepthLabel(value)}`).join(" / ");
 }
 
 function irrigationStationLabel(value) {
@@ -1773,6 +1923,23 @@ function irrigationBlockMonthTotal(source, blockId, monthPrefix, daysInMonth) {
     const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
     return Number(source[irrigationKey(blockId, date)]) || 0;
   }).reduce((sum, value) => sum + value, 0);
+}
+
+function irrigationMonthTotals(source, blocks, monthPrefix, daysInMonth) {
+  const blockIds = new Set((blocks || []).map((block) => block.id));
+  const prefix = `${monthPrefix}-`;
+  const totals = new Map([...blockIds].map((blockId) => [blockId, 0]));
+  Object.entries(source || {}).forEach(([key, value]) => {
+    const separator = key.indexOf("__");
+    if (separator < 0) return;
+    const blockId = key.slice(0, separator);
+    const date = key.slice(separator + 2);
+    if (!blockIds.has(blockId) || !date.startsWith(prefix)) return;
+    const day = Number(date.slice(8, 10));
+    if (!Number.isInteger(day) || day < 1 || day > daysInMonth) return;
+    totals.set(blockId, (totals.get(blockId) || 0) + (Number(value) || 0));
+  });
+  return totals;
 }
 
 function irrigationSourceHours(source, blockId, date) {
@@ -3727,11 +3894,147 @@ function setGateStatus(message, type = "info") {
   status.className = `auth-status ${type}`;
 }
 
+function setButtonBusy(button, busy, label = "") {
+  if (!button) return;
+  if (busy) {
+    button.dataset.defaultText ||= button.textContent;
+    button.disabled = true;
+    button.classList.add("is-loading");
+    if (label) button.textContent = label;
+  } else {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    if (button.dataset.defaultText) button.textContent = button.dataset.defaultText;
+  }
+}
+
+function passwordScore(password = "") {
+  const value = String(password || "");
+  return {
+    length: value.length >= 8,
+    case: /[a-z]/.test(value) && /[A-Z]/.test(value),
+    number: /\d/.test(value),
+    symbol: /[^A-Za-z0-9]/.test(value)
+  };
+}
+
+function isStrongPassword(password = "") {
+  const score = passwordScore(password);
+  return score.length && score.case && score.number;
+}
+
+function updatePasswordRuleIndicators(scope = document) {
+  const resetPassword = String(document.querySelector('#gateResetPasswordForm [name="newPassword"]')?.value || "");
+  const registerPassword = String(document.querySelector('#gateRegisterForm [name="registerPassword"]')?.value || "");
+  const resetScore = passwordScore(resetPassword);
+  const registerScore = passwordScore(registerPassword);
+  [
+    ["length", resetScore.length],
+    ["case", resetScore.case],
+    ["number", resetScore.number],
+    ["register-length", registerScore.length],
+    ["register-case", registerScore.case],
+    ["register-number", registerScore.number]
+  ].forEach(([rule, active]) => {
+    scope.querySelector(`[data-password-rule="${rule}"]`)?.classList.toggle("is-valid", Boolean(active));
+  });
+}
+
+function enhanceAuthGate() {
+  const card = document.querySelector("#authGate .auth-card");
+  if (!card || card.dataset.enhanced === "true") return;
+  card.dataset.enhanced = "true";
+  const setLabelText = (selector, text) => {
+    const field = document.querySelector(selector);
+    const label = field?.closest("label");
+    if (label?.firstChild?.nodeType === Node.TEXT_NODE) label.firstChild.textContent = text;
+  };
+  const brand = card.querySelector(".auth-brand");
+  if (brand) {
+    brand.querySelector("span") && (brand.querySelector("span").textContent = "Acceso seguro Supabase");
+    const hero = document.createElement("div");
+    hero.className = "auth-copy";
+    hero.innerHTML = `
+      <div class="auth-module-grid" aria-label="Modulos AgroCore">
+        <span class="auth-module-chip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16h16M6 16l2-8h8l2 8M9 8V5h6v3M8 19h.01M16 19h.01"/></svg>
+          <strong>Cosecha</strong>
+        </span>
+        <span class="auth-module-chip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.1 6 11a6 6 0 0 1-12 0c0-4.9 6-11 6-11Z"/><path d="M9.5 15.5c1.2 1.1 3.8 1.1 5 0"/></svg>
+          <strong>Riego</strong>
+        </span>
+        <span class="auth-module-chip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M10 4v5l-4 7a3 3 0 0 0 2.6 4.5h6.8A3 3 0 0 0 18 16l-4-7V4"/><path d="M8 16h8"/></svg>
+          <strong>Fertilizante</strong>
+        </span>
+        <span class="auth-module-chip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>
+          <strong>Aplicaciones</strong>
+        </span>
+        <span class="auth-module-chip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.6 6.6 8 8M16 16l1.4 1.4M17.4 6.6 16 8M8 16l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
+          <strong>Clima</strong>
+        </span>
+      </div>`;
+    brand.after(hero);
+  }
+  const loginButton = document.getElementById("gateLoginButton");
+  if (loginButton) loginButton.textContent = "Entrar a AgroCore";
+  const recoverButton = document.querySelector('[data-action="gate-tab"][data-tab="recover"]');
+  if (recoverButton) recoverButton.textContent = "Recuperar contrasena";
+  const loginEmail = document.querySelector('#gateLoginForm [name="email"]');
+  const loginPassword = document.querySelector('#gateLoginForm [name="password"]');
+  setLabelText('#gateLoginForm [name="password"]', "Contrasena");
+  setLabelText('#gateResetPasswordForm [name="newPassword"]', "Nueva contrasena");
+  setLabelText('#gateResetPasswordForm [name="newPassword2"]', "Repetir contrasena");
+  setLabelText('#gateRegisterForm [name="registerPassword"]', "Contrasena");
+  setLabelText('#gateRegisterForm [name="registerPassword2"]', "Repetir contrasena");
+  if (loginEmail) loginEmail.placeholder = "usuario@canelillo.cl";
+  if (loginPassword) loginPassword.placeholder = "Tu contrasena";
+  const privacyLink = card.querySelector(".auth-privacy .link-button");
+  if (privacyLink) privacyLink.textContent = "Politicas de privacidad";
+  const privacyText = card.querySelector(".auth-privacy span");
+  if (privacyText) privacyText.textContent = "Uso de datos en AgroCore y aplicaciones vinculadas.";
+  document.getElementById("gateLoginForm")?.insertAdjacentHTML("afterbegin", `<div class="auth-pane-head auth-pane-head-login"><strong>Ingresar a AgroCore</strong><span>Cuenta autorizada del equipo Canelillo.</span></div>`);
+  const recoverForm = document.getElementById("gateRecoverForm");
+  if (recoverForm && !recoverForm.querySelector(".auth-pane-head")) {
+    recoverForm.insertAdjacentHTML("afterbegin", `<div class="auth-pane-head"><strong>Recuperar acceso</strong><span>Enlace seguro al correo registrado.</span></div>`);
+  }
+  const resetForm = document.getElementById("gateResetPasswordForm");
+  if (resetForm && !resetForm.querySelector(".auth-pane-head")) {
+    resetForm.insertAdjacentHTML("afterbegin", `<div class="auth-pane-head"><strong>Nueva contrasena</strong><span>Define una clave segura.</span></div>`);
+  }
+  if (resetForm && !resetForm.querySelector(".password-rules")) {
+    resetForm.querySelector('[name="newPassword2"]')?.closest("label")?.insertAdjacentHTML("afterend", `
+      <div class="password-rules">
+        <span data-password-rule="length">8+ caracteres</span>
+        <span data-password-rule="case">Mayuscula y minuscula</span>
+        <span data-password-rule="number">Numero</span>
+      </div>`);
+  }
+  const registerForm = document.getElementById("gateRegisterForm");
+  if (registerForm && !registerForm.querySelector(".password-rules")) {
+    registerForm.querySelector('[name="registerPassword2"]')?.closest("label")?.insertAdjacentHTML("afterend", `
+      <div class="password-rules">
+        <span data-password-rule="register-length">8+ caracteres</span>
+        <span data-password-rule="register-case">Mayuscula y minuscula</span>
+        <span data-password-rule="register-number">Numero</span>
+      </div>`);
+  }
+  card.querySelectorAll('input[type="password"]').forEach((input) => {
+    input.addEventListener("input", () => updatePasswordRuleIndicators(card));
+  });
+  updatePasswordRuleIndicators(card);
+}
+
 function showGateTab(tab) {
+  enhanceAuthGate();
   document.querySelectorAll("#authGate .auth-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
   ["login", "register", "recover", "resetPassword"].forEach((name) => {
     document.getElementById(`gate${name[0].toUpperCase()}${name.slice(1)}Form`)?.classList.toggle("active-auth-pane", tab === name);
   });
+  updatePasswordRuleIndicators(document);
 }
 
 function clearRegistrationForm() {
@@ -4030,6 +4333,200 @@ async function resetSupabasePassword() {
   }
 }
 
+function authRedirectUrl() {
+  const url = new URL(window.location.href);
+  url.hash = "";
+  url.searchParams.set("auth", "reset-password");
+  return url.toString();
+}
+
+async function loginSupabase() {
+  const form = document.getElementById("authForm") || document.getElementById("gateLoginForm");
+  const data = Object.fromEntries(new FormData(form));
+  const email = normalizeEmailValue(data.email);
+  const password = String(data.password || "");
+  const button = document.getElementById("loginButton") || document.getElementById("gateLoginButton");
+  if (!email || !password) {
+    setGateStatus("Ingresa correo y contrasena.", "error");
+    showToast("Ingresa correo y contrasena");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Verificando...");
+    setGateStatus("Verificando credenciales...", "info");
+    const session = await sbAuthPassword(email, password);
+    saveSession(session);
+    await loadCloudData();
+    startCloudSync();
+    document.getElementById("authDialog")?.close();
+    setAuthGate(false);
+    setGateStatus("", "info");
+    showToast("Sesion Supabase iniciada");
+  } catch (error) {
+    setGateStatus(`No se pudo ingresar: ${error.message}`, "error");
+    showToast(`Login fallido: ${error.message}`);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function registerSupabase() {
+  const form = document.getElementById("authForm") || document.getElementById("gateRegisterForm");
+  const data = Object.fromEntries(new FormData(form));
+  const fullName = String(data.fullName || "").trim();
+  const rut = normalizeRutValue(data.rut);
+  const email = normalizeEmailValue(data.registerEmail);
+  const role = toDbRole(data.role);
+  const area = normalizeRegistrationArea(data.area);
+  const inviteCode = String(data.inviteCode || "").trim();
+  const password = String(data.registerPassword || "");
+  const password2 = String(data.registerPassword2 || "");
+  const button = document.getElementById("registerButton") || document.getElementById("gateRegisterButton");
+  if (!fullName || !rut || !email || !password || !password2 || !inviteCode) {
+    setGateStatus("Completa todos los datos de registro.", "error");
+    showToast("Completa todos los datos de registro");
+    return;
+  }
+  if (!isValidEmail(email)) {
+    setGateStatus("Ingresa un correo valido.", "error");
+    showToast("Correo invalido");
+    return;
+  }
+  if (inviteCode !== REGISTRATION_CODE) {
+    setGateStatus("Codigo de registro incorrecto.", "error");
+    showToast("Codigo de registro incorrecto");
+    return;
+  }
+  if (password !== password2) {
+    setGateStatus("Las contrasenas no coinciden.", "error");
+    showToast("Las contrasenas no coinciden");
+    return;
+  }
+  if (!isStrongPassword(password)) {
+    setGateStatus("La contrasena debe tener al menos 8 caracteres, mayuscula, minuscula y numero.", "error");
+    showToast("Contrasena debil");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Creando...");
+    setGateStatus("Creando cuenta en Supabase...", "info");
+    const signup = await sbSignUp(email, password, userRegistrationMetadata(fullName, rut, role, area));
+    if (signup?.access_token) await createProfileWithSession(signup, fullName, rut, role, area);
+    clearRegistrationForm();
+    showGateTab("login");
+    setGateStatus(signup?.access_token
+      ? "Cuenta creada exitosamente. Ahora ingresa con tu correo y contrasena."
+      : "Cuenta creada. Revisa el correo si Supabase pide confirmacion; luego ingresa.",
+      "success"
+    );
+    showToast("Cuenta creada exitosamente");
+  } catch (error) {
+    setGateStatus(`Registro fallido: ${error.message}`, "error");
+    showToast(`Registro fallido: ${error.message}`);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function sbRecoverPassword(email) {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      email,
+      redirect_to: authRedirectUrl()
+    })
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.error_description || data?.msg || data?.message || text || "No se pudo enviar recuperacion");
+  return data;
+}
+
+function readRecoverySessionFromUrl() {
+  const sources = [
+    new URLSearchParams(window.location.hash.replace(/^#/, "")),
+    new URLSearchParams(window.location.search)
+  ];
+  const errorParams = sources.find((params) => params.get("error") || params.get("error_description"));
+  if (errorParams) {
+    setTimeout(() => setGateStatus(`No se pudo recuperar: ${errorParams.get("error_description") || errorParams.get("error")}`, "error"), 0);
+    return null;
+  }
+  const params = sources.find((item) => item.get("access_token") && (!item.get("type") || item.get("type") === "recovery"));
+  if (!params) return null;
+  return {
+    access_token: params.get("access_token"),
+    refresh_token: params.get("refresh_token") || "",
+    token_type: params.get("token_type") || "bearer",
+    expires_in: Number(params.get("expires_in") || 0)
+  };
+}
+
+async function recoverSupabasePassword() {
+  const form = document.getElementById("gateRecoverForm");
+  const data = Object.fromEntries(new FormData(form));
+  const email = normalizeEmailValue(data.recoverEmail);
+  const button = document.getElementById("gateRecoverButton");
+  if (!email || !isValidEmail(email)) {
+    setGateStatus("Ingresa un correo valido para recuperar.", "error");
+    showToast("Correo invalido");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Enviando...");
+    setGateStatus("Enviando enlace de recuperacion...", "info");
+    await sbRecoverPassword(email);
+    showGateTab("login");
+    setGateStatus("Si el correo existe, Supabase enviara un enlace para crear una nueva contrasena. Revisa tambien spam o correo no deseado.", "success");
+    showToast("Revisa tu correo");
+  } catch (error) {
+    setGateStatus(`No se pudo enviar recuperacion: ${error.message}`, "error");
+    showToast("No se pudo enviar recuperacion");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function resetSupabasePassword() {
+  const form = document.getElementById("gateResetPasswordForm");
+  const data = Object.fromEntries(new FormData(form));
+  const password = String(data.newPassword || "");
+  const password2 = String(data.newPassword2 || "");
+  const button = document.getElementById("gateResetPasswordButton");
+  if (!passwordRecoverySession?.access_token) {
+    setGateStatus("El enlace de recuperacion no es valido o expiro.", "error");
+    return;
+  }
+  if (password !== password2) {
+    setGateStatus("Las contrasenas no coinciden.", "error");
+    return;
+  }
+  if (!isStrongPassword(password)) {
+    setGateStatus("La contrasena debe tener al menos 8 caracteres, mayuscula, minuscula y numero.", "error");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Actualizando...");
+    setGateStatus("Actualizando contrasena...", "info");
+    await sbUpdatePassword(passwordRecoverySession.access_token, password);
+    passwordRecoverySession = null;
+    window.history.replaceState({}, document.title, window.location.pathname);
+    form.reset();
+    showGateTab("login");
+    setGateStatus("Contrasena actualizada. Ingresa con tu nueva contrasena.", "success");
+    showToast("Contrasena actualizada");
+  } catch (error) {
+    setGateStatus(`No se pudo actualizar: ${error.message}`, "error");
+    showToast("No se pudo actualizar contrasena");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 async function createOwnProfile(fullName, rut, role, area = "todas") {
   await sbFetch("/rest/v1/usuarios", {
     method: "POST",
@@ -4208,15 +4705,27 @@ function weatherStationImportButton() {
   return `<button class="secondary-button weather-import-button" type="button" data-action="open-weather-station-import">Actualizar BD</button>`;
 }
 
-function renderDashboard() {
-  const dailyRows = [...(state.weatherStationDaily || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const years = [...new Set(dailyRows.map((row) => String(row.date || "").slice(0, 4)).filter(Boolean))].sort();
-  if (years.length && !years.includes(weatherStationYear)) weatherStationYear = years.at(-1);
-  const rows = dailyRows.filter((row) => {
+function weatherStationExportButton() {
+  return `<button class="secondary-button weather-export-button" type="button" data-action="export-weather-station">Exportar Excel</button>`;
+}
+
+function weatherStationSortedRows() {
+  return [...(state.weatherStationDaily || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function currentWeatherStationRows() {
+  return weatherStationSortedRows().filter((row) => {
     const yearMatches = String(row.date || "").startsWith(`${weatherStationYear}-`);
     const monthMatches = weatherStationMonth === "Todos" || String(row.date || "").slice(5, 7) === weatherStationMonth;
     return yearMatches && monthMatches;
   });
+}
+
+function renderDashboard() {
+  const dailyRows = weatherStationSortedRows();
+  const years = [...new Set(dailyRows.map((row) => String(row.date || "").slice(0, 4)).filter(Boolean))].sort();
+  if (years.length && !years.includes(weatherStationYear)) weatherStationYear = years.at(-1);
+  const rows = currentWeatherStationRows();
 
   if (!dailyRows.length) {
     views.dashboard.innerHTML = `
@@ -4260,6 +4769,7 @@ function renderDashboard() {
         <div class="weather-station-header-actions">
           ${weatherStationViewSwitch()}
           ${weatherStationImportButton()}
+          ${weatherStationExportButton()}
           <div class="weather-station-filters" aria-label="Filtros de estacion climatica">
             <label>Ano
               <select id="weatherStationYearFilter">
@@ -4830,6 +5340,111 @@ function weatherStationSummary(rows, degreeRows = rows) {
   };
 }
 
+function weatherExportNumber(value, decimals = 2) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "";
+  return roundWeatherValue(parsed, decimals);
+}
+
+function weatherFrostTotal(row) {
+  return Number(row.frost0ToMinus1 || 0) + Number(row.frostMinus1ToMinus2 || 0) + Number(row.frostBelowMinus2 || 0);
+}
+
+function weatherStationExportRows(rows) {
+  let accumulatedRain = 0;
+  return rows.map((row) => {
+    accumulatedRain += Number(row.precipitationTotal || 0);
+    return {
+      Fecha: row.date || "",
+      "Fecha visible": weatherStationDateLabel(row.date, { day: true }),
+      Registros: weatherExportNumber(row.records, 0),
+      "Temp promedio C": weatherExportNumber(row.average, 2),
+      "Temp minima C": weatherExportNumber(row.minimum, 2),
+      "Temp maxima C": weatherExportNumber(row.maximum, 2),
+      "Humedad promedio %": row.humidityAverage === null || row.humidityAverage === undefined ? "" : weatherExportNumber(Number(row.humidityAverage) * 100, 2),
+      "Viento promedio": row.windAverage === null || row.windAverage === undefined ? "" : weatherExportNumber(row.windAverage, 2),
+      "Precipitacion mm": weatherExportNumber(row.precipitationTotal, 2),
+      "Precipitacion acum periodo mm": weatherExportNumber(accumulatedRain, 2),
+      "Grados-dia base 7 C": weatherExportNumber(row.degreeDays, 3),
+      "Helada 0 a -1 h": weatherExportNumber(row.frost0ToMinus1, 2),
+      "Helada -1 a -2 h": weatherExportNumber(row.frostMinus1ToMinus2, 2),
+      "Helada <= -2 h": weatherExportNumber(row.frostBelowMinus2, 2),
+      "Total helada h": weatherExportNumber(weatherFrostTotal(row), 2),
+      "Inicio - termino helada": weatherFrostWindowLabel(row)
+    };
+  });
+}
+
+function weatherStationSummaryExportRows(rows, summary, degreeSeason) {
+  const rain = weatherRainSummary(rows);
+  const frostRows = rows.filter((row) => Number(row.minimum) <= 0);
+  const rainyRows = rows.filter((row) => Number(row.precipitationTotal || 0) > 0);
+  return [
+    ["Reporte", "Heladas y lluvias"],
+    ["Periodo", weatherStationPeriodLabel()],
+    ["Ano filtro", weatherStationYear],
+    ["Mes filtro", weatherStationMonth === "Todos" ? "Todo el ano" : weatherStationDateLabel(`${weatherStationYear}-${weatherStationMonth}-01`)],
+    ["Temporada grados-dia", degreeSeason.label],
+    ["Generado", new Date().toLocaleString("es-CL")],
+    [],
+    ["Resumen general", "Valor", "Unidad"],
+    ["Registros", weatherExportNumber(summary.records, 0), "lecturas"],
+    ["Cobertura", weatherExportNumber(summary.completeness, 1), "%"],
+    ["Temperatura minima", summary.hasRows ? weatherExportNumber(summary.minimum, 2) : "", "C"],
+    ["Fecha minima", summary.minimumDate ? weatherStationDateLabel(summary.minimumDate, { day: true }) : "", ""],
+    ["Temperatura maxima", summary.hasRows ? weatherExportNumber(summary.maximum, 2) : "", "C"],
+    ["Fecha maxima", summary.maximumDate ? weatherStationDateLabel(summary.maximumDate, { day: true }) : "", ""],
+    ["Humedad promedio", summary.hasHumidity ? weatherExportNumber(summary.humidityAverage * 100, 2) : "", "%"],
+    ["Viento promedio", summary.hasWind ? weatherExportNumber(summary.windAverage, 2) : "", ""],
+    ["Grados-dia base 7", weatherExportNumber(summary.degreeDays, 3), "C-dia"],
+    [],
+    ["Heladas", "Valor", "Unidad"],
+    ["Dias con helada", frostRows.length, "dias"],
+    ["Horas 0 a -1", weatherExportNumber(summary.frost0ToMinus1, 2), "h"],
+    ["Horas -1 a -2", weatherExportNumber(summary.frostMinus1ToMinus2, 2), "h"],
+    ["Horas <= -2", weatherExportNumber(summary.frostBelowMinus2, 2), "h"],
+    ["Horas totales bajo 0", weatherExportNumber(summary.totalFrostHours, 2), "h"],
+    [],
+    ["Lluvias", "Valor", "Unidad"],
+    ["Dias con lluvia", rain.rainDays, "dias"],
+    ["Precipitacion acumulada", weatherExportNumber(summary.precipitationTotal, 2), "mm"],
+    ["Mayor lluvia diaria", weatherExportNumber(rain.maxDaily, 2), "mm"],
+    ["Fecha mayor lluvia", rain.maxDate ? weatherStationDateLabel(rain.maxDate, { day: true }) : "", ""],
+    ["Promedio dia con lluvia", weatherExportNumber(rain.averageRainDay, 2), "mm"],
+    ["Dias incluidos con lluvia", rainyRows.length, "dias"]
+  ];
+}
+
+function exportWeatherStationWorkbook() {
+  if (!window.XLSX) {
+    showToast("No se pudo cargar el exportador Excel");
+    return;
+  }
+  const rows = currentWeatherStationRows();
+  if (!rows.length) {
+    showToast("No hay datos climaticos para exportar en este periodo");
+    return;
+  }
+  const allRows = weatherStationSortedRows();
+  const degreeSeasonRows = weatherStationDegreeSeasonRows(allRows, weatherStationYear);
+  const degreeSeason = weatherStationDegreeSeason(weatherStationYear);
+  const summary = weatherStationSummary(rows, degreeSeasonRows);
+  const workbook = window.XLSX.utils.book_new();
+  const dataSheet = window.XLSX.utils.json_to_sheet(weatherStationExportRows(rows));
+  dataSheet["!cols"] = [
+    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 15 }, { wch: 14 }, { wch: 14 },
+    { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 25 }, { wch: 18 }, { wch: 16 },
+    { wch: 16 }, { wch: 16 }, { wch: 15 }, { wch: 24 }
+  ];
+  const summarySheet = window.XLSX.utils.aoa_to_sheet(weatherStationSummaryExportRows(rows, summary, degreeSeason));
+  summarySheet["!cols"] = [{ wch: 28 }, { wch: 22 }, { wch: 14 }];
+  window.XLSX.utils.book_append_sheet(workbook, dataSheet, "Datos diarios");
+  window.XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen");
+  const period = weatherStationMonth === "Todos" ? "anio" : weatherStationMonth;
+  window.XLSX.writeFile(workbook, `heladas_lluvias_${weatherStationYear}_${period}.xlsx`);
+  showToast("Excel de heladas y lluvias exportado");
+}
+
 function weatherStationDateKey(value) {
   return String(value || "").slice(0, 10);
 }
@@ -5357,6 +5972,8 @@ function renderIrrigation() {
     return acc;
   }, {})).sort((a, b) => comparePotrero(a.potrero, b.potrero));
   const blockRowIndexMap = new Map(filteredBlocks.map((block, index) => [block.id, index]));
+  const programMonthTotals = irrigationMonthTotals(irrigationProgramHours, filteredBlocks, monthPrefix, daysInMonth);
+  const realMonthTotals = irrigationMonthTotals(irrigationHours, filteredBlocks, monthPrefix, daysInMonth);
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
   const irrigationHeaderControls = irrigationTab === "bandejas" ? `
@@ -5460,7 +6077,7 @@ function renderIrrigation() {
                 const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
                 return irrigationProgramHours[irrigationKey(block.id, date)] ?? "";
               });
-              const programTotal = programmedValues.reduce((sum, value) => sum + (Number(value) || 0), 0);
+              const programTotal = programMonthTotals.get(block.id) || 0;
               const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
               const calicataKey = calicataBlockKey(block.potrero, block.block);
               const expanded = expandedCalicataKeys.has(calicataKey);
@@ -5553,11 +6170,8 @@ function renderIrrigation() {
             <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
           </div>
           ${group.blocks.map((block) => {
-          const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
-            const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-            return Number(irrigationHours[irrigationKey(block.id, date)]) || 0;
-          }).reduce((sum, value) => sum + value, 0);
-          const programTotal = irrigationBlockMonthTotal(irrigationProgramHours, block.id, monthPrefix, daysInMonth);
+          const blockTotal = realMonthTotals.get(block.id) || 0;
+          const programTotal = programMonthTotals.get(block.id) || 0;
           const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
           const reposition = irrigationReposicion(blockTotal, block.precipitation, monthEvaporationTotal);
           const hoursDiff = irrigationDifferencePercent(blockTotal, programTotal);
@@ -5686,80 +6300,118 @@ function renderIrrigation() {
     if (irrigationTab === "bandejas") irrigationBandejaFocusPending = true;
     renderIrrigation();
   });
-  views.irrigation.querySelectorAll(".irrigation-hour-input").forEach((input) => {
-    input.addEventListener("focus", (event) => selectIrrigationObservationCell(event.currentTarget));
-    input.addEventListener("click", (event) => selectIrrigationObservationCell(event.currentTarget));
-    input.addEventListener("keydown", (event) => {
-      if ((event.altKey && event.key.toLowerCase() === "o") || (event.shiftKey && event.key === "F2")) {
-        selectIrrigationObservationCell(event.currentTarget);
-        openIrrigationObservationForInput(event.currentTarget);
+  const blocksById = new Map(filteredBlocks.map((block) => [block.id, block]));
+  const hydrateCellFromEvent = (event) => {
+    const input = event.target.closest?.(irrigationCellSelector());
+    if (!input || !views.irrigation.contains(input)) return null;
+    const context = irrigationInputContext(input);
+    hydrateIrrigationInputTitle(input, context, blocksById.get(context?.blockId));
+    return input;
+  };
+  views.irrigation.onmouseover = hydrateCellFromEvent;
+  views.irrigation.onfocusin = (event) => {
+    const input = hydrateCellFromEvent(event);
+    if (input) selectIrrigationObservationCell(input);
+  };
+  views.irrigation.onclick = (event) => {
+    const input = hydrateCellFromEvent(event);
+    if (!input) return;
+    selectIrrigationObservationCell(input);
+    if (!isIrrigationCellEditor(input)) activateIrrigationCell(input);
+  };
+  views.irrigation.onfocusout = (event) => {
+    const input = event.target.closest?.(irrigationCellSelector());
+    if (!input || !views.irrigation.contains(input) || !isIrrigationCellEditor(input)) return;
+    createIrrigationCellFromEditor(input);
+  };
+  views.irrigation.onkeydown = (event) => {
+    const input = event.target.closest?.(irrigationCellSelector());
+    if (!input || !views.irrigation.contains(input)) return;
+    const context = irrigationInputContext(input);
+    hydrateIrrigationInputTitle(input, context, blocksById.get(context?.blockId));
+    if ((event.altKey && event.key.toLowerCase() === "o") || (event.shiftKey && event.key === "F2")) {
+      selectIrrigationObservationCell(input);
+      openIrrigationObservationForInput(input);
+      event.preventDefault();
+      return;
+    }
+    if (!isIrrigationCellEditor(input)) {
+      const editableKey = /^[0-9.,]$/.test(event.key);
+      if (event.key === "Enter" || event.key === "F2") {
+        activateIrrigationCell(input);
         event.preventDefault();
         return;
       }
-      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-      if (focusIrrigationCellFromKeyboard(event.currentTarget, event.key)) event.preventDefault();
-    });
-  });
-  views.irrigation.querySelectorAll(".irrigation-program-input").forEach((input) => {
-    input.addEventListener("input", (event) => {
-      const target = event.target;
-      const key = irrigationKey(target.dataset.programBlockId, target.dataset.date);
-      const value = Number(target.value);
-      const block = state.blocks.find((item) => item.id === target.dataset.programBlockId);
-      if (target.value === "" || value <= 0) {
+      if (event.key === "Backspace" || event.key === "Delete" || editableKey) {
+        const editor = activateIrrigationCell(input, false);
+        editor.value = editableKey ? event.key.replace(",", ".") : "";
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        editor.select?.();
+        event.preventDefault();
+        return;
+      }
+    }
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if (focusIrrigationCellFromKeyboard(input, event.key)) event.preventDefault();
+  };
+  views.irrigation.oninput = (event) => {
+    const target = event.target.closest?.(irrigationCellSelector());
+    if (!target || !views.irrigation.contains(target)) return;
+    const context = irrigationInputContext(target);
+    if (!context) return;
+    const block = blocksById.get(context.blockId) || state.blocks.find((item) => item.id === context.blockId);
+    const value = Number(irrigationCellValue(target));
+    const key = irrigationKey(context.blockId, context.date);
+    if (context.kind === "program") {
+      if (irrigationCellValue(target) === "" || value <= 0) {
         delete irrigationProgramHours[key];
-        clearIrrigationCellAudit("program", target.dataset.programBlockId, target.dataset.date);
+        clearIrrigationCellAudit("program", context.blockId, context.date);
       } else {
         irrigationProgramHours[key] = value;
-        setIrrigationCellAudit("program", target.dataset.programBlockId, target.dataset.date);
+        setIrrigationCellAudit("program", context.blockId, context.date);
       }
-      target.title = irrigationAuditTitle("program", block || { id: target.dataset.programBlockId, potrero: "", block: "" }, target.dataset.date, target.value);
+      delete target.dataset.titleSignature;
+      hydrateIrrigationInputTitle(target, context, block);
       target.classList.toggle("has-hours", Boolean(irrigationProgramHours[key]));
       target.classList.toggle("has-audit", Boolean(irrigationProgramAudit[key]));
       saveIrrigationProgramHours();
       const programTotal = Array.from({ length: daysInMonth }, (_, index) => {
         const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-        return Number(irrigationProgramHours[irrigationKey(target.dataset.programBlockId, date)]) || 0;
+        return Number(irrigationProgramHours[irrigationKey(context.blockId, date)]) || 0;
       }).reduce((sum, item) => sum + item, 0);
       const reposition = irrigationReposicion(programTotal, block?.precipitation, historicalEvaporationTotal);
-      const totalCell = views.irrigation.querySelector(`[data-program-total="${CSS.escape(target.dataset.programBlockId)}"]`);
-      const repositionCell = views.irrigation.querySelector(`[data-program-reposition="${CSS.escape(target.dataset.programBlockId)}"]`);
+      const totalCell = views.irrigation.querySelector(`[data-program-total="${CSS.escape(context.blockId)}"]`);
+      const repositionCell = views.irrigation.querySelector(`[data-program-reposition="${CSS.escape(context.blockId)}"]`);
       if (totalCell) totalCell.textContent = number(programTotal);
       if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
-      updateIrrigationComparisonCells(target.dataset.programBlockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
-      scheduleIrrigationProgramCellSave(target.dataset.programBlockId, target.dataset.date, target.value);
-    });
-  });
-  views.irrigation.querySelectorAll(".irrigation-hour-input").forEach((input) => {
-    if (input.classList.contains("irrigation-program-input")) return;
-    input.addEventListener("input", (event) => {
-      const target = event.target;
-      const key = irrigationKey(target.dataset.blockId, target.dataset.date);
-      const value = Number(target.value);
-      const block = state.blocks.find((item) => item.id === target.dataset.blockId);
-      if (target.value === "" || value <= 0) {
-        delete irrigationHours[key];
-        clearIrrigationCellAudit("real", target.dataset.blockId, target.dataset.date);
-      } else {
-        irrigationHours[key] = value;
-        setIrrigationCellAudit("real", target.dataset.blockId, target.dataset.date);
-      }
-      target.title = irrigationAuditTitle("real", block || { id: target.dataset.blockId, potrero: "", block: "" }, target.dataset.date, target.value);
-      target.classList.toggle("has-hours", Boolean(irrigationHours[key]));
-      target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
-      saveIrrigationHours();
-      scheduleIrrigationCellSave(target.dataset.blockId, target.dataset.date, target.value);
-      const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
-        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-        return Number(irrigationHours[irrigationKey(target.dataset.blockId, date)]) || 0;
-      }).reduce((sum, item) => sum + item, 0);
-      views.irrigation.querySelector(`[data-block-total="${target.dataset.blockId}"]`).textContent = number(blockTotal);
-      const reposition = irrigationReposicion(blockTotal, block?.precipitation, monthEvaporationTotal);
-      const repositionCell = views.irrigation.querySelector(`[data-block-reposition="${target.dataset.blockId}"]`);
-      if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
-      updateIrrigationComparisonCells(target.dataset.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
-    });
-  });
+      updateIrrigationComparisonCells(context.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+      scheduleIrrigationProgramCellSave(context.blockId, context.date, irrigationCellValue(target));
+      return;
+    }
+    if (irrigationCellValue(target) === "" || value <= 0) {
+      delete irrigationHours[key];
+      clearIrrigationCellAudit("real", context.blockId, context.date);
+    } else {
+      irrigationHours[key] = value;
+      setIrrigationCellAudit("real", context.blockId, context.date);
+    }
+    delete target.dataset.titleSignature;
+    hydrateIrrigationInputTitle(target, context, block);
+    target.classList.toggle("has-hours", Boolean(irrigationHours[key]));
+    target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
+    saveIrrigationHours();
+    scheduleIrrigationCellSave(context.blockId, context.date, irrigationCellValue(target));
+    const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
+      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+      return Number(irrigationHours[irrigationKey(context.blockId, date)]) || 0;
+    }).reduce((sum, item) => sum + item, 0);
+    const totalCell = views.irrigation.querySelector(`[data-block-total="${CSS.escape(context.blockId)}"]`);
+    if (totalCell) totalCell.textContent = number(blockTotal);
+    const reposition = irrigationReposicion(blockTotal, block?.precipitation, monthEvaporationTotal);
+    const repositionCell = views.irrigation.querySelector(`[data-block-reposition="${CSS.escape(context.blockId)}"]`);
+    if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
+    updateIrrigationComparisonCells(context.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+  };
   if (irrigationTab === "bandejas") wireIrrigationBandejaMatrix();
   syncIrrigationGanttScroll();
 }
@@ -5835,36 +6487,364 @@ function syncIrrigationGanttScroll() {
   const real = views.irrigation.querySelector(".irrigation-gantt-real");
   if (!program || !real) return;
   let syncing = false;
-  const sync = (source, target) => {
-    if (syncing) return;
-    syncing = true;
-    target.scrollLeft = source.scrollLeft;
-    target.scrollTop = source.scrollTop;
-    requestAnimationFrame(() => { syncing = false; });
+  let frame = 0;
+  const maxScrollTop = (element) => Math.max(0, element.scrollHeight - element.clientHeight);
+  const syncedTop = (source, target) => {
+    const sourceMax = maxScrollTop(source);
+    const targetMax = maxScrollTop(target);
+    if (!sourceMax || !targetMax) return source.scrollTop;
+    return (source.scrollTop / sourceMax) * targetMax;
   };
-  program.addEventListener("scroll", () => sync(program, real), { passive: true });
-  real.addEventListener("scroll", () => sync(real, program), { passive: true });
+  const applySync = (source, target, immediate = false) => {
+    if (syncing) return;
+    cancelAnimationFrame(frame);
+    const run = () => {
+      syncing = true;
+      const nextTop = syncedTop(source, target);
+      if (target.scrollLeft !== source.scrollLeft) target.scrollLeft = source.scrollLeft;
+      if (Math.abs(target.scrollTop - nextTop) > 1) target.scrollTop = nextTop;
+      requestAnimationFrame(() => { syncing = false; });
+    };
+    if (immediate) run();
+    else frame = requestAnimationFrame(run);
+  };
+  const syncFromScroll = (source, target) => applySync(source, target);
+  const syncWheel = (source, target, event) => {
+    if (!event.deltaY && !event.deltaX) return;
+    const sourceTopBefore = source.scrollTop;
+    const sourceLeftBefore = source.scrollLeft;
+    source.scrollTop += event.deltaY;
+    source.scrollLeft += event.deltaX;
+    const consumed = source.scrollTop !== sourceTopBefore || source.scrollLeft !== sourceLeftBefore;
+    if (!consumed) return;
+    event.preventDefault();
+    applySync(source, target, true);
+  };
+  program.addEventListener("scroll", () => syncFromScroll(program, real), { passive: true });
+  real.addEventListener("scroll", () => syncFromScroll(real, program), { passive: true });
+  program.addEventListener("wheel", (event) => syncWheel(program, real, event), { passive: false });
+  real.addEventListener("wheel", (event) => syncWheel(real, program, event), { passive: false });
 }
 
-function renderFertilizers() {
-  views.fertilizers.innerHTML = `
-    <div class="kpi-grid">
-      ${kpi("Planes fertilizacion", 0, "")}
-      ${kpi("Aplicaciones fertirriego", 0, "")}
-      ${kpi("Nutrientes registrados", 0, "")}
-      ${kpi("Alertas fertilizante", 0, "")}
-    </div>
-    <section class="panel empty-module">
-      <div class="panel-header">
+function irrigationGanttScrollSnapshot() {
+  const program = views.irrigation?.querySelector(".irrigation-gantt-program");
+  const real = views.irrigation?.querySelector(".irrigation-gantt-real");
+  const ratio = (element) => {
+    if (!element) return 0;
+    const max = Math.max(0, element.scrollHeight - element.clientHeight);
+    return max ? element.scrollTop / max : 0;
+  };
+  return {
+    programLeft: program?.scrollLeft || 0,
+    programTop: program?.scrollTop || 0,
+    programRatio: ratio(program),
+    realLeft: real?.scrollLeft || 0,
+    realTop: real?.scrollTop || 0,
+    realRatio: ratio(real)
+  };
+}
+
+function irrigationGanttAnchorSnapshot(target) {
+  const element = target?.closest?.(".irrigation-gantt");
+  if (!target || !element) return null;
+  const targetRect = target.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  return {
+    selector: `[data-action="toggle-calicatas"][data-key="${CSS.escape(target.dataset.key || "")}"]`,
+    ganttClass: element.classList.contains("irrigation-gantt-program") ? "irrigation-gantt-program" : "irrigation-gantt-real",
+    offsetTop: targetRect.top - elementRect.top,
+    scrollTop: element.scrollTop,
+    scrollLeft: element.scrollLeft
+  };
+}
+
+function restoreIrrigationGanttAnchor(snapshot) {
+  if (!snapshot) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const element = views.irrigation?.querySelector(`.${snapshot.ganttClass}`);
+    const target = element?.querySelector(snapshot.selector);
+    if (!element || !target) return;
+    element.scrollLeft = snapshot.scrollLeft || 0;
+    const elementRect = element.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    element.scrollTop += (targetRect.top - elementRect.top) - snapshot.offsetTop;
+  }));
+}
+
+function restoreIrrigationGanttScroll(snapshot) {
+  if (!snapshot) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const program = views.irrigation?.querySelector(".irrigation-gantt-program");
+    const real = views.irrigation?.querySelector(".irrigation-gantt-real");
+    const apply = (element, left, top, ratio) => {
+      if (!element) return;
+      const max = Math.max(0, element.scrollHeight - element.clientHeight);
+      element.scrollLeft = left || 0;
+      element.scrollTop = Number.isFinite(top) ? Math.min(top, max) : max * (ratio || 0);
+    };
+    apply(program, snapshot.programLeft, snapshot.programTop, snapshot.programRatio);
+    apply(real, snapshot.realLeft, snapshot.realTop, snapshot.realRatio);
+  }));
+}
+
+function normalizeFertilizerTankRow(row) {
+  const rawPotreros = Array.isArray(row.potreros)
+    ? row.potreros
+    : Array.isArray(row.potreros_json)
+      ? row.potreros_json.map((item) => item?.potrero)
+      : String(row.potreros || "").split(",");
+  const potreros = [...new Set(rawPotreros.map((item) => String(item || "").trim()).filter(Boolean))]
+    .sort(comparePotrero);
+  const maxLiters = Number(row.volumen_maximo_litros) || 0;
+  const currentLiters = Math.max(0, Number(row.litros_actuales) || 0);
+  return {
+    id: row.id || `${row.caseta_key || row.caseta}-${row.estanque_key || row.numero_estanque}-${row.fip_key || row.fip}-${maxLiters}`,
+    caseta: row.caseta || "Sin caseta",
+    casetaKey: row.caseta_key || row.caseta || "",
+    numeroEstanque: row.numero_estanque || row.numeroEstanque || "Sin estanque",
+    fip: row.fip || "Sin FIP",
+    volumenMaximoLitros: maxLiters,
+    litrosActuales: currentLiters,
+    litrosPreparados: Number(row.litros_preparados) || 0,
+    litrosAplicados: Number(row.litros_aplicados) || 0,
+    ultimaPreparacion: row.ultima_preparacion || "",
+    ultimaAplicacion: row.ultima_aplicacion || "",
+    potreros
+  };
+}
+
+async function loadFertilizerRowsFromSupabase() {
+  const rows = await sbSelectAll(
+    "v_fertilizante_estado_estanques",
+    "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
+    1000
+  );
+  if (!rows.length) throw new Error("Sin estanques de fertilizacion en Supabase");
+  fertilizerDataSource = "Supabase";
+  return rows.map(normalizeFertilizerTankRow);
+}
+
+async function loadFertilizerRowsFromLocalBackup() {
+  const response = await fetch("outputs/fertilizacion_estanques.json?v=1", { cache: "force-cache" });
+  if (!response.ok) throw new Error(`No se pudo cargar fertilizacion (${response.status})`);
+  const collection = await response.json();
+  fertilizerDataSource = "Respaldo local";
+  return (collection.records || []).map(normalizeFertilizerTankRow);
+}
+
+async function loadFertilizerRows() {
+  if (fertilizerRows) return fertilizerRows;
+  if (fertilizerLoadPromise) return fertilizerLoadPromise;
+  fertilizerLoadPromise = (async () => {
+    try {
+      fertilizerRows = await loadFertilizerRowsFromSupabase();
+    } catch (error) {
+      console.warn("Fertilizantes usa respaldo local", error);
+      fertilizerRows = await loadFertilizerRowsFromLocalBackup();
+    }
+    fertilizerRows.sort((a, b) =>
+      a.caseta.localeCompare(b.caseta, "es", { numeric: true })
+      || a.numeroEstanque.localeCompare(b.numeroEstanque, "es", { numeric: true })
+      || a.fip.localeCompare(b.fip, "es", { numeric: true })
+    );
+    fertilizerLoadError = "";
+    return fertilizerRows;
+  })().catch((error) => {
+    fertilizerLoadError = error.message || "No se pudo cargar fertilizantes";
+    throw error;
+  }).finally(() => { fertilizerLoadPromise = null; });
+  return fertilizerLoadPromise;
+}
+
+function fertilizerTankStatus(row) {
+  if (!row.volumenMaximoLitros) return "sin-capacidad";
+  const ratio = row.litrosActuales / row.volumenMaximoLitros;
+  if (row.litrosActuales <= 0) return "vacio";
+  if (ratio <= 0.15) return "critico";
+  if (ratio <= 0.35) return "bajo";
+  if (ratio >= 0.95) return "lleno";
+  return "operativo";
+}
+
+function fertilizerFilteredRows() {
+  return (fertilizerRows || []).filter((row) => {
+    if (fertilizerCasetaFilter !== "Todas" && row.caseta !== fertilizerCasetaFilter) return false;
+    if (fertilizerPotreroFilter !== "Todos" && !row.potreros.includes(fertilizerPotreroFilter)) return false;
+    if (fertilizerStatusFilter !== "Todos" && fertilizerTankStatus(row) !== fertilizerStatusFilter) return false;
+    return true;
+  });
+}
+
+function fertilizerKpis(rows) {
+  const casetas = new Set(rows.map((row) => row.caseta)).size;
+  const maxLiters = rows.reduce((sum, row) => sum + row.volumenMaximoLitros, 0);
+  const currentLiters = rows.reduce((sum, row) => sum + row.litrosActuales, 0);
+  const activeTanks = rows.filter((row) => row.litrosActuales > 0).length;
+  return `
+    ${kpi("Casetas", casetas, `${rows.length} estanques/FIP`)}
+    ${kpi("Capacidad total", `${number(maxLiters, 0)} L`, "Volumen maximo")}
+    ${kpi("Volumen actual", `${number(currentLiters, 0)} L`, fertilizerDataSource)}
+    ${kpi("Estanques activos", activeTanks, "Con litros disponibles")}
+  `;
+}
+
+function fertilizerStatusLabel(status) {
+  return {
+    "sin-capacidad": "Sin capacidad",
+    vacio: "Vacio",
+    critico: "Critico",
+    bajo: "Bajo",
+    lleno: "Lleno",
+    operativo: "Operativo"
+  }[status] || status;
+}
+
+function renderFertilizerTankCard(row) {
+  const status = fertilizerTankStatus(row);
+  const percent = row.volumenMaximoLitros ? Math.min(100, row.litrosActuales / row.volumenMaximoLitros * 100) : 0;
+  return `
+    <article class="fertilizer-tank-card status-${status}">
+      <div class="fertilizer-tank-head">
+        <strong>${escapeHtml(row.numeroEstanque)}</strong>
+        <span>${escapeHtml(row.fip)}</span>
+      </div>
+      <div class="fertilizer-volume-row">
+        <span>${number(row.litrosActuales, 0)} L</span>
+        <small>de ${number(row.volumenMaximoLitros, 0)} L</small>
+      </div>
+      <div class="fertilizer-progress" aria-label="Nivel ${number(percent, 0)}%">
+        <span style="width:${Math.max(2, percent)}%"></span>
+      </div>
+      <div class="fertilizer-tank-meta">
+        <span>${fertilizerStatusLabel(status)}</span>
+        <span>${row.potreros.length} potreros</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderFertilizerCasetaGroup(caseta, rows) {
+  const potreros = [...new Set(rows.flatMap((row) => row.potreros))].sort(comparePotrero);
+  const maxLiters = rows.reduce((sum, row) => sum + row.volumenMaximoLitros, 0);
+  const currentLiters = rows.reduce((sum, row) => sum + row.litrosActuales, 0);
+  return `
+    <section class="panel fertilizer-caseta-card">
+      <div class="panel-header fertilizer-caseta-header">
         <div>
-          <h2>Fertilizantes</h2>
+          <h2>${escapeHtml(caseta)}</h2>
+          <p>${potreros.map(escapeHtml).join(" · ")}</p>
+        </div>
+        <div class="fertilizer-caseta-total">
+          <strong>${number(currentLiters, 0)} L</strong>
+          <span>${number(maxLiters, 0)} L max.</span>
         </div>
       </div>
-      <div class="empty-state">
-        <strong>Sin registros disponibles.</strong>
+      <div class="fertilizer-tank-grid">
+        ${rows.map(renderFertilizerTankCard).join("")}
       </div>
     </section>
   `;
+}
+
+function renderFertilizerDetailTable(rows) {
+  if (!rows.length) return `<div class="empty-state compact"><strong>Sin estanques para el filtro.</strong></div>`;
+  return `
+    <div class="fertilizer-table-wrap">
+      <table class="fertilizer-table">
+        <thead><tr><th>Caseta</th><th>Estanque</th><th>FIP</th><th>Potreros</th><th>Max. L</th><th>Actual L</th><th>Preparado</th><th>Aplicado</th><th>Estado</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => {
+            const status = fertilizerTankStatus(row);
+            return `<tr>
+              <td><strong>${escapeHtml(row.caseta)}</strong></td>
+              <td>${escapeHtml(row.numeroEstanque)}</td>
+              <td>${escapeHtml(row.fip)}</td>
+              <td>${row.potreros.map((potrero) => `<span class="fertilizer-potrero-chip">${escapeHtml(potrero)}</span>`).join("")}</td>
+              <td>${number(row.volumenMaximoLitros, 0)}</td>
+              <td><strong>${number(row.litrosActuales, 0)}</strong></td>
+              <td>${number(row.litrosPreparados, 0)}</td>
+              <td>${number(row.litrosAplicados, 0)}</td>
+              <td><span class="fertilizer-status-pill status-${status}">${fertilizerStatusLabel(status)}</span></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderFertilizers() {
+  if (!fertilizerRows) {
+    views.fertilizers.innerHTML = `
+      <section class="panel fertilizer-loading-state">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <strong>${fertilizerLoadError ? "No se pudo cargar fertilizantes" : "Cargando fertilizantes"}</strong>
+        <span>${escapeHtml(fertilizerLoadError || "Preparando casetas, estanques y FIP en litros")}</span>
+        ${fertilizerLoadError ? `<button class="secondary-button" type="button" data-action="retry-fertilizers">Reintentar</button>` : ""}
+      </section>`;
+    if (!fertilizerLoadError) loadFertilizerRows().then(() => {
+      if (currentView === "fertilizers") renderFertilizers();
+    }).catch(() => {
+      if (currentView === "fertilizers") renderFertilizers();
+    });
+    return;
+  }
+  const casetas = [...new Set(fertilizerRows.map((row) => row.caseta))].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const potreros = [...new Set(fertilizerRows.flatMap((row) => row.potreros))].sort(comparePotrero);
+  if (fertilizerCasetaFilter !== "Todas" && !casetas.includes(fertilizerCasetaFilter)) fertilizerCasetaFilter = "Todas";
+  if (fertilizerPotreroFilter !== "Todos" && !potreros.includes(fertilizerPotreroFilter)) fertilizerPotreroFilter = "Todos";
+  const rows = fertilizerFilteredRows();
+  const grouped = new Map();
+  rows.forEach((row) => {
+    if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
+    grouped.get(row.caseta).push(row);
+  });
+  views.fertilizers.innerHTML = `
+    <section class="fertilizer-shell">
+      <div class="fertilizer-toolbar">
+        <div>
+          <span class="weather-eyebrow">Fertirriego</span>
+          <h2>Casetas y estanques</h2>
+        </div>
+        <div class="fertilizer-filters">
+          <label>Caseta<select data-fertilizer-filter="caseta"><option>Todas</option>${casetas.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerCasetaFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
+          <label>Potrero<select data-fertilizer-filter="potrero"><option>Todos</option>${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerPotreroFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
+          <label>Estado<select data-fertilizer-filter="status">
+            <option value="Todos" ${fertilizerStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
+            <option value="vacio" ${fertilizerStatusFilter === "vacio" ? "selected" : ""}>Vacio</option>
+            <option value="critico" ${fertilizerStatusFilter === "critico" ? "selected" : ""}>Critico</option>
+            <option value="bajo" ${fertilizerStatusFilter === "bajo" ? "selected" : ""}>Bajo</option>
+            <option value="operativo" ${fertilizerStatusFilter === "operativo" ? "selected" : ""}>Operativo</option>
+            <option value="lleno" ${fertilizerStatusFilter === "lleno" ? "selected" : ""}>Lleno</option>
+          </select></label>
+          <button class="secondary-button" type="button" data-action="reload-fertilizers">Actualizar</button>
+        </div>
+      </div>
+      <div class="kpi-grid fertilizer-kpis">
+        ${fertilizerKpis(rows)}
+      </div>
+      <div class="fertilizer-source-note">
+        <span>${escapeHtml(fertilizerDataSource)}</span>
+        <span>Unidad: litros</span>
+      </div>
+      <div class="fertilizer-caseta-grid">
+        ${[...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
+      </div>
+      <section class="panel fertilizer-history-panel">
+        <div class="panel-header"><div><h2>Detalle de estanques</h2><p>Configuracion base para la app movil de terreno.</p></div></div>
+        ${renderFertilizerDetailTable(rows)}
+      </section>
+    </section>
+  `;
+  views.fertilizers.querySelectorAll("[data-fertilizer-filter]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const filter = control.dataset.fertilizerFilter;
+      if (filter === "caseta") fertilizerCasetaFilter = control.value;
+      if (filter === "potrero") fertilizerPotreroFilter = control.value;
+      if (filter === "status") fertilizerStatusFilter = control.value;
+      renderFertilizers();
+    });
+  });
 }
 
 function harvestFilterControls() {
@@ -5903,7 +6883,7 @@ function setPestMonitoringDefaultDates() {
 }
 
 function mapSupabasePestMonitoringRecord(row) {
-  return {
+  return normalizePestMonitoringField({
     date: row.fecha || "",
     pest: row.tipo_plaga || "",
     species: row.especie || "",
@@ -5926,6 +6906,21 @@ function mapSupabasePestMonitoringRecord(row) {
     pupae: Number(row.pupas) || 0,
     longitude: Number(row.longitud),
     latitude: Number(row.latitud)
+  });
+}
+
+function normalizePestMonitoringField(record) {
+  const potrero = String(record?.potrero || record?.canonicalPotrero || "").trim();
+  if (potrero.toLocaleLowerCase("es") !== "sin potrero") return record;
+  return {
+    ...record,
+    potrero: "5",
+    canonicalPotrero: "5",
+    potreroNormalized: true,
+    excelBlock: "1",
+    block: "1",
+    sourceBlock: "1",
+    mapBlock: "1"
   };
 }
 
@@ -5947,12 +6942,12 @@ async function loadPestMonitoringFromSupabase() {
 }
 
 async function loadPestMonitoringFromLocalBackup() {
-  const response = await fetch("outputs/plagas_monitoreo.compact.json?v=4", { cache: "force-cache" });
+  const response = await fetch("outputs/plagas_monitoreo.compact.json?v=5", { cache: "force-cache" });
   if (!response.ok) throw new Error(`No se pudo cargar el respaldo del monitoreo (${response.status})`);
   const collection = await response.json();
   const dictionaries = collection.dictionaries || {};
   pestMonitoringDataSource = "Respaldo local";
-  return (collection.records || []).map((row) => ({
+  return (collection.records || []).map((row) => normalizePestMonitoringField({
         date: dictionaries.dates?.[row[0]] || "",
         pest: dictionaries.pests?.[row[1]] || "",
         species: "",
@@ -7692,10 +8687,10 @@ async function loadCloudData(options = {}) {
     workerName: item.trabajador_nombre || "",
     potrero: item.potrero || "",
     block: item.bloque || "",
-    depth20: item.profundidad_20 === null ? null : Number(item.profundidad_20),
-    depth40: item.profundidad_40 === null ? null : Number(item.profundidad_40),
-    depth60: item.profundidad_60 === null ? null : Number(item.profundidad_60),
-    depth80: item.profundidad_80 === null ? null : Number(item.profundidad_80),
+    depth20: calicataDepthNumber(item.profundidad_20),
+    depth40: calicataDepthNumber(item.profundidad_40),
+    depth60: calicataDepthNumber(item.profundidad_60),
+    depth80: calicataDepthNumber(item.profundidad_80),
     latitude: item.latitud,
     longitude: item.longitud,
     photoUrl: item.foto_url || "",
@@ -8017,6 +9012,11 @@ function startCloudSync() {
     "evaporacion_bandeja",
     "estacion_climatica",
     "monitoreo_plagas",
+    "fertilizante_casetas",
+    "fertilizante_estanques",
+    "fertilizante_estanque_potreros",
+    "fertilizante_preparaciones",
+    "fertilizante_aplicaciones",
     "registros_trazabilidad",
     "ordenes_aplicacion",
     "orden_productos",
@@ -8048,6 +9048,13 @@ function startCloudSync() {
             pestMonitoringLoadError = "";
             pestMonitoringDataSource = "";
             if (currentView === "pestMonitoring") renderPestMonitoring();
+            return;
+          }
+          if (table.startsWith("fertilizante_")) {
+            fertilizerRows = null;
+            fertilizerLoadError = "";
+            fertilizerDataSource = "";
+            if (currentView === "fertilizers") renderFertilizers();
             return;
           }
           scheduleRealtimeCloudReload(table);
@@ -9250,7 +10257,7 @@ function irrigationCalicataMarkerIcon(maps, color = "#1f6f4a") {
 
 function showIrrigationCalicataInfo(item, marker, maps) {
   if (!item || !marker || !maps || !irrigationCalicataMap) return;
-  irrigationCalicataInfoWindow ||= new maps.InfoWindow({ maxWidth: 310 });
+  irrigationCalicataInfoWindow ||= new maps.InfoWindow({ maxWidth: 310, disableAutoPan: true });
   const averageValue = calicataAverageValue(item);
   irrigationCalicataInfoWindow.setContent(`
     <div class="harvest-map-info irrigation-calicata-info">
@@ -9261,10 +10268,10 @@ function showIrrigationCalicataInfo(item, marker, maps) {
       ${item.photoUrl ? `<img class="irrigation-calicata-photo" src="${htmlAttr(item.photoUrl)}" alt="Foto calicata" loading="lazy">` : ""}
       <div class="harvest-map-info-grid">
         ${harvestInfoField("Trabajador", item.workerName || "Sin trabajador")}
-        ${harvestInfoField("20 cm", item.depth20 === null ? "-" : number(item.depth20))}
-        ${harvestInfoField("40 cm", item.depth40 === null ? "-" : number(item.depth40))}
-        ${harvestInfoField("60 cm", item.depth60 === null ? "-" : number(item.depth60))}
-        ${harvestInfoField("80 cm", item.depth80 === null ? "-" : number(item.depth80))}
+        ${harvestInfoField("20 cm", calicataDepthLabel(item.depth20))}
+        ${harvestInfoField("40 cm", calicataDepthLabel(item.depth40))}
+        ${harvestInfoField("60 cm", calicataDepthLabel(item.depth60))}
+        ${harvestInfoField("80 cm", calicataDepthLabel(item.depth80))}
         ${harvestInfoField("Promedio", averageValue === null ? "-" : number(averageValue))}
         ${harvestInfoField("Estado", item.empty ? "Vacia" : "Con lectura")}
       </div>
@@ -9467,6 +10474,9 @@ function geoJsonFeatureField(feature) {
     || properties.potrero || properties.Potrero || properties.POTRERO
     || properties.Nombre || ""
   ).trim();
+  if (!rawPotrero && !String(properties.bloque || properties.Bloque || properties.BLOQUE || properties.block || properties.BLOCK || "").trim()) {
+    return { potrero: "5", block: "1" };
+  }
   if (!rawPotrero && Number(properties.fid) === 125) rawPotrero = "Unidad E";
   const potrero = geoJsonFieldAlias(rawPotrero);
   const rawBlock = String(properties.bloque || properties.Bloque || properties.BLOQUE || properties.block || properties.BLOCK || "").trim();
@@ -12108,6 +13118,9 @@ document.addEventListener("click", async (event) => {
   if (action === "choose-weather-station-excel") {
     document.getElementById("weatherStationExcelInput")?.click();
   }
+  if (action === "export-weather-station") {
+    exportWeatherStationWorkbook();
+  }
   if (action === "import-weather-station-excel") {
     await importWeatherStationExcel();
   }
@@ -12190,6 +13203,11 @@ document.addEventListener("click", async (event) => {
     pestMonitoringLoadError = "";
     pestMonitoringRecords = null;
     renderPestMonitoring();
+  }
+  if (action === "retry-fertilizers" || action === "reload-fertilizers") {
+    fertilizerLoadError = "";
+    fertilizerRows = null;
+    renderFertilizers();
   }
   if (action === "clear-pest-filters") {
     const dates = (pestMonitoringRecords || []).map((record) => record.date).filter(Boolean).sort();
@@ -12274,14 +13292,20 @@ document.addEventListener("click", async (event) => {
     renderIrrigation();
   }
   if (action === "toggle-calicatas") {
+    event.preventDefault();
     const key = actionTarget.dataset.key;
     const expanded = !expandedCalicataKeys.has(key);
     if (expanded) expandedCalicataKeys.add(key);
     else expandedCalicataKeys.delete(key);
-    actionTarget.setAttribute("aria-expanded", String(expanded));
-    actionTarget.setAttribute("title", expanded ? "Ocultar calicatas" : "Ver calicatas");
-    actionTarget.textContent = expanded ? "^" : "v";
-    document.querySelectorAll(`[data-calicata-detail="${CSS.escape(key)}"]`).forEach((row) => row.classList.toggle("is-hidden", !expanded));
+    actionTarget.blur?.();
+    views.irrigation?.querySelectorAll(`[data-action="toggle-calicatas"][data-key="${CSS.escape(key)}"]`).forEach((button) => {
+      button.setAttribute("aria-expanded", String(expanded));
+      button.setAttribute("title", expanded ? "Ocultar calicatas" : "Ver calicatas");
+      button.textContent = expanded ? "^" : "v";
+    });
+    views.irrigation?.querySelectorAll(`[data-calicata-detail="${CSS.escape(key)}"]`).forEach((row) => {
+      row.classList.toggle("is-hidden", !expanded);
+    });
   }
   if (action === "focus-calicata") {
     focusIrrigationCalicataById(actionTarget.dataset.calicataId);
@@ -12476,6 +13500,7 @@ if ("serviceWorker" in navigator) {
 }
 
 async function initApp() {
+  enhanceAuthGate();
   passwordRecoverySession = readRecoverySessionFromUrl();
   if (passwordRecoverySession?.access_token) {
     saveSession(null);

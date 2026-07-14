@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v141-bandeja-scroll";
+const CACHE = "canelillo-agrocore-v158-weather-export";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
