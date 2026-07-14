@@ -5340,79 +5340,41 @@ function weatherStationSummary(rows, degreeRows = rows) {
   };
 }
 
-function weatherExportNumber(value, decimals = 2) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return "";
-  return roundWeatherValue(parsed, decimals);
-}
-
 function weatherFrostTotal(row) {
   return Number(row.frost0ToMinus1 || 0) + Number(row.frostMinus1ToMinus2 || 0) + Number(row.frostBelowMinus2 || 0);
 }
 
-function weatherStationExportRows(rows) {
-  let accumulatedRain = 0;
-  return rows.map((row) => {
-    accumulatedRain += Number(row.precipitationTotal || 0);
-    return {
-      Fecha: row.date || "",
-      "Fecha visible": weatherStationDateLabel(row.date, { day: true }),
-      Registros: weatherExportNumber(row.records, 0),
-      "Temp promedio C": weatherExportNumber(row.average, 2),
-      "Temp minima C": weatherExportNumber(row.minimum, 2),
-      "Temp maxima C": weatherExportNumber(row.maximum, 2),
-      "Humedad promedio %": row.humidityAverage === null || row.humidityAverage === undefined ? "" : weatherExportNumber(Number(row.humidityAverage) * 100, 2),
-      "Viento promedio": row.windAverage === null || row.windAverage === undefined ? "" : weatherExportNumber(row.windAverage, 2),
-      "Precipitacion mm": weatherExportNumber(row.precipitationTotal, 2),
-      "Precipitacion acum periodo mm": weatherExportNumber(accumulatedRain, 2),
-      "Grados-dia base 7 C": weatherExportNumber(row.degreeDays, 3),
-      "Helada 0 a -1 h": weatherExportNumber(row.frost0ToMinus1, 2),
-      "Helada -1 a -2 h": weatherExportNumber(row.frostMinus1ToMinus2, 2),
-      "Helada <= -2 h": weatherExportNumber(row.frostBelowMinus2, 2),
-      "Total helada h": weatherExportNumber(weatherFrostTotal(row), 2),
-      "Inicio - termino helada": weatherFrostWindowLabel(row)
-    };
-  });
+function weatherStationFrostExportRows(rows) {
+  const frostRows = rows.filter((row) => Number(row.minimum) <= 0).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!frostRows.length) return [{ Fecha: "Sin heladas registradas en el periodo" }];
+  return frostRows.map((row) => ({
+    Fecha: weatherStationDateLabel(row.date, { day: true }),
+    Minima: `${number(row.minimum, 1)} C`,
+    "Inicio - termino": weatherFrostWindowLabel(row),
+    "0 a -1 C": `${number(row.frost0ToMinus1, 2)} h`,
+    "-1 a -2 C": `${number(row.frostMinus1ToMinus2, 2)} h`,
+    "<= -2 C": `${number(row.frostBelowMinus2, 2)} h`,
+    Total: `${number(weatherFrostTotal(row), 2)} h`
+  }));
 }
 
-function weatherStationSummaryExportRows(rows, summary, degreeSeason) {
-  const rain = weatherRainSummary(rows);
-  const frostRows = rows.filter((row) => Number(row.minimum) <= 0);
-  const rainyRows = rows.filter((row) => Number(row.precipitationTotal || 0) > 0);
-  return [
-    ["Reporte", "Heladas y lluvias"],
-    ["Periodo", weatherStationPeriodLabel()],
-    ["Ano filtro", weatherStationYear],
-    ["Mes filtro", weatherStationMonth === "Todos" ? "Todo el ano" : weatherStationDateLabel(`${weatherStationYear}-${weatherStationMonth}-01`)],
-    ["Temporada grados-dia", degreeSeason.label],
-    ["Generado", new Date().toLocaleString("es-CL")],
-    [],
-    ["Resumen general", "Valor", "Unidad"],
-    ["Registros", weatherExportNumber(summary.records, 0), "lecturas"],
-    ["Cobertura", weatherExportNumber(summary.completeness, 1), "%"],
-    ["Temperatura minima", summary.hasRows ? weatherExportNumber(summary.minimum, 2) : "", "C"],
-    ["Fecha minima", summary.minimumDate ? weatherStationDateLabel(summary.minimumDate, { day: true }) : "", ""],
-    ["Temperatura maxima", summary.hasRows ? weatherExportNumber(summary.maximum, 2) : "", "C"],
-    ["Fecha maxima", summary.maximumDate ? weatherStationDateLabel(summary.maximumDate, { day: true }) : "", ""],
-    ["Humedad promedio", summary.hasHumidity ? weatherExportNumber(summary.humidityAverage * 100, 2) : "", "%"],
-    ["Viento promedio", summary.hasWind ? weatherExportNumber(summary.windAverage, 2) : "", ""],
-    ["Grados-dia base 7", weatherExportNumber(summary.degreeDays, 3), "C-dia"],
-    [],
-    ["Heladas", "Valor", "Unidad"],
-    ["Dias con helada", frostRows.length, "dias"],
-    ["Horas 0 a -1", weatherExportNumber(summary.frost0ToMinus1, 2), "h"],
-    ["Horas -1 a -2", weatherExportNumber(summary.frostMinus1ToMinus2, 2), "h"],
-    ["Horas <= -2", weatherExportNumber(summary.frostBelowMinus2, 2), "h"],
-    ["Horas totales bajo 0", weatherExportNumber(summary.totalFrostHours, 2), "h"],
-    [],
-    ["Lluvias", "Valor", "Unidad"],
-    ["Dias con lluvia", rain.rainDays, "dias"],
-    ["Precipitacion acumulada", weatherExportNumber(summary.precipitationTotal, 2), "mm"],
-    ["Mayor lluvia diaria", weatherExportNumber(rain.maxDaily, 2), "mm"],
-    ["Fecha mayor lluvia", rain.maxDate ? weatherStationDateLabel(rain.maxDate, { day: true }) : "", ""],
-    ["Promedio dia con lluvia", weatherExportNumber(rain.averageRainDay, 2), "mm"],
-    ["Dias incluidos con lluvia", rainyRows.length, "dias"]
-  ];
+function weatherStationRainExportRows(rows) {
+  let accumulated = 0;
+  const chronologicalAccum = new Map([...rows]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((row) => {
+      accumulated += Number(row.precipitationTotal || 0);
+      return [row.date, accumulated];
+    }));
+  const rainRows = rows
+    .filter((row) => Number(row.precipitationTotal || 0) > 0)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!rainRows.length) return [{ Fecha: "Sin lluvia registrada en el periodo" }];
+  return rainRows.map((row) => ({
+    Fecha: weatherStationDateLabel(row.date, { day: true }),
+    Lluvia: `${number(row.precipitationTotal, 1)} mm`,
+    "Acum periodo": `${number(chronologicalAccum.get(row.date) || 0, 1)} mm`
+  }));
 }
 
 function exportWeatherStationWorkbook() {
@@ -5425,21 +5387,13 @@ function exportWeatherStationWorkbook() {
     showToast("No hay datos climaticos para exportar en este periodo");
     return;
   }
-  const allRows = weatherStationSortedRows();
-  const degreeSeasonRows = weatherStationDegreeSeasonRows(allRows, weatherStationYear);
-  const degreeSeason = weatherStationDegreeSeason(weatherStationYear);
-  const summary = weatherStationSummary(rows, degreeSeasonRows);
   const workbook = window.XLSX.utils.book_new();
-  const dataSheet = window.XLSX.utils.json_to_sheet(weatherStationExportRows(rows));
-  dataSheet["!cols"] = [
-    { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 15 }, { wch: 14 }, { wch: 14 },
-    { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 25 }, { wch: 18 }, { wch: 16 },
-    { wch: 16 }, { wch: 16 }, { wch: 15 }, { wch: 24 }
-  ];
-  const summarySheet = window.XLSX.utils.aoa_to_sheet(weatherStationSummaryExportRows(rows, summary, degreeSeason));
-  summarySheet["!cols"] = [{ wch: 28 }, { wch: 22 }, { wch: 14 }];
-  window.XLSX.utils.book_append_sheet(workbook, dataSheet, "Datos diarios");
-  window.XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen");
+  const frostSheet = window.XLSX.utils.json_to_sheet(weatherStationFrostExportRows(rows));
+  frostSheet["!cols"] = [{ wch: 18 }, { wch: 12 }, { wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+  const rainSheet = window.XLSX.utils.json_to_sheet(weatherStationRainExportRows(rows));
+  rainSheet["!cols"] = [{ wch: 18 }, { wch: 12 }, { wch: 14 }];
+  window.XLSX.utils.book_append_sheet(workbook, frostSheet, "Heladas");
+  window.XLSX.utils.book_append_sheet(workbook, rainSheet, "Lluvia");
   const period = weatherStationMonth === "Todos" ? "anio" : weatherStationMonth;
   window.XLSX.writeFile(workbook, `heladas_lluvias_${weatherStationYear}_${period}.xlsx`);
   showToast("Excel de heladas y lluvias exportado");
