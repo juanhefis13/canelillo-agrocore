@@ -302,6 +302,7 @@ let irrigationEvaporationLoadingMonths = new Set();
 let supabaseSession = loadSession();
 let passwordRecoverySession = null;
 let currentProfile = null;
+let cloudInitialLoadInProgress = false;
 const CHILE_HOLIDAYS_2026 = new Set([
   "2026-01-01",
   "2026-04-03",
@@ -450,6 +451,70 @@ function setAuthGate(visible) {
     appShell.setAttribute("aria-hidden", String(Boolean(visible)));
   }
   document.body.classList.toggle("auth-locked", Boolean(visible));
+}
+
+async function loadCloudProfile() {
+  if (!supabaseSession?.user?.id) throw new Error("No hay sesion activa de Supabase.");
+  const userId = supabaseSession.user.id;
+  const profiles = await sbSelect("usuarios", `select=*&id=eq.${userId}`);
+  const profile = profiles[0] || null;
+
+  if (!profile) {
+    currentProfile = null;
+    throw new Error("Tu usuario no existe en public.usuarios. Revisa que el ID sea igual al usuario de Authentication y que tenga rol admin/supervisor/bodeguero.");
+  }
+  if (profile.activo === false) {
+    currentProfile = null;
+    throw new Error("Tu usuario esta desactivado. Solicita activacion a un administrador.");
+  }
+
+  const normalizedProfileRole = normalizeRole(profile.rol || profile.role);
+  currentProfile = {
+    ...profile,
+    full_name: profile.nombre_completo,
+    area: normalizeRegistrationArea(profile.area),
+    role: normalizedProfileRole,
+    rol: normalizedProfileRole
+  };
+
+  if (profile.rol && normalizedProfileRole !== String(profile.rol).trim().toLowerCase()) {
+    try {
+      await sbFetch(`/rest/v1/usuarios?id=eq.${userId}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ rol: normalizedProfileRole })
+      });
+    } catch (error) {
+      console.warn("No se pudo normalizar el rol del usuario en Supabase", error);
+    }
+  }
+
+  applyRoleNavigation();
+  const authButton = document.getElementById("authButton");
+  if (authButton) authButton.textContent = `${roleLabel(currentProfile?.role) || "Supabase"}: ${currentProfile?.full_name || supabaseSession.user?.email || ""}`;
+  return currentProfile;
+}
+
+function showAuthenticatedShell(status = "Cargando datos desde Supabase...") {
+  cloudInitialLoadInProgress = true;
+  setAuthGate(false);
+  if (status) document.getElementById("storageStatus").textContent = status;
+  render();
+}
+
+async function loadCloudDataInBackground({ toastOnSuccess = false } = {}) {
+  try {
+    await loadCloudData();
+    startCloudSync();
+    if (toastOnSuccess) showToast("Datos cargados desde Supabase");
+  } catch (error) {
+    console.error("Supabase no cargo", error);
+    document.getElementById("storageStatus").textContent = `Supabase no cargo: ${error.message}`;
+    showToast(`Supabase no cargo: ${error.message}`);
+  } finally {
+    cloudInitialLoadInProgress = false;
+    render();
+  }
 }
 
 function normalizeState(rawState) {
@@ -4356,11 +4421,12 @@ async function loginSupabase() {
     setGateStatus("Verificando credenciales...", "info");
     const session = await sbAuthPassword(email, password);
     saveSession(session);
-    await loadCloudData();
-    startCloudSync();
+    setGateStatus("Entrando a AgroCore...", "info");
+    await loadCloudProfile();
     document.getElementById("authDialog")?.close();
-    setAuthGate(false);
     setGateStatus("", "info");
+    showAuthenticatedShell("Cargando datos desde Supabase...");
+    loadCloudDataInBackground();
     showToast("Sesion Supabase iniciada");
   } catch (error) {
     setGateStatus(`No se pudo ingresar: ${error.message}`, "error");
@@ -4728,6 +4794,13 @@ function renderDashboard() {
   const rows = currentWeatherStationRows();
 
   if (!dailyRows.length) {
+    const loadingContent = `
+      <div class="weather-import-loading" role="status" aria-live="polite">
+        <span class="weather-import-spinner" aria-hidden="true"></span>
+        <strong>Cargando estacion climatica</strong>
+        <small>Sincronizando mediciones desde Supabase...</small>
+      </div>
+    `;
     views.dashboard.innerHTML = `
       <section class="panel weather-station-empty">
         <div class="panel-header">
@@ -4737,10 +4810,10 @@ function renderDashboard() {
           </div>
           ${weatherStationImportButton()}
         </div>
-        <div class="empty-state">
+        ${cloudInitialLoadInProgress ? loadingContent : `<div class="empty-state">
           <strong>${weatherStationCloudAvailable ? "Sin mediciones disponibles" : "Estacion pendiente de configurar"}</strong>
           <p>Ejecuta <code>supabase_estacion_climatica.sql</code> y luego <code>supabase_estacion_climatica_import.sql</code> en Supabase.</p>
-        </div>
+        </div>`}
       </section>
     `;
     return;
@@ -8422,45 +8495,7 @@ async function refreshVehicleCodeSelect(select, selected = "") {
 
 async function loadCloudData(options = {}) {
   if (!supabaseSession) return;
-  const userId = supabaseSession.user?.id;
-
-  // Primero se carga SOLO el perfil. Si mezclamos perfil + tablas en Promise.all,
-  // Supabase puede bloquear las tablas por RLS antes de que el rol quede normalizado.
-  const profiles = await sbSelect("usuarios", `select=*&id=eq.${userId}`);
-  const profile = profiles[0] || null;
-
-  if (!profile) {
-    currentProfile = null;
-    throw new Error("Tu usuario no existe en public.usuarios. Revisa que el ID sea igual al usuario de Authentication y que tenga rol admin/supervisor/bodeguero.");
-  }
-  if (profile.activo === false) {
-    currentProfile = null;
-    throw new Error("Tu usuario esta desactivado. Solicita activacion a un administrador.");
-  }
-
-  const normalizedProfileRole = normalizeRole(profile.rol || profile.role);
-  currentProfile = {
-    ...profile,
-    full_name: profile.nombre_completo,
-    area: normalizeRegistrationArea(profile.area),
-    role: normalizedProfileRole,
-    rol: normalizedProfileRole
-  };
-
-  // Si quedó un rol antiguo como jefe/encargado, intentamos guardarlo como supervisor.
-  // Aunque falle por permisos, el frontend seguirá usando el rol normalizado.
-  if (profile.rol && normalizedProfileRole !== String(profile.rol).trim().toLowerCase()) {
-    try {
-      await sbFetch(`/rest/v1/usuarios?id=eq.${userId}`, {
-        method: "PATCH",
-        prefer: "return=minimal",
-        body: JSON.stringify({ rol: normalizedProfileRole })
-      });
-    } catch (error) {
-      console.warn("No se pudo normalizar el rol del usuario en Supabase", error);
-    }
-  }
-
+  await loadCloudProfile();
   const role = currentUserRole();
   const canSeePlanning = ["admin", "supervisor"].includes(role);
 
@@ -13466,9 +13501,10 @@ async function initApp() {
   if (supabaseSession) {
     try {
       setAuthGate(true);
-      await loadCloudData();
-      startCloudSync();
-      showToast("Datos cargados desde Supabase");
+      await ensureSupabaseSession(false);
+      await loadCloudProfile();
+      showAuthenticatedShell("Cargando datos desde Supabase...");
+      loadCloudDataInBackground({ toastOnSuccess: true });
       return;
     } catch (error) {
       showToast(`Supabase no cargo: ${error.message}`);
