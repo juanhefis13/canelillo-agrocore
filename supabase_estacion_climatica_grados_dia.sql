@@ -1,5 +1,10 @@
 begin;
 
+alter table public.estacion_climatica
+  add column if not exists humedad numeric(6, 4),
+  add column if not exists velocidad_viento numeric(8, 2),
+  add column if not exists precipitacion numeric(8, 2) default 0;
+
 create or replace view public.v_estacion_climatica_diaria
 with (security_invoker = true)
 as
@@ -27,7 +32,10 @@ select
         end
       ) + interval '15 minutes'
     )::time
-  end as helada_termino
+  end as helada_termino,
+  round(avg(humedad), 4) as humedad_promedio,
+  round(avg(velocidad_viento), 2) as velocidad_viento_promedio,
+  round(sum(coalesce(precipitacion, 0)), 2) as precipitacion_acumulada
 from public.estacion_climatica
 group by fecha;
 

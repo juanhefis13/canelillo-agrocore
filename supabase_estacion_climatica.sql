@@ -7,6 +7,9 @@ create table if not exists public.estacion_climatica (
   temp_out numeric(5, 2) not null,
   hi_temp numeric(5, 2) not null,
   low_temp numeric(5, 2) not null,
+  humedad numeric(6, 4) null,
+  velocidad_viento numeric(8, 2) null,
+  precipitacion numeric(8, 2) null default 0,
   fuente text not null default 'estacion_canelillo',
   creado_en timestamptz not null default now(),
   constraint estacion_climatica_fecha_hora_key unique (fecha, hora)
@@ -23,6 +26,9 @@ comment on table public.estacion_climatica is
 comment on column public.estacion_climatica.temp_out is 'Temperatura exterior medida en grados Celsius.';
 comment on column public.estacion_climatica.hi_temp is 'Temperatura maxima registrada en el intervalo.';
 comment on column public.estacion_climatica.low_temp is 'Temperatura minima registrada en el intervalo.';
+comment on column public.estacion_climatica.humedad is 'Humedad relativa guardada como decimal. Ejemplo: 67% = 0.67.';
+comment on column public.estacion_climatica.velocidad_viento is 'Velocidad del viento segun unidad de origen de la estacion.';
+comment on column public.estacion_climatica.precipitacion is 'Precipitacion o lluvia del intervalo. Se acumula por dia.';
 
 create or replace view public.v_estacion_climatica_diaria
 with (security_invoker = true)
@@ -51,7 +57,10 @@ select
         end
       ) + interval '15 minutes'
     )::time
-  end as helada_termino
+  end as helada_termino,
+  round(avg(humedad), 4) as humedad_promedio,
+  round(avg(velocidad_viento), 2) as velocidad_viento_promedio,
+  round(sum(coalesce(precipitacion, 0)), 2) as precipitacion_acumulada
 from public.estacion_climatica
 group by fecha;
 

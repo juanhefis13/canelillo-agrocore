@@ -249,6 +249,7 @@ let harvestMapIdleListener = null;
 let harvestMapMarkerRenderFrame = 0;
 let harvestInfoWindow = null;
 let irrigationCalicataBlockFilter = "Todos";
+let irrigationCalicataShowPotreroLabels = true;
 let irrigationCalicataMap = null;
 let irrigationCalicataMapElement = null;
 let irrigationCalicataOverlays = [];
@@ -285,6 +286,7 @@ let pestMonitoringMapRenderVersion = 0;
 let pestMonitoringCurrentSummaries = new Map();
 let weatherStationYear = String(new Date().getFullYear());
 let weatherStationMonth = "Todos";
+let weatherStationView = "heladas";
 let weatherStationCloudAvailable = true;
 let weatherStationImportPreview = null;
 let irrigationEvaporationLoadedMonths = new Set();
@@ -2697,9 +2699,14 @@ function focusIrrigationCellFromKeyboard(input, key) {
   return true;
 }
 
+function irrigationBandejaYear(value) {
+  const year = Number(String(value || "").slice(0, 4));
+  return Number.isInteger(year) ? year : null;
+}
+
 function irrigationBandejaDataYears() {
   return [...new Set((state.irrigationEvaporation || [])
-    .map((item) => Number(String(item.date || "").slice(0, 4)))
+    .map((item) => irrigationBandejaYear(item.date))
     .filter((year) => Number.isInteger(year) && year >= 1900 && year <= 2100))]
     .sort((a, b) => a - b);
 }
@@ -2707,18 +2714,9 @@ function irrigationBandejaDataYears() {
 function irrigationBandejaVisibleYears(focusYear) {
   const dataYears = irrigationBandejaDataYears();
   const focus = Math.min(2100, Math.max(1900, Number(focusYear) || new Date().getFullYear()));
-  if (!dataYears.length) return [focus - 1, focus, focus + 1];
+  if (!dataYears.length) return [focus - 1, focus, focus + 1].filter((year) => year >= 1900 && year <= 2100);
   let first = Math.min(dataYears[0], focus - 1);
   let last = Math.max(dataYears.at(-1), focus + 1);
-  const maxVisibleYears = 25;
-  if (last - first + 1 > maxVisibleYears) {
-    last = Math.min(Math.max(dataYears.at(-1), focus + 1), focus + 2);
-    first = last - maxVisibleYears + 1;
-    if (first > focus - 1) {
-      first = focus - 1;
-      last = first + maxVisibleYears - 1;
-    }
-  }
   first = Math.max(1900, first);
   last = Math.min(2100, last);
   return Array.from({ length: last - first + 1 }, (_, index) => first + index);
@@ -2876,8 +2874,9 @@ function focusIrrigationBandejaMatrix(year = irrigationYear, month = irrigationM
   if (!scroller) return;
   const yearHeader = scroller.querySelector(`[data-bandeja-year="${CSS.escape(String(year))}"]`);
   const monthSection = scroller.querySelector(`[data-bandeja-month="${CSS.escape(String(month))}"]`);
-  if (yearHeader) scroller.scrollTo({ left: Math.max(0, yearHeader.offsetLeft - 64), top: scroller.scrollTop, behavior });
-  if (monthSection) scroller.scrollTo({ left: scroller.scrollLeft, top: Math.max(0, monthSection.offsetTop - 4), behavior });
+  const left = yearHeader ? Math.max(0, yearHeader.offsetLeft - 64) : scroller.scrollLeft;
+  const top = monthSection ? Math.max(0, monthSection.offsetTop - 4) : scroller.scrollTop;
+  scroller.scrollTo({ left, top, behavior });
 }
 
 function wireIrrigationBandejaMatrix() {
@@ -3149,11 +3148,17 @@ function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = 
           <strong>Calicatas</strong>
           <span>${monthLabel} ${year} · ${records.length} registro${records.length === 1 ? "" : "s"} · ${mappedRecords.length} con ubicacion</span>
         </div>
-        <label>Bloque
-          <select id="irrigationCalicataBlockFilter">
-            ${options.map((item) => `<option value="${htmlAttr(item.key)}" ${item.key === irrigationCalicataBlockFilter ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
-          </select>
-        </label>
+        <div class="irrigation-calicata-map-controls">
+          <label>Bloque
+            <select id="irrigationCalicataBlockFilter">
+              ${options.map((item) => `<option value="${htmlAttr(item.key)}" ${item.key === irrigationCalicataBlockFilter ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="irrigation-map-toggle">
+            <input id="irrigationCalicataPotreroLabels" type="checkbox" ${irrigationCalicataShowPotreroLabels ? "checked" : ""}>
+            <span>Nombres potreros</span>
+          </label>
+        </div>
       </div>
       <div class="irrigation-calicatas-layout">
         <div id="irrigationCalicataMap" class="geo-map irrigation-calicata-map">
@@ -3238,6 +3243,43 @@ function harvestBinKey(record) {
   return String(record.numBin || record.localCode || record.id || "").trim();
 }
 
+function normalizeHarvestBinIdentifier(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[._-]/g, "");
+}
+
+function harvestBinIdentifierKeys(record) {
+  const keys = new Set();
+  [record.localCode, record.numBin].forEach((value) => {
+    const normalized = normalizeHarvestBinIdentifier(value);
+    if (!normalized) return;
+    keys.add(`bin:${normalized}`);
+    const digits = normalized.replace(/\D/g, "");
+    if (digits.length >= 3) keys.add(`bin:${digits}`);
+  });
+  if (!keys.size && record.id) keys.add(`row:${record.id}`);
+  return [...keys];
+}
+
+function harvestRecordSortValue(record) {
+  const date = String(record.scanDate || record.createdAt || record.harvestDate || "");
+  const timestamp = Date.parse(date);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function preferredHarvestRecord(records) {
+  return [...records].sort((a, b) => {
+    const coordA = Number.isFinite(a.latitude) && Number.isFinite(a.longitude) ? 1 : 0;
+    const coordB = Number.isFinite(b.latitude) && Number.isFinite(b.longitude) ? 1 : 0;
+    return harvestRecordSortValue(b) - harvestRecordSortValue(a)
+      || coordB - coordA
+      || String(b.id || "").localeCompare(String(a.id || ""), "es", { numeric: true });
+  })[0];
+}
+
 function firstHarvestDateValue(item, keys) {
   for (const key of keys) {
     const value = item?.[key];
@@ -3278,14 +3320,27 @@ function harvestRecordStatus(record) {
 function uniqueHarvestRecords(records = state.harvestRecords || []) {
   const cacheable = records === state.harvestRecords;
   if (cacheable && harvestUniqueCacheSource === records) return harvestUniqueCache;
-  const byBin = new Map();
+  const groups = new Map();
+  const keyToGroup = new Map();
+  let fallbackIndex = 0;
   records.forEach((record) => {
-    const key = harvestBinKey(record);
-    if (!key) return;
-    const prev = byBin.get(key);
-    if (!prev || String(record.scanDate || record.createdAt || "") > String(prev.scanDate || prev.createdAt || "")) byBin.set(key, record);
+    const keys = harvestBinIdentifierKeys(record);
+    if (!keys.length) keys.push(`fallback:${fallbackIndex++}`);
+    const matchedGroups = [...new Set(keys.map((key) => keyToGroup.get(key)).filter(Boolean))];
+    const groupKey = matchedGroups[0] || keys[0];
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    matchedGroups.slice(1).forEach((matchedKey) => {
+      const merged = groups.get(matchedKey) || [];
+      groups.get(groupKey).push(...merged);
+      groups.delete(matchedKey);
+      keyToGroup.forEach((value, key) => {
+        if (value === matchedKey) keyToGroup.set(key, groupKey);
+      });
+    });
+    groups.get(groupKey).push(record);
+    keys.forEach((key) => keyToGroup.set(key, groupKey));
   });
-  const unique = [...byBin.values()];
+  const unique = [...groups.values()].map(preferredHarvestRecord).filter(Boolean);
   if (cacheable) {
     harvestUniqueCacheSource = records;
     harvestUniqueCache = unique;
@@ -4182,7 +4237,9 @@ function renderDashboard() {
     return;
   }
 
-  const summary = weatherStationSummary(rows);
+  const degreeSeasonRows = weatherStationDegreeSeasonRows(dailyRows, weatherStationYear);
+  const degreeSeason = weatherStationDegreeSeason(weatherStationYear);
+  const summary = weatherStationSummary(rows, degreeSeasonRows);
   const latest = state.weatherStationLatest;
   const monthOptions = [
     ["Todos", "Todo el ano"], ["01", "Enero"], ["02", "Febrero"], ["03", "Marzo"],
@@ -4197,10 +4254,11 @@ function renderDashboard() {
       <div class="weather-station-header">
         <div>
           <span class="weather-eyebrow">Estacion climatica Canelillo</span>
-          <h2>Condiciones termicas</h2>
+          <h2>Condiciones climaticas</h2>
           <p>${number(summary.records, 0)} registros · cobertura ${number(summary.completeness, 1)}%</p>
         </div>
         <div class="weather-station-header-actions">
+          ${weatherStationViewSwitch()}
           ${weatherStationImportButton()}
           <div class="weather-station-filters" aria-label="Filtros de estacion climatica">
             <label>Ano
@@ -4221,38 +4279,23 @@ function renderDashboard() {
         ${weatherStationKpi("Temperatura actual", latest ? `${number(latest.tempOut, 1)} °C` : "-", `${latestDate}${latestTime ? ` · ${latestTime}` : ""}`, "current")}
         ${weatherStationKpi("Minima del periodo", summary.hasRows ? `${number(summary.minimum, 1)} °C` : "-", summary.minimumDate ? weatherStationDateLabel(summary.minimumDate, { day: true }) : "", "minimum")}
         ${weatherStationKpi("Maxima del periodo", summary.hasRows ? `${number(summary.maximum, 1)} °C` : "-", summary.maximumDate ? weatherStationDateLabel(summary.maximumDate, { day: true }) : "", "maximum")}
-        ${weatherStationKpi("Horas sobre 7 °C", summary.hasRows ? `${number(summary.hoursAbove7, 1)} h` : "-", "Suma de intervalos medidos", "thermal")}
-        ${weatherStationKpi("Grados-dia base 7 °C", summary.hasRows ? `${number(summary.degreeDays, 1)} °C-dia` : "-", "Metodo Tmax/Tmin diario", "degree")}
+        ${weatherStationKpi("Precipitacion acumulada", summary.hasRows ? `${number(summary.precipitationTotal, 1)} mm` : "-", "Lluvia acumulada del periodo", "rain")}
+        ${weatherStationKpi("Humedad promedio", summary.hasHumidity ? `${number(summary.humidityAverage * 100, 1)}%` : "-", "Promedio del periodo", "humidity")}
+        ${weatherStationKpi("Viento promedio", summary.hasWind ? `${number(summary.windAverage, 1)}` : "-", "Velocidad media del periodo", "wind")}
+        ${weatherStationKpi("Grados-dia base 7 °C", degreeSeasonRows.length ? `${number(summary.degreeDays, 1)} °C-dia` : "-", degreeSeason.label, "degree")}
         ${weatherStationKpi("Dias con helada", summary.hasRows ? number(summary.frostDays, 0) : "-", summary.hasRows ? `${number(summary.totalFrostHours, 1)} h bajo 0 °C` : "", "frost")}
       </div>
 
-      <div class="weather-dashboard-grid">
-        <section class="panel weather-temperature-panel">
-          <div class="weather-panel-title">
-            <div><h3>Rango de temperatura</h3><p>Minima, promedio y maxima</p></div>
-            <span>${weatherStationPeriodLabel()}</span>
-          </div>
-          ${weatherTemperatureChart(rows)}
-        </section>
-
-        <section class="panel weather-frost-panel">
-          <div class="weather-panel-title">
-            <div><h3>Duracion de heladas</h3><p>Horas acumuladas por intensidad</p></div>
-          </div>
-          ${weatherFrostWindow(rows)}
-          ${weatherFrostBands(summary)}
-        </section>
-      </div>
-
-      <section class="panel weather-frost-history">
-        <div class="weather-panel-title">
-          <div><h3>Resumen diario de heladas</h3><p>Temperatura minima, horario corregido y duracion por rango</p></div>
-        </div>
-        ${weatherFrostTable(rows)}
-      </section>
+      ${weatherStationView === "lluvia" ? renderWeatherRainDashboard(rows, summary) : renderWeatherFrostDashboard(rows, summary)}
     </section>
   `;
 
+  document.querySelectorAll("[data-weather-station-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      weatherStationView = button.dataset.weatherStationView || "heladas";
+      renderDashboard();
+    });
+  });
   document.getElementById("weatherStationYearFilter")?.addEventListener("change", (event) => {
     weatherStationYear = event.target.value;
     renderDashboard();
@@ -4261,6 +4304,78 @@ function renderDashboard() {
     weatherStationMonth = event.target.value;
     renderDashboard();
   });
+}
+
+function weatherStationViewSwitch() {
+  const options = [
+    ["heladas", "Heladas"],
+    ["lluvia", "Lluvia"]
+  ];
+  return `
+    <div class="weather-view-switch" aria-label="Vista de estacion climatica">
+      ${options.map(([value, label]) => `
+        <button type="button" data-weather-station-view="${value}" class="${weatherStationView === value ? "active" : ""}">${label}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderWeatherFrostDashboard(rows, summary) {
+  return `
+    <div class="weather-dashboard-grid">
+      <section class="panel weather-temperature-panel">
+        <div class="weather-panel-title">
+          <div><h3>Rango de temperatura</h3><p>Minima, promedio y maxima</p></div>
+          <span>${weatherStationPeriodLabel()}</span>
+        </div>
+        ${weatherTemperatureChart(rows)}
+      </section>
+
+      <section class="panel weather-frost-panel">
+        <div class="weather-panel-title">
+          <div><h3>Duracion de heladas</h3><p>Horas acumuladas por intensidad</p></div>
+        </div>
+        ${weatherFrostWindow(rows)}
+        ${weatherFrostBands(summary)}
+      </section>
+    </div>
+
+    <section class="panel weather-frost-history">
+      <div class="weather-panel-title">
+        <div><h3>Resumen diario de heladas</h3><p>Temperatura minima, horario corregido y duracion por rango</p></div>
+      </div>
+      ${weatherFrostTable(rows)}
+    </section>
+  `;
+}
+
+function renderWeatherRainDashboard(rows, summary) {
+  return `
+    <div class="weather-dashboard-grid">
+      <section class="panel weather-rain-panel">
+        <div class="weather-panel-title">
+          <div><h3>Lluvia del periodo</h3><p>Precipitacion diaria y acumulada</p></div>
+          <span>${weatherStationPeriodLabel()}</span>
+        </div>
+        ${weatherRainChart(rows)}
+      </section>
+
+      <section class="panel weather-rain-panel">
+        <div class="weather-panel-title">
+          <div><h3>Resumen de lluvia</h3><p>Dias con lluvia por intensidad</p></div>
+        </div>
+        ${weatherRainSummaryCard(rows, summary)}
+        ${weatherRainBands(rows)}
+      </section>
+    </div>
+
+    <section class="panel weather-frost-history weather-rain-history">
+      <div class="weather-panel-title">
+        <div><h3>Dias con lluvia</h3><p>Solo fechas con precipitacion registrada</p></div>
+      </div>
+      ${weatherRainTable(rows)}
+    </section>
+  `;
 }
 
 function weatherStationImportFileInput() {
@@ -4286,7 +4401,7 @@ function openWeatherStationImportDialog() {
       </div>
       <div class="weather-import-intro">
         <strong>Selecciona el Excel de la estacion</strong>
-        <span>Columnas requeridas: FECHA, HORA, TEMP OUT, HI TEMP y LOW TEMP.</span>
+        <span>Columnas requeridas: FECHA, HORA, TEMP OUT, HI TEMP y LOW TEMP. Opcionales: HUMEDAD %, Velocidad del viento y Precipitacion.</span>
       </div>
       <button class="weather-file-picker" type="button" data-action="choose-weather-station-excel">
         <strong>Seleccionar archivo Excel</strong>
@@ -4386,6 +4501,25 @@ function stationExcelTemperature(value) {
   return Number.isFinite(parsed) && parsed >= -60 && parsed <= 70 ? parsed : null;
 }
 
+function stationExcelNumber(value, options = {}) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).trim().replace("%", "").replace(/\s+/g, "").replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  const minimum = options.minimum ?? -Infinity;
+  const maximum = options.maximum ?? Infinity;
+  return parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function stationExcelHumidity(value) {
+  const parsed = stationExcelNumber(value, { minimum: 0, maximum: 100 });
+  if (parsed === null) return null;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+function stationExcelHeaderIndex(headers, aliases) {
+  return aliases.map((alias) => headers.indexOf(alias)).find((index) => index >= 0) ?? -1;
+}
+
 function parseWeatherStationExcelRows(matrix) {
   if (!Array.isArray(matrix) || !matrix.length) throw new Error("El Excel no contiene filas");
   const headers = matrix[0].map(stationExcelHeader);
@@ -4394,7 +4528,10 @@ function parseWeatherStationExcelRows(matrix) {
     hora: headers.indexOf("hora"),
     tempOut: headers.indexOf("tempout"),
     hiTemp: headers.indexOf("hitemp"),
-    lowTemp: headers.indexOf("lowtemp")
+    lowTemp: headers.indexOf("lowtemp"),
+    humidity: stationExcelHeaderIndex(headers, ["humedad", "humedadporcentaje", "humedadpct", "humidity", "humiditypct", "humiditypercent"]),
+    windSpeed: stationExcelHeaderIndex(headers, ["velocidaddelviento", "viento", "windspeed", "wind"]),
+    precipitation: stationExcelHeaderIndex(headers, ["precipitacion", "precipitacionmm", "lluvia", "rain", "rainfall"])
   };
   const missing = Object.entries(expected).filter(([, index]) => index < 0).map(([key]) => ({
     fecha: "FECHA", hora: "HORA", tempOut: "TEMP OUT", hiTemp: "HI TEMP", lowTemp: "LOW TEMP"
@@ -4414,12 +4551,18 @@ function parseWeatherStationExcelRows(matrix) {
     const tempOut = stationExcelTemperature(row[expected.tempOut]);
     const hiTemp = stationExcelTemperature(row[expected.hiTemp]);
     const lowTemp = stationExcelTemperature(row[expected.lowTemp]);
+    const humidity = expected.humidity >= 0 ? stationExcelHumidity(row[expected.humidity]) : null;
+    const windSpeed = expected.windSpeed >= 0 ? stationExcelNumber(row[expected.windSpeed], { minimum: 0, maximum: 300 }) : null;
+    const precipitation = expected.precipitation >= 0 ? stationExcelNumber(row[expected.precipitation], { minimum: 0, maximum: 1000 }) : null;
     const errors = [];
     if (!date) errors.push("fecha");
     if (!time) errors.push("hora");
     if (tempOut === null) errors.push("temp out");
     if (hiTemp === null) errors.push("hi temp");
     if (lowTemp === null) errors.push("low temp");
+    if (expected.humidity >= 0 && humidity === null) errors.push("humedad");
+    if (expected.windSpeed >= 0 && windSpeed === null) errors.push("velocidad viento");
+    if (expected.precipitation >= 0 && precipitation === null) errors.push("precipitacion");
     if (hiTemp !== null && lowTemp !== null && hiTemp < lowTemp) errors.push("maxima menor que minima");
     if (errors.length) {
       if (invalidSamples.length < 5) invalidSamples.push({ row: index + 2, reason: errors.join(", ") });
@@ -4428,14 +4571,18 @@ function parseWeatherStationExcelRows(matrix) {
     validRows += 1;
     const key = `${date}|${time}`;
     if (unique.has(key)) duplicateRows += 1;
-    unique.set(key, {
+    const reading = {
       fecha: date,
       hora: time,
       temp_out: tempOut,
       hi_temp: hiTemp,
       low_temp: lowTemp,
       fuente: "excel_estacion"
-    });
+    };
+    if (expected.humidity >= 0) reading.humedad = humidity;
+    if (expected.windSpeed >= 0) reading.velocidad_viento = windSpeed;
+    if (expected.precipitation >= 0) reading.precipitacion = precipitation;
+    unique.set(key, reading);
   });
   return {
     spreadsheetRows,
@@ -4443,6 +4590,7 @@ function parseWeatherStationExcelRows(matrix) {
     duplicateRows,
     invalidRows: spreadsheetRows - validRows,
     invalidSamples,
+    hasMeteoColumns: expected.humidity >= 0 || expected.windSpeed >= 0 || expected.precipitation >= 0,
     uniqueRows: [...unique.values()].sort((a, b) => `${a.fecha} ${a.hora}`.localeCompare(`${b.fecha} ${b.hora}`))
   };
 }
@@ -4474,6 +4622,7 @@ async function analyzeWeatherStationExcel(event) {
     const existingRows = await sbSelectAll("estacion_climatica", `select=fecha,hora&fecha=gte.${firstDate}&fecha=lte.${lastDate}&order=fecha.asc,hora.asc`);
     const existingKeys = new Set(existingRows.map((row) => `${stationExcelDate(row.fecha)}|${stationExcelTime(row.hora)}`));
     const newRows = parsed.uniqueRows.filter((row) => !existingKeys.has(`${row.fecha}|${row.hora}`));
+    const importRows = parsed.hasMeteoColumns ? parsed.uniqueRows : newRows;
     weatherStationImportPreview = {
       ...parsed,
       fileName: file.name,
@@ -4481,7 +4630,9 @@ async function analyzeWeatherStationExcel(event) {
       firstDate,
       lastDate,
       existingRows: parsed.uniqueRows.length - newRows.length,
-      newRows
+      newRows,
+      importRows,
+      importMode: parsed.hasMeteoColumns ? "upsert-meteo" : "insert-new"
     };
     renderWeatherStationImportPreview();
   } catch (error) {
@@ -4494,6 +4645,11 @@ function renderWeatherStationImportPreview() {
   const preview = weatherStationImportPreview;
   if (!preview) return;
   const dialog = document.getElementById("weatherStationImportDialog");
+  const updateExistingRows = Math.max(0, preview.importRows.length - preview.newRows.length);
+  const canImport = preview.importRows.length > 0;
+  const actionLabel = preview.importMode === "upsert-meteo"
+    ? `Actualizar ${number(preview.importRows.length, 0)} lecturas`
+    : `Insertar ${number(preview.newRows.length, 0)} nuevas`;
   const invalidDetail = preview.invalidSamples.length
     ? `<div class="weather-import-errors"><strong>Filas omitidas</strong>${preview.invalidSamples.map((item) => `<span>Fila ${item.row}: ${escapeHtml(item.reason)}</span>`).join("")}</div>`
     : "";
@@ -4508,17 +4664,17 @@ function renderWeatherStationImportPreview() {
         <article><span>Filas del Excel</span><strong>${number(preview.spreadsheetRows, 0)}</strong></article>
         <article><span>Ya existentes</span><strong>${number(preview.existingRows, 0)}</strong></article>
         <article class="is-new"><span>Nuevas</span><strong>${number(preview.newRows.length, 0)}</strong></article>
-        <article class="is-warning"><span>Omitidas</span><strong>${number(preview.invalidRows + preview.duplicateRows, 0)}</strong></article>
+        <article class="is-warning"><span>Actualizar meteo</span><strong>${number(updateExistingRows, 0)}</strong></article>
       </div>
       <div class="weather-import-note">
-        <strong>${preview.newRows.length ? "Solo se insertaran las lecturas nuevas." : "La base de datos ya contiene todas estas lecturas."}</strong>
-        <span>Los registros se comparan mediante FECHA + HORA. Los existentes no se modifican.</span>
+        <strong>${preview.importMode === "upsert-meteo" ? "Se insertaran nuevas lecturas y se actualizaran humedad, viento y lluvia en las existentes." : "Solo se insertaran las lecturas nuevas."}</strong>
+        <span>Los registros se comparan mediante FECHA + HORA. Omitidas: ${number(preview.invalidRows + preview.duplicateRows, 0)}.</span>
       </div>
       ${invalidDetail}
       ${weatherStationImportFileInput()}
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="choose-weather-station-excel">Cambiar archivo</button>
-        <button class="primary-button" type="button" data-action="import-weather-station-excel" ${preview.newRows.length ? "" : "disabled"}>Insertar ${number(preview.newRows.length, 0)} nuevas</button>
+        <button class="primary-button" type="button" data-action="import-weather-station-excel" ${canImport ? "" : "disabled"}>${actionLabel}</button>
       </div>
     </div>
   `;
@@ -4548,28 +4704,33 @@ function updateWeatherStationImportProgress(done, total) {
 
 async function importWeatherStationExcel() {
   const preview = weatherStationImportPreview;
-  if (!preview?.newRows?.length || !hasRole("admin")) return;
-  if (!confirm(`Insertar ${preview.newRows.length} lecturas nuevas en estacion_climatica?`)) return;
+  const rowsToImport = preview?.importRows || preview?.newRows || [];
+  if (!rowsToImport.length || !hasRole("admin")) return;
+  const confirmation = preview.importMode === "upsert-meteo"
+    ? `Actualizar ${rowsToImport.length} lecturas en estacion_climatica? Esto rellenara humedad, viento y precipitacion en registros existentes.`
+    : `Insertar ${rowsToImport.length} lecturas nuevas en estacion_climatica?`;
+  if (!confirm(confirmation)) return;
   const dialog = document.getElementById("weatherStationImportDialog");
+  const loadingText = preview.importMode === "upsert-meteo" ? "Actualizando lecturas climaticas..." : "Insertando lecturas nuevas...";
   dialog.innerHTML = `
     <div class="modal-body weather-import-modal-body">
       <div class="modal-head"><div><h2>Actualizando base de datos</h2><p>${escapeHtml(preview.fileName)}</p></div></div>
-      <div class="weather-import-loading" role="status" aria-live="polite"><span class="weather-import-spinner"></span><strong>Insertando lecturas nuevas...</strong></div>
-      <div class="weather-import-progress" id="weatherStationImportProgress"><div><i></i></div><strong>0 de ${number(preview.newRows.length, 0)}</strong></div>
+      <div class="weather-import-loading" role="status" aria-live="polite"><span class="weather-import-spinner"></span><strong>${loadingText}</strong></div>
+      <div class="weather-import-progress" id="weatherStationImportProgress"><div><i></i></div><strong>0 de ${number(rowsToImport.length, 0)}</strong></div>
     </div>
   `;
   const batchSize = 500;
   let inserted = 0;
   try {
-    for (let index = 0; index < preview.newRows.length; index += batchSize) {
-      const batch = preview.newRows.slice(index, index + batchSize);
+    for (let index = 0; index < rowsToImport.length; index += batchSize) {
+      const batch = rowsToImport.slice(index, index + batchSize);
       await sbFetch("/rest/v1/estacion_climatica?on_conflict=fecha%2Chora", {
         method: "POST",
-        prefer: "resolution=ignore-duplicates,return=minimal",
+        prefer: `${preview.importMode === "upsert-meteo" ? "resolution=merge-duplicates" : "resolution=ignore-duplicates"},return=minimal`,
         body: JSON.stringify(batch)
       });
       inserted += batch.length;
-      updateWeatherStationImportProgress(inserted, preview.newRows.length);
+      updateWeatherStationImportProgress(inserted, rowsToImport.length);
     }
     weatherStationImportPreview = null;
     if (preview.lastDate) {
@@ -4579,7 +4740,9 @@ async function importWeatherStationExcel() {
     await loadCloudData();
     dialog.close();
     if (currentView === "dashboard") renderDashboard();
-    showToast(`${inserted} lecturas nuevas agregadas a la base de datos`);
+    showToast(preview.importMode === "upsert-meteo"
+      ? `${inserted} lecturas actualizadas en la base de datos`
+      : `${inserted} lecturas nuevas agregadas a la base de datos`);
   } catch (error) {
     renderWeatherStationImportError(preview.fileName, `${inserted} lecturas procesadas antes del error. ${error.message}`);
     showToast(`No se completo la actualizacion: ${error.message}`);
@@ -4604,9 +4767,35 @@ function weatherStationPeriodLabel() {
   return weatherStationDateLabel(`${weatherStationYear}-${weatherStationMonth}-01`);
 }
 
-function weatherStationSummary(rows) {
+function weatherStationDegreeSeason(year) {
+  const endYear = Number(year) || new Date().getFullYear();
+  return {
+    start: `${endYear - 1}-10-01`,
+    end: `${endYear}-10-31`,
+    label: `Octubre ${endYear - 1} a octubre ${endYear}`
+  };
+}
+
+function weatherStationDegreeSeasonRows(rows, year) {
+  const season = weatherStationDegreeSeason(year);
+  return rows.filter((row) => String(row.date || "") >= season.start && String(row.date || "") <= season.end);
+}
+
+function weatherWeightedAverage(rows, field) {
+  const total = rows.reduce((acc, row) => {
+    const value = Number(row[field]);
+    const records = Number(row.records || 0);
+    if (!Number.isFinite(value) || !records) return acc;
+    acc.weighted += value * records;
+    acc.records += records;
+    return acc;
+  }, { weighted: 0, records: 0 });
+  return total.records ? total.weighted / total.records : null;
+}
+
+function weatherStationSummary(rows, degreeRows = rows) {
   if (!rows.length) {
-    return { hasRows: false, records: 0, completeness: 0, hoursAbove7: 0, degreeDays: 0, frostDays: 0, totalFrostHours: 0, frost0ToMinus1: 0, frostMinus1ToMinus2: 0, frostBelowMinus2: 0 };
+    return { hasRows: false, records: 0, completeness: 0, degreeDays: 0, frostDays: 0, totalFrostHours: 0, frost0ToMinus1: 0, frostMinus1ToMinus2: 0, frostBelowMinus2: 0, precipitationTotal: 0, humidityAverage: null, windAverage: null, hasHumidity: false, hasWind: false };
   }
   const minimumRow = rows.reduce((best, row) => Number(row.minimum) < Number(best.minimum) ? row : best, rows[0]);
   const maximumRow = rows.reduce((best, row) => Number(row.maximum) > Number(best.maximum) ? row : best, rows[0]);
@@ -4617,6 +4806,8 @@ function weatherStationSummary(rows) {
   const frost0ToMinus1 = rows.reduce((sum, row) => sum + Number(row.frost0ToMinus1 || 0), 0);
   const frostMinus1ToMinus2 = rows.reduce((sum, row) => sum + Number(row.frostMinus1ToMinus2 || 0), 0);
   const frostBelowMinus2 = rows.reduce((sum, row) => sum + Number(row.frostBelowMinus2 || 0), 0);
+  const humidityAverage = weatherWeightedAverage(rows, "humidityAverage");
+  const windAverage = weatherWeightedAverage(rows, "windAverage");
   return {
     hasRows: true,
     records,
@@ -4625,8 +4816,12 @@ function weatherStationSummary(rows) {
     minimumDate: minimumRow.date,
     maximum: Number(maximumRow.maximum),
     maximumDate: maximumRow.date,
-    hoursAbove7: rows.reduce((sum, row) => sum + Number(row.hoursAbove7 || 0), 0),
-    degreeDays: rows.reduce((sum, row) => sum + Number(row.degreeDays || 0), 0),
+    degreeDays: degreeRows.reduce((sum, row) => sum + Number(row.degreeDays || 0), 0),
+    precipitationTotal: rows.reduce((sum, row) => sum + Number(row.precipitationTotal || 0), 0),
+    humidityAverage,
+    windAverage,
+    hasHumidity: humidityAverage !== null,
+    hasWind: windAverage !== null,
     frostDays: rows.filter((row) => Number(row.minimum) <= 0).length,
     frost0ToMinus1,
     frostMinus1ToMinus2,
@@ -4663,11 +4858,19 @@ function weatherStationDailyRowsFromReadings(readings = []) {
     const tempOut = Number(reading.temp_out);
     const hiTemp = Number(reading.hi_temp);
     const lowTemp = Number(reading.low_temp);
+    const humidity = Number(reading.humedad);
+    const windSpeed = Number(reading.velocidad_viento);
+    const precipitation = Number(reading.precipitacion);
     if (![tempOut, hiTemp, lowTemp].every(Number.isFinite)) return;
     const bucket = grouped.get(date) || {
       fecha: date,
       registros: 0,
       tempSum: 0,
+      humiditySum: 0,
+      humidityCount: 0,
+      windSum: 0,
+      windCount: 0,
+      precipitationTotal: 0,
       minLow: Infinity,
       maxHigh: -Infinity,
       above7: 0,
@@ -4678,6 +4881,15 @@ function weatherStationDailyRowsFromReadings(readings = []) {
     };
     bucket.registros += 1;
     bucket.tempSum += tempOut;
+    if (Number.isFinite(humidity)) {
+      bucket.humiditySum += humidity;
+      bucket.humidityCount += 1;
+    }
+    if (Number.isFinite(windSpeed)) {
+      bucket.windSum += windSpeed;
+      bucket.windCount += 1;
+    }
+    if (Number.isFinite(precipitation)) bucket.precipitationTotal += precipitation;
     bucket.minLow = Math.min(bucket.minLow, lowTemp);
     bucket.maxHigh = Math.max(bucket.maxHigh, hiTemp);
     if (tempOut > 7) bucket.above7 += 1;
@@ -4698,6 +4910,9 @@ function weatherStationDailyRowsFromReadings(readings = []) {
       temperatura_promedio: roundWeatherValue(bucket.tempSum / bucket.registros, 2),
       temperatura_minima: roundWeatherValue(bucket.minLow, 2),
       temperatura_maxima: roundWeatherValue(bucket.maxHigh, 2),
+      humedad_promedio: bucket.humidityCount ? roundWeatherValue(bucket.humiditySum / bucket.humidityCount, 4) : null,
+      velocidad_viento_promedio: bucket.windCount ? roundWeatherValue(bucket.windSum / bucket.windCount, 2) : null,
+      precipitacion_acumulada: roundWeatherValue(bucket.precipitationTotal, 2),
       horas_sobre_7: roundWeatherValue(bucket.above7 * 0.25, 2),
       grados_dia_base_7: roundWeatherValue(degreeDays, 3),
       helada_0_menos_1: roundWeatherValue(bucket.frost0ToMinus1 * 0.25, 2),
@@ -4731,8 +4946,14 @@ async function completeWeatherStationDailyRows(viewRows = [], latestRows = []) {
   try {
     const rawReadings = await sbSelectAll(
       "estacion_climatica",
-      `select=fecha,hora,temp_out,hi_temp,low_temp&fecha=gte.${startDate}&order=fecha.asc,hora.asc`
-    );
+      `select=fecha,hora,temp_out,hi_temp,low_temp,humedad,velocidad_viento,precipitacion&fecha=gte.${startDate}&order=fecha.asc,hora.asc`
+    ).catch((error) => {
+      if (!isMissingSupabaseColumn(error, ["humedad", "velocidad_viento", "precipitacion"])) throw error;
+      return sbSelectAll(
+        "estacion_climatica",
+        `select=fecha,hora,temp_out,hi_temp,low_temp&fecha=gte.${startDate}&order=fecha.asc,hora.asc`
+      );
+    });
     const rawDailyRows = weatherStationDailyRowsFromReadings(rawReadings);
     return mergeWeatherStationDailyRows(viewRows, rawDailyRows);
   } catch (error) {
@@ -4795,6 +5016,115 @@ function weatherTemperatureChart(rows) {
         </div>
       </div>
     </div>`;
+}
+
+function weatherRainSeries(rows) {
+  if (weatherStationMonth !== "Todos") {
+    return rows.map((row) => ({
+      label: String(row.date).slice(8, 10),
+      value: Number(row.precipitationTotal || 0),
+      date: row.date
+    }));
+  }
+  const months = new Map();
+  rows.forEach((row) => {
+    const key = String(row.date).slice(0, 7);
+    const bucket = months.get(key) || { key, value: 0 };
+    bucket.value += Number(row.precipitationTotal || 0);
+    months.set(key, bucket);
+  });
+  return [...months.values()].map((bucket) => ({
+    label: weatherStationDateLabel(`${bucket.key}-01`).split(" ")[0],
+    value: bucket.value,
+    date: `${bucket.key}-01`
+  }));
+}
+
+function weatherRainChart(rows) {
+  const series = weatherRainSeries(rows);
+  if (!series.length) return '<div class="empty-state compact-empty"><strong>Sin datos para el periodo.</strong></div>';
+  const maximum = Math.max(1, ...series.map((item) => Number(item.value || 0)));
+  let accumulated = 0;
+  return `
+    <div class="weather-rain-chart">
+      <div class="weather-rain-scroll">
+        <div class="weather-rain-columns" style="--weather-rain-columns:${series.length}">
+          ${series.map((item) => {
+            const value = Number(item.value || 0);
+            accumulated += value;
+            const height = value > 0 ? Math.max(4, value / maximum * 100) : 1;
+            return `<div class="weather-rain-column" title="${item.label}: lluvia ${number(value, 1)} mm, acum ${number(accumulated, 1)} mm">
+              <span>${value > 0 ? number(value, 1) : "0"}</span>
+              <div class="weather-rain-track"><i style="height:${height}%"></i></div>
+              <strong>${item.label}</strong>
+              <small>${number(accumulated, 0)}</small>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>`;
+}
+
+function weatherRainSummary(rows) {
+  const rainRows = rows.filter((row) => Number(row.precipitationTotal || 0) > 0);
+  const maxRow = rows.reduce((best, row) => Number(row.precipitationTotal || 0) > Number(best?.precipitationTotal || 0) ? row : best, rows[0] || null);
+  return {
+    rainDays: rainRows.length,
+    total: rows.reduce((sum, row) => sum + Number(row.precipitationTotal || 0), 0),
+    maxDaily: Number(maxRow?.precipitationTotal || 0),
+    maxDate: maxRow?.date || "",
+    averageRainDay: rainRows.length ? rainRows.reduce((sum, row) => sum + Number(row.precipitationTotal || 0), 0) / rainRows.length : 0
+  };
+}
+
+function weatherRainSummaryCard(rows, summary) {
+  const rain = weatherRainSummary(rows);
+  return `
+    <div class="weather-rain-summary">
+      <div><span>Total periodo</span><strong>${number(summary.precipitationTotal, 1)} mm</strong></div>
+      <div><span>Dias con lluvia</span><strong>${number(rain.rainDays, 0)}</strong></div>
+      <div><span>Mayor dia</span><strong>${number(rain.maxDaily, 1)} mm</strong><small>${rain.maxDate ? weatherStationDateLabel(rain.maxDate, { day: true }) : "-"}</small></div>
+      <div><span>Promedio dia lluvia</span><strong>${number(rain.averageRainDay, 1)} mm</strong></div>
+    </div>`;
+}
+
+function weatherRainBands(rows) {
+  const bands = [
+    { label: "0,1 a 2 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 0 && Number(row.precipitationTotal || 0) <= 2).length, tone: "light" },
+    { label: "2 a 10 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 2 && Number(row.precipitationTotal || 0) <= 10).length, tone: "medium" },
+    { label: "Mayor a 10 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 10).length, tone: "severe" }
+  ];
+  const maximum = Math.max(1, ...bands.map((band) => band.value));
+  return `<div class="weather-frost-bands weather-rain-bands">${bands.map((band) => `
+    <article class="weather-frost-band weather-rain-${band.tone}">
+      <div><span>${band.label}</span><strong>${number(band.value, 0)} dias</strong></div>
+      <div class="weather-frost-progress"><i style="width:${band.value / maximum * 100}%"></i></div>
+    </article>`).join("")}</div>`;
+}
+
+function weatherRainTable(rows) {
+  const allRows = rows
+    .map((row) => ({ ...row, rain: Number(row.precipitationTotal || 0) }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const visibleRows = allRows.filter((row) => row.rain > 0);
+  if (!visibleRows.length) return '<div class="empty-state compact-empty"><strong>Sin lluvia registrada en el periodo.</strong></div>';
+  let accumulated = 0;
+  const chronologicalAccum = new Map([...allRows].reverse().map((row) => {
+    accumulated += row.rain;
+    return [row.date, accumulated];
+  }));
+  return `<div class="table-wrap weather-frost-table weather-rain-table"><table>
+    <thead><tr><th>Fecha</th><th>Lluvia</th><th>Acum periodo</th><th>Humedad prom.</th><th>Viento prom.</th><th>Temp prom.</th></tr></thead>
+    <tbody>${visibleRows.map((row) => `
+      <tr>
+        <td data-label="Fecha">${weatherStationDateLabel(row.date, { day: true })}</td>
+        <td data-label="Lluvia"><strong>${number(row.rain, 1)} mm</strong></td>
+        <td data-label="Acum periodo">${number(chronologicalAccum.get(row.date) || 0, 1)} mm</td>
+        <td data-label="Humedad prom.">${row.humidityAverage === null || row.humidityAverage === undefined ? "-" : `${number(Number(row.humidityAverage) * 100, 1)}%`}</td>
+        <td data-label="Viento prom.">${row.windAverage === null || row.windAverage === undefined ? "-" : number(row.windAverage, 1)}</td>
+        <td data-label="Temp prom.">${number(row.average, 1)} °C</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
 }
 
 function weatherFrostBands(summary) {
@@ -5492,6 +5822,10 @@ function renderCalicatas() {
   document.getElementById("irrigationCalicataBlockFilter")?.addEventListener("change", (event) => {
     irrigationCalicataBlockFilter = event.target.value || "Todos";
     renderCalicatas();
+  });
+  document.getElementById("irrigationCalicataPotreroLabels")?.addEventListener("change", (event) => {
+    irrigationCalicataShowPotreroLabels = event.target.checked;
+    renderIrrigationCalicatasMap(filteredBlocks, monthPrefix);
   });
   if (currentView === "calicatas") renderIrrigationCalicatasMap(filteredBlocks, monthPrefix);
 }
@@ -7249,9 +7583,9 @@ async function loadCloudData(options = {}) {
           return [];
         });
       }),
-    sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2,helada_inicio,helada_termino&order=fecha.asc")
+    sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,humedad_promedio,velocidad_viento_promedio,precipitacion_acumulada,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2,helada_inicio,helada_termino&order=fecha.asc")
       .catch((error) => {
-        if (!isMissingSupabaseColumn(error, ["helada_inicio", "helada_termino"])) throw error;
+        if (!isMissingSupabaseColumn(error, ["humedad_promedio", "velocidad_viento_promedio", "precipitacion_acumulada", "helada_inicio", "helada_termino"])) throw error;
         return sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2&order=fecha.asc");
       })
       .then((rows) => {
@@ -7268,7 +7602,11 @@ async function loadCloudData(options = {}) {
         console.warn("No se pudieron cargar los horarios de helada", error);
         return [];
       }),
-    sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp&order=fecha.desc,hora.desc&limit=1")
+    sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp,humedad,velocidad_viento,precipitacion&order=fecha.desc,hora.desc&limit=1")
+      .catch((error) => {
+        if (!isMissingSupabaseColumn(error, ["humedad", "velocidad_viento", "precipitacion"])) throw error;
+        return sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp&order=fecha.desc,hora.desc&limit=1");
+      })
       .catch((error) => {
         console.warn("No se pudo cargar la ultima lectura de la estacion climatica", error);
         return [];
@@ -7376,6 +7714,9 @@ async function loadCloudData(options = {}) {
     average: Number(item.temperatura_promedio) || 0,
     minimum: Number(item.temperatura_minima),
     maximum: Number(item.temperatura_maxima),
+    humidityAverage: item.humedad_promedio === null || item.humedad_promedio === undefined ? null : Number(item.humedad_promedio),
+    windAverage: item.velocidad_viento_promedio === null || item.velocidad_viento_promedio === undefined ? null : Number(item.velocidad_viento_promedio),
+    precipitationTotal: Number(item.precipitacion_acumulada) || 0,
     hoursAbove7: Number(item.horas_sobre_7) || 0,
     degreeDays: Number(item.grados_dia_base_7) || 0,
     frost0ToMinus1: Number(item.helada_0_menos_1) || 0,
@@ -7391,7 +7732,10 @@ async function loadCloudData(options = {}) {
     time: latestWeather.hora || "",
     tempOut: Number(latestWeather.temp_out),
     hiTemp: Number(latestWeather.hi_temp),
-    lowTemp: Number(latestWeather.low_temp)
+    lowTemp: Number(latestWeather.low_temp),
+    humidity: latestWeather.humedad === null || latestWeather.humedad === undefined ? null : Number(latestWeather.humedad),
+    windSpeed: latestWeather.velocidad_viento === null || latestWeather.velocidad_viento === undefined ? null : Number(latestWeather.velocidad_viento),
+    precipitation: latestWeather.precipitacion === null || latestWeather.precipitacion === undefined ? null : Number(latestWeather.precipitacion)
   } : null;
   const mapHarvestRecord = (item, source = "operativo") => {
     const scanDate = harvestScanDateFromItem(item);
@@ -8434,6 +8778,8 @@ async function renderGoogleGeoJsonMap(el, layers) {
       streetViewControl: false,
       fullscreenControl: true,
       mapTypeControl: true,
+      gestureHandling: "greedy",
+      scrollwheel: true,
       tilt: 0
     });
   }
@@ -8777,6 +9123,26 @@ function harvestInfoField(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
+function irrigationCalicataBlockColor(key, index = 0) {
+  const palette = [
+    "#2dd4bf",
+    "#60a5fa",
+    "#a78bfa",
+    "#f59e0b",
+    "#34d399",
+    "#fb7185",
+    "#38bdf8",
+    "#c084fc",
+    "#facc15",
+    "#4ade80",
+    "#f97316",
+    "#22c55e"
+  ];
+  const text = String(key || "");
+  const hash = [...text].reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, index);
+  return palette[hash % palette.length];
+}
+
 async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
   const el = document.getElementById("irrigationCalicataMap");
   if (!el) return;
@@ -8810,15 +9176,16 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
     blockRings.forEach((item, index) => {
       const key = blockFeatureKey(item.feature);
       const active = visibleKeys.has(key);
+      const color = irrigationCalicataBlockColor(key, index);
       item.rings.forEach((ring) => {
         const polygon = new maps.Polygon({
           paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: active ? "#1f6f4a" : ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
-          strokeOpacity: active ? 1 : 0.72,
-          strokeWeight: active ? 2.2 : 1.3,
-          fillColor: active ? "#7cc79a" : "#dfe8dc",
-          fillOpacity: active ? 0.28 : 0.12,
-          zIndex: active ? 4 : 1
+          strokeColor: active ? "#ffffff" : "#cbd5ce",
+          strokeOpacity: active ? 0.98 : 0.65,
+          strokeWeight: active ? 2.8 : 1.4,
+          fillColor: active ? color : "#dfe8dc",
+          fillOpacity: active ? 0.46 : 0.10,
+          zIndex: active ? 5 : 1
         });
         polygon.setMap(irrigationCalicataMap);
         irrigationCalicataOverlays.push(polygon);
@@ -8832,18 +9199,20 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
       item.rings.forEach((ring) => {
         const polygon = new maps.Polygon({
           paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
+          strokeColor: ["#073b2c", "#7c2d12", "#1e3a8a", "#581c87"][index % 4],
           strokeOpacity: 1,
-          strokeWeight: 3,
+          strokeWeight: 3.4,
           fillOpacity: 0,
-          zIndex: 2
+          zIndex: 8
         });
         polygon.setMap(irrigationCalicataMap);
         irrigationCalicataOverlays.push(polygon);
       });
-      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
-      label.setMap(irrigationCalicataMap);
-      irrigationCalicataOverlays.push(label);
+      if (irrigationCalicataShowPotreroLabels) {
+        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+        label.setMap(irrigationCalicataMap);
+        irrigationCalicataOverlays.push(label);
+      }
     });
     records.forEach((item) => {
       const position = { lat: Number(item.latitude), lng: Number(item.longitude) };

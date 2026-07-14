@@ -2,6 +2,11 @@ begin;
 
 -- Corrige solo la visualizacion de heladas. Las lecturas originales no cambian.
 -- La estacion registro algunos horarios de madrugada con 12 horas de desfase.
+alter table public.estacion_climatica
+  add column if not exists humedad numeric(6, 4),
+  add column if not exists velocidad_viento numeric(8, 2),
+  add column if not exists precipitacion numeric(8, 2) default 0;
+
 create index if not exists estacion_climatica_heladas_fecha_hora_idx
   on public.estacion_climatica (fecha, hora)
   where temp_out <= 0;
@@ -33,7 +38,10 @@ select
         end
       ) + interval '15 minutes'
     )::time
-  end as helada_termino
+  end as helada_termino,
+  round(avg(humedad), 4) as humedad_promedio,
+  round(avg(velocidad_viento), 2) as velocidad_viento_promedio,
+  round(sum(coalesce(precipitacion, 0)), 2) as precipitacion_acumulada
 from public.estacion_climatica
 group by fecha;
 

@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v133-privacy-page";
+const CACHE = "canelillo-agrocore-v141-bandeja-scroll";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
