@@ -292,6 +292,7 @@ let fertilizerDataSource = "";
 let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
+let fertilizerReportExporting = false;
 let weatherStationYear = String(new Date().getFullYear());
 let weatherStationMonth = "Todos";
 let weatherStationView = "heladas";
@@ -859,6 +860,59 @@ function mergeEvaporationRows(rows = []) {
   state.irrigationEvaporation = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function normalizeWeatherDailySummaryRow(item = {}, existing = {}) {
+  const date = item.fecha || item.date || "";
+  const numberFrom = (keys, fallback = 0) => {
+    for (const key of keys) {
+      if (item[key] === null || item[key] === undefined || item[key] === "") continue;
+      const value = Number(item[key]);
+      if (Number.isFinite(value)) return value;
+    }
+    return fallback;
+  };
+  const textFrom = (keys, fallback = "") => {
+    for (const key of keys) {
+      if (item[key] === null || item[key] === undefined || item[key] === "") continue;
+      return item[key];
+    }
+    return fallback;
+  };
+  return {
+    date,
+    records: numberFrom(["registros", "records"], existing.records || 0),
+    average: numberFrom(["temperatura_promedio", "average"], existing.average || 0),
+    minimum: numberFrom(["temperatura_minima", "minimum"], existing.minimum ?? null),
+    maximum: numberFrom(["temperatura_maxima", "maximum"], existing.maximum ?? null),
+    humidityAverage: numberFrom(["humedad_promedio", "humidityAverage"], existing.humidityAverage ?? null),
+    windAverage: numberFrom(["velocidad_viento_promedio", "windAverage"], existing.windAverage ?? null),
+    precipitationTotal: numberFrom(["precipitacion_acumulada", "precipitationTotal"], existing.precipitationTotal || 0),
+    hoursAbove7: numberFrom(["horas_sobre_7", "hoursAbove7"], existing.hoursAbove7 || 0),
+    degreeDays: numberFrom(["grados_dia_base_7", "degreeDays"], existing.degreeDays || 0),
+    frost0ToMinus1: numberFrom(["helada_0_menos_1", "frost0ToMinus1"], existing.frost0ToMinus1 || 0),
+    frostMinus1ToMinus2: numberFrom(["helada_menos_1_menos_2", "frostMinus1ToMinus2"], existing.frostMinus1ToMinus2 || 0),
+    frostBelowMinus2: numberFrom(["helada_menor_igual_menos_2", "frostBelowMinus2"], existing.frostBelowMinus2 || 0),
+    frostStart: textFrom(["helada_inicio", "frostStart"], existing.frostStart || ""),
+    frostEnd: textFrom(["helada_termino", "frostEnd"], existing.frostEnd || ""),
+    frostWindows: textFrom(["frostWindows"], existing.frostWindows || "")
+  };
+}
+
+function mergeWeatherDailySummaryRows(rows = []) {
+  const byDate = new Map((state.weatherStationDaily || []).map((item) => [item.date, item]));
+  rows.forEach((row) => {
+    const date = row.fecha || row.date || "";
+    if (!date) return;
+    byDate.set(date, normalizeWeatherDailySummaryRow(row, byDate.get(date) || {}));
+  });
+  state.weatherStationDaily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function weatherRainByDateMap(rows = state.weatherStationDaily || []) {
+  return new Map((rows || [])
+    .map((row) => [String(row.date || "").slice(0, 10), Number(row.precipitationTotal || 0)])
+    .filter(([date]) => date));
+}
+
 async function ensureIrrigationEvaporationData(monthPrefix, daysInMonth) {
   if (!monthPrefix || irrigationEvaporationLoadedMonths.has(monthPrefix) || irrigationEvaporationLoadingMonths.has(monthPrefix)) return;
   irrigationEvaporationLoadingMonths.add(monthPrefix);
@@ -889,22 +943,31 @@ async function saveIrrigationBandejaRecord() {
   const data = Object.fromEntries(new FormData(form));
   const date = String(data.fecha || "").slice(0, 10);
   const evaporation = Number(data.evaporacion);
-  const station = String(data.estacion || "").trim();
   if (!date || !Number.isFinite(evaporation) || evaporation < 0) {
     showToast("Revisa fecha y evaporacion");
     return;
   }
   try {
-    const saved = await sbFetch("/rest/v1/evaporacion_bandeja?select=fecha,evaporacion,estacion", {
-      method: "POST",
-      prefer: "return=representation",
-      body: JSON.stringify([{
-        fecha: date,
-        evaporacion: evaporation,
-        estacion: station || null
-      }])
-    });
-    const row = saved?.[0] || { fecha: date, evaporacion: evaporation, estacion: station };
+    const existingRows = await sbFetch(`/rest/v1/evaporacion_bandeja?select=id,fecha,evaporacion,estacion&fecha=eq.${date}&order=id.desc&limit=1`);
+    let saved;
+    if (existingRows?.length) {
+      saved = await sbFetch(`/rest/v1/evaporacion_bandeja?id=eq.${existingRows[0].id}&select=fecha,evaporacion,estacion`, {
+        method: "PATCH",
+        prefer: "return=representation",
+        body: JSON.stringify({ evaporacion: evaporation })
+      });
+    } else {
+      saved = await sbFetch("/rest/v1/evaporacion_bandeja?select=fecha,evaporacion,estacion", {
+        method: "POST",
+        prefer: "return=representation",
+        body: JSON.stringify([{
+          fecha: date,
+          evaporacion: evaporation,
+          estacion: null
+        }])
+      });
+    }
+    const row = saved?.[0] || { fecha: date, evaporacion: evaporation, estacion: null };
     mergeEvaporationRows([row]);
     irrigationEvaporationLoadedMonths.add(date.slice(0, 7));
     if (date.slice(0, 7) !== `${irrigationYear}-${irrigationMonth}`) {
@@ -913,10 +976,209 @@ async function saveIrrigationBandejaRecord() {
     }
     irrigationBandejaFocusPending = true;
     renderIrrigation();
-    showToast("Dato de bandeja guardado");
+    showToast(existingRows?.length ? "Dato de bandeja actualizado" : "Dato de bandeja guardado");
   } catch (error) {
     showToast(`No se guardo bandeja: ${error.message}`);
   }
+}
+
+function updateIrrigationBandejaFocus(date) {
+  irrigationEvaporationLoadedMonths.add(date.slice(0, 7));
+  if (date.slice(0, 7) !== `${irrigationYear}-${irrigationMonth}`) {
+    irrigationYear = date.slice(0, 4);
+    irrigationMonth = date.slice(5, 7);
+  }
+  irrigationBandejaFocusPending = true;
+}
+
+async function deleteIrrigationBandejaRecord() {
+  const form = document.getElementById("irrigationBandejaForm");
+  if (!form) return;
+  const date = String(Object.fromEntries(new FormData(form)).fecha || "").slice(0, 10);
+  if (!date) {
+    showToast("Selecciona la fecha de bandeja");
+    return;
+  }
+  if (!supabaseSession) {
+    showToast("Inicia sesion para eliminar bandeja");
+    return;
+  }
+  if (!confirm(`Eliminar evaporacion de bandeja del ${date}?`)) return;
+  try {
+    await sbFetch(`/rest/v1/evaporacion_bandeja?fecha=eq.${date}`, {
+      method: "DELETE",
+      prefer: "return=minimal"
+    });
+    state.irrigationEvaporation = (state.irrigationEvaporation || []).filter((item) => item.date !== date);
+    updateIrrigationBandejaFocus(date);
+    renderIrrigation();
+    showToast("Dato de bandeja eliminado");
+  } catch (error) {
+    showToast(`No se elimino bandeja: ${error.message}`);
+  }
+}
+
+async function refreshIrrigationRainDay(date, fallbackRain = 0) {
+  const dailyRows = await sbFetch(`/rest/v1/v_estacion_climatica_diaria?select=fecha,precipitacion_acumulada&fecha=eq.${date}`);
+  mergeWeatherDailySummaryRows(dailyRows?.length ? dailyRows : [{ fecha: date, precipitacion_acumulada: fallbackRain }]);
+}
+
+async function saveIrrigationRainRecord() {
+  const form = document.getElementById("irrigationRainForm");
+  if (!form || !form.reportValidity()) return;
+  if (!supabaseSession) {
+    showToast("Inicia sesion para guardar lluvia");
+    return;
+  }
+  const data = Object.fromEntries(new FormData(form));
+  const date = String(data.fecha || "").slice(0, 10);
+  const rain = Number(data.lluvia);
+  if (!date || !Number.isFinite(rain) || rain < 0) {
+    showToast("Revisa fecha y lluvia");
+    return;
+  }
+  try {
+    const existingRows = await sbFetch(`/rest/v1/estacion_climatica?select=id,hora,precipitacion,fuente&fecha=eq.${date}&fuente=eq.bandeja_lluvia_manual&order=hora.desc&limit=1`);
+    if (existingRows?.length) {
+      await sbFetch(`/rest/v1/estacion_climatica?id=eq.${existingRows[0].id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ precipitacion: rain })
+      });
+    } else {
+      const latest = state.weatherStationLatest || {};
+      const temp = Number.isFinite(Number(latest.tempOut)) ? Number(latest.tempOut) : 10;
+      const hi = Number.isFinite(Number(latest.hiTemp)) ? Number(latest.hiTemp) : temp;
+      const low = Number.isFinite(Number(latest.lowTemp)) ? Number(latest.lowTemp) : temp;
+      await sbFetch("/rest/v1/estacion_climatica?select=fecha,hora,precipitacion", {
+        method: "POST",
+        prefer: "return=representation",
+        body: JSON.stringify([{
+          fecha: date,
+          hora: "12:01",
+          temp_out: temp,
+          hi_temp: hi,
+          low_temp: low,
+          precipitacion: rain,
+          fuente: "bandeja_lluvia_manual"
+        }])
+      });
+    }
+    await refreshIrrigationRainDay(date, rain);
+    updateIrrigationBandejaFocus(date);
+    renderIrrigation();
+    showToast(existingRows?.length ? "Dato de lluvia actualizado" : "Dato de lluvia guardado");
+  } catch (error) {
+    showToast(`No se guardo lluvia: ${error.message}`);
+  }
+}
+
+async function deleteIrrigationRainRecord() {
+  const form = document.getElementById("irrigationRainForm");
+  if (!form) return;
+  const date = String(Object.fromEntries(new FormData(form)).fecha || "").slice(0, 10);
+  if (!date) {
+    showToast("Selecciona la fecha de lluvia");
+    return;
+  }
+  if (!supabaseSession) {
+    showToast("Inicia sesion para eliminar lluvia");
+    return;
+  }
+  if (!confirm(`Eliminar lluvia manual del ${date}?`)) return;
+  try {
+    const manualRows = await sbFetch(`/rest/v1/estacion_climatica?select=id&fecha=eq.${date}&fuente=eq.bandeja_lluvia_manual`);
+    if (manualRows?.length) {
+      await sbFetch(`/rest/v1/estacion_climatica?fecha=eq.${date}&fuente=eq.bandeja_lluvia_manual`, {
+        method: "DELETE",
+        prefer: "return=minimal"
+      });
+    } else {
+      const legacyRows = await sbFetch(`/rest/v1/estacion_climatica?select=id,hora,precipitacion,fuente&fecha=eq.${date}&precipitacion=gt.0&order=hora.desc&limit=1`);
+      if (!legacyRows?.length) {
+        showToast("No hay lluvia registrada para esa fecha");
+        return;
+      }
+      const legacyRow = legacyRows[0];
+      const hour = String(legacyRow.hora || "").slice(0, 5) || "sin hora";
+      const source = legacyRow.fuente ? ` (${legacyRow.fuente})` : "";
+      const message = `No encontre lluvia manual marcada para ${date}.\nLa version anterior pudo guardar la lluvia dentro de una lectura normal.\n\nSe dejara en 0 la lectura con lluvia de las ${hour}${source}.`;
+      if (!confirm(message)) return;
+      await sbFetch(`/rest/v1/estacion_climatica?id=eq.${legacyRow.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ precipitacion: 0 })
+      });
+    }
+    await refreshIrrigationRainDay(date, 0);
+    updateIrrigationBandejaFocus(date);
+    renderIrrigation();
+    showToast("Dato de lluvia eliminado");
+  } catch (error) {
+    showToast(`No se elimino lluvia: ${error.message}`);
+  }
+}
+
+function irrigationBandejaDefaultDate(focusYear = irrigationYear, month = irrigationMonth) {
+  const year = Number(focusYear) || new Date().getFullYear();
+  const monthValue = String(month || String(new Date().getMonth() + 1).padStart(2, "0")).padStart(2, "0");
+  const defaultDay = Math.min(new Date().getDate(), new Date(year, Number(monthValue), 0).getDate());
+  return `${year}-${monthValue}-${String(defaultDay).padStart(2, "0")}`;
+}
+
+function openIrrigationBandejaDialog() {
+  const dialog = document.getElementById("irrigationBandejaDialog");
+  if (!dialog) return;
+  const defaultDate = irrigationBandejaDefaultDate();
+  dialog.innerHTML = `
+    <div class="dialog-card irrigation-bandeja-dialog">
+      <div class="dialog-header">
+        <div>
+          <strong>Agregar datos de bandeja</strong>
+          <p>Registra evaporacion y lluvia por fecha.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="irrigation-bandeja-dialog-grid">
+        <form id="irrigationBandejaForm" class="irrigation-bandeja-dialog-form">
+          <div>
+            <strong>Evaporacion bandeja</strong>
+            <span>Guarda o actualiza el dato diario.</span>
+          </div>
+          <label>Fecha
+            <input name="fecha" type="date" required value="${defaultDate}">
+          </label>
+          <label>Evaporacion
+            <input name="evaporacion" type="number" min="0" step="0.01" inputmode="decimal" required placeholder="0.00">
+          </label>
+          <div class="irrigation-bandeja-dialog-actions">
+            <button class="primary-button" type="button" data-action="save-irrigation-bandeja">Guardar bandeja</button>
+            <button class="danger-button" type="button" data-action="delete-irrigation-bandeja">Eliminar fecha</button>
+          </div>
+        </form>
+        <form id="irrigationRainForm" class="irrigation-bandeja-dialog-form irrigation-bandeja-dialog-form-rain">
+          <div>
+            <strong>Lluvia</strong>
+            <span>Se registra en la estacion climatica por fecha.</span>
+          </div>
+          <label>Fecha
+            <input name="fecha" type="date" required value="${defaultDate}">
+          </label>
+          <label>Lluvia mm
+            <input name="lluvia" type="number" min="0" step="0.01" inputmode="decimal" required placeholder="0.00">
+          </label>
+          <div class="irrigation-bandeja-dialog-actions">
+            <button class="secondary-button" type="button" data-action="save-irrigation-rain">Guardar lluvia</button>
+            <button class="danger-button" type="button" data-action="delete-irrigation-rain" title="Borra lluvia manual o corrige una lluvia antigua sin marca">Eliminar lluvia</button>
+          </div>
+        </form>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cerrar</button>
+      </div>
+    </div>`;
+  if (dialog.open) dialog.close();
+  dialog.showModal();
 }
 
 function money(value) {
@@ -2937,8 +3199,11 @@ function irrigationBandejaYear(value) {
 }
 
 function irrigationBandejaDataYears() {
-  return [...new Set((state.irrigationEvaporation || [])
-    .map((item) => irrigationBandejaYear(item.date))
+  return [...new Set([
+    ...(state.irrigationEvaporation || []).map((item) => item.date),
+    ...(state.weatherStationDaily || []).map((item) => item.date)
+  ]
+    .map((date) => irrigationBandejaYear(date))
     .filter((year) => Number.isInteger(year) && year >= 1900 && year <= 2100))]
     .sort((a, b) => a - b);
 }
@@ -2972,7 +3237,7 @@ function irrigationBandejaHistoricalDays(month, evaporationMap) {
   }]));
 }
 
-function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
+function irrigationBandejaMonthMatrix(month, years, evaporationMap, rainMap) {
   const monthName = monthOptions().find((item) => item.value === month)?.label || month;
   const maxDays = new Date(2000, Number(month), 0).getDate();
   const historicalDays = irrigationBandejaHistoricalDays(month, evaporationMap);
@@ -2986,6 +3251,7 @@ function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
   const hasStarted = new Set();
   const totals = new Map(years.map((year) => [year, 0]));
   const counts = new Map(years.map((year) => [year, 0]));
+  const rainTotals = new Map(years.map((year) => [year, 0]));
   const rows = Array.from({ length: maxDays }, (_, index) => {
     const day = index + 1;
     const dayText = String(day).padStart(2, "0");
@@ -2993,16 +3259,21 @@ function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
     const yearCells = years.map((year) => {
       const validDay = day <= new Date(year, Number(month), 0).getDate();
       if (!validDay) {
-        return `<td class="bandeja-date is-unavailable">-</td><td class="bandeja-value is-unavailable">-</td><td class="bandeja-accum is-unavailable">-</td>`;
+        return `<td class="bandeja-date is-unavailable">-</td><td class="bandeja-value is-unavailable">-</td><td class="bandeja-accum is-unavailable">-</td><td class="bandeja-rain is-unavailable">-</td>`;
       }
       const date = `${year}-${month}-${dayText}`;
       const rawValue = evaporationMap.get(date)?.evaporation;
       const hasValue = rawValue !== null && rawValue !== undefined && Number.isFinite(Number(rawValue));
+      const rawRain = rainMap.get(date);
+      const hasRain = rawRain !== null && rawRain !== undefined && Number.isFinite(Number(rawRain)) && Number(rawRain) > 0;
       if (hasValue) {
         accumulators.set(year, accumulators.get(year) + Number(rawValue));
         totals.set(year, totals.get(year) + Number(rawValue));
         counts.set(year, counts.get(year) + 1);
         hasStarted.add(year);
+      }
+      if (hasRain) {
+        rainTotals.set(year, rainTotals.get(year) + Number(rawRain));
       }
       const focusClass = String(year) === String(irrigationYear) ? " is-focus-year" : "";
       const carriedClass = !hasValue && hasStarted.has(year) ? " is-carried" : "";
@@ -3010,6 +3281,7 @@ function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
         <td class="bandeja-date${focusClass}">${dayText}-${month}-${String(year).slice(-2)}</td>
         <td class="bandeja-value${focusClass} ${hasValue ? "has-value" : ""}">${hasValue ? irrigationBandejaLabel(rawValue) : "-"}</td>
         <td class="bandeja-accum${focusClass}${carriedClass}">${hasStarted.has(year) ? irrigationBandejaLabel(accumulators.get(year)) : "-"}</td>
+        <td class="bandeja-rain${focusClass} ${hasRain ? "has-rain" : ""}" title="${date} lluvia ${hasRain ? irrigationBandejaLabel(rawRain) : "0"} mm">${hasRain ? irrigationBandejaLabel(rawRain) : "-"}</td>
       `;
     }).join("");
     return `
@@ -3024,30 +3296,30 @@ function irrigationBandejaMonthMatrix(month, years, evaporationMap) {
     const count = counts.get(year);
     const average = count ? total / count : null;
     const focusClass = String(year) === String(irrigationYear) ? " is-focus-year" : "";
-    return `<td class="bandeja-date${focusClass}">Total mes</td><td class="bandeja-value${focusClass}" title="Promedio de ${count} dia${count === 1 ? "" : "s"}">${count ? irrigationBandejaLabel(average) : "-"}</td><td class="bandeja-accum${focusClass}">${count ? irrigationBandejaLabel(total) : "-"}</td>`;
+    return `<td class="bandeja-date${focusClass}">Total mes</td><td class="bandeja-value${focusClass}" title="Promedio de ${count} dia${count === 1 ? "" : "s"}">${count ? irrigationBandejaLabel(average) : "-"}</td><td class="bandeja-accum${focusClass}">${count ? irrigationBandejaLabel(total) : "-"}</td><td class="bandeja-rain${focusClass}" title="Lluvia acumulada del mes">${irrigationBandejaLabel(rainTotals.get(year))}</td>`;
   }).join("");
   return `
     <section class="irrigation-bandeja-month" data-bandeja-month="${month}">
       <table class="irrigation-bandeja-matrix-table" style="--bandeja-years:${years.length}">
         <colgroup>
           <col class="bandeja-col-day">
-          ${years.map(() => '<col class="bandeja-col-date"><col class="bandeja-col-value"><col class="bandeja-col-accum">').join("")}
+          ${years.map(() => '<col class="bandeja-col-date"><col class="bandeja-col-value"><col class="bandeja-col-accum"><col class="bandeja-col-rain">').join("")}
           <col class="bandeja-col-historical">
         </colgroup>
         <thead>
           <tr class="bandeja-month-heading">
-            <th class="bandeja-month-fixed" colspan="4"><div><strong>${monthName}</strong><span>Prom. hist. mes ${historicalMonth === null ? "-" : irrigationBandejaLabel(historicalMonth)}</span></div></th>
-            <th class="bandeja-month-fill" colspan="${years.length * 3 - 2}" aria-hidden="true"></th>
+            <th class="bandeja-month-fixed" colspan="5"><div><strong>${monthName}</strong><span>Prom. hist. mes ${historicalMonth === null ? "-" : irrigationBandejaLabel(historicalMonth)}</span></div></th>
+            <th class="bandeja-month-fill" colspan="${Math.max(1, years.length * 4 - 3)}" aria-hidden="true"></th>
           </tr>
           <tr class="bandeja-year-heading">
             <th rowspan="2" class="bandeja-day">Dia</th>
-            ${years.map((year) => `<th colspan="3" data-bandeja-year="${year}" class="${String(year) === String(irrigationYear) ? "is-focus-year" : ""}">${year}</th>`).join("")}
+            ${years.map((year) => `<th colspan="4" data-bandeja-year="${year}" class="${String(year) === String(irrigationYear) ? "is-focus-year" : ""}">${year}</th>`).join("")}
             <th rowspan="2" class="bandeja-historical">Prom. hist.<small>por dia</small></th>
           </tr>
           <tr class="bandeja-fields-heading">
             ${years.map((year) => {
               const focusClass = String(year) === String(irrigationYear) ? " class=\"is-focus-year\"" : "";
-              return `<th${focusClass}>Fecha</th><th${focusClass}>Evap.</th><th${focusClass}>Acum.</th>`;
+              return `<th${focusClass}>Fecha</th><th${focusClass}>Evap.</th><th${focusClass}>Acum.</th><th${focusClass}>Lluvia</th>`;
             }).join("")}
           </tr>
         </thead>
@@ -3062,28 +3334,27 @@ function renderIrrigationBandejasPanel({ year }) {
   const years = irrigationBandejaVisibleYears(focusYear);
   const dataYears = irrigationBandejaDataYears();
   const evaporationMap = evaporationByDateMap(state.irrigationEvaporation || []);
-  const dates = [...evaporationMap.keys()].sort();
-  const defaultDay = Math.min(new Date().getDate(), new Date(focusYear, Number(irrigationMonth), 0).getDate());
-  const defaultDate = `${focusYear}-${irrigationMonth}-${String(defaultDay).padStart(2, "0")}`;
+  const rainMap = weatherRainByDateMap();
+  const dates = [...new Set([...evaporationMap.keys(), ...rainMap.keys()])].sort();
+  const rainDates = [...rainMap.entries()]
+    .filter(([, value]) => Number(value) > 0)
+    .map(([date]) => date)
+    .sort();
   const rangeLabel = dates.length ? `${dates[0]} a ${dates.at(-1)}` : "Sin registros";
   return `
     <div class="irrigation-subpanel irrigation-bandeja-history-panel">
       <section class="panel irrigation-bandeja-entry-panel">
-        <form id="irrigationBandejaForm" class="irrigation-bandeja-form">
-          <label>Fecha
-            <input name="fecha" type="date" required value="${defaultDate}">
-          </label>
-          <label>Evaporacion
-            <input name="evaporacion" type="number" min="0" step="0.01" inputmode="decimal" required placeholder="0.00">
-          </label>
-          <label>Estacion
-            <input name="estacion" type="text" placeholder="Nombre o codigo">
-          </label>
-          <button class="primary-button" type="button" data-action="save-irrigation-bandeja">Guardar dato</button>
-        </form>
+        <div class="irrigation-bandeja-entry-row">
+          <div>
+            <strong>Datos diarios</strong>
+            <span>Bandeja y lluvia se registran por fecha.</span>
+          </div>
+          <button class="primary-button" type="button" data-action="open-irrigation-bandeja-dialog">Agregar dato</button>
+        </div>
       </section>
       <div class="irrigation-bandeja-summary">
         <span><strong>${number(evaporationMap.size, 0)}</strong> dias registrados</span>
+        <span><strong>${number(rainDates.length, 0)}</strong> dias con lluvia</span>
         <span><strong>${number(dataYears.length, 0)}</strong> anos con datos</span>
         <span><strong>${escapeHtml(rangeLabel)}</strong> rango disponible</span>
       </div>
@@ -3094,7 +3365,7 @@ function renderIrrigationBandejasPanel({ year }) {
         </div>
         <div id="irrigationBandejaMatrixScroll" class="irrigation-bandeja-matrix-scroll">
           <div class="irrigation-bandeja-matrix-content">
-            ${monthOptions().map((item) => irrigationBandejaMonthMatrix(item.value, years, evaporationMap)).join("")}
+            ${monthOptions().map((item) => irrigationBandejaMonthMatrix(item.value, years, evaporationMap, rainMap)).join("")}
           </div>
         </div>
       </section>
@@ -6652,7 +6923,7 @@ async function loadFertilizerRowsFromSupabase() {
 }
 
 async function loadFertilizerRowsFromLocalBackup() {
-  const response = await fetch("outputs/fertilizacion_estanques.json?v=1", { cache: "force-cache" });
+  const response = await fetch("outputs/fertilizacion_estanques.json?v=3", { cache: "force-cache" });
   if (!response.ok) throw new Error(`No se pudo cargar fertilizacion (${response.status})`);
   const collection = await response.json();
   fertilizerDataSource = "Respaldo local";
@@ -6702,6 +6973,218 @@ function fertilizerFilteredRows() {
   });
 }
 
+const FERTILIZER_NUTRIENTS = ["n", "p", "k", "b", "zn", "mg", "ca", "ah", "af"];
+
+function fertilizerReportKey(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toUpperCase();
+}
+
+function fertilizerReportDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("es-CL", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function fertilizerReportNumber(value, digits = 3) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  const factor = 10 ** digits;
+  return Math.round(numeric * factor) / factor;
+}
+
+function formatFertilizerReportSheet(sheet) {
+  if (!sheet?.["!ref"] || !window.XLSX?.utils?.decode_range) return;
+  const range = window.XLSX.utils.decode_range(sheet["!ref"]);
+  const headers = new Map();
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    const address = window.XLSX.utils.encode_cell({ r: 0, c: column });
+    const value = sheet[address]?.v;
+    if (value) headers.set(String(value), column);
+  }
+  const formats = {
+    "LITROS AGUA PREPARACION": "0.###",
+    "CANTIDAD PRODUCTO APLICADO": "0.###",
+    "DISOLUCION": "0.####",
+    "HECTAREAS": "0.0",
+    "LITROS APLICADOS": "0.###",
+    "KG APLICADOS": "0.###",
+    "KG/HA APLICADOS": "0.###",
+    ...Object.fromEntries(FERTILIZER_NUTRIENTS.map((nutrient) => [`APORTE ${nutrient.toUpperCase()}`, "0.###"]))
+  };
+  Object.entries(formats).forEach(([header, format]) => {
+    const column = headers.get(header);
+    if (column === undefined) return;
+    for (let row = 1; row <= range.e.r; row += 1) {
+      const address = window.XLSX.utils.encode_cell({ r: row, c: column });
+      if (!sheet[address]) continue;
+      sheet[address].t = "n";
+      sheet[address].z = format;
+    }
+  });
+}
+
+function fertilizerPreparationTime(row) {
+  const date = new Date(row.fecha || row.creado_en || "");
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function fertilizerApplicationTime(row) {
+  const date = new Date(row.fecha || row.creado_en || "");
+  return Number.isNaN(date.getTime()) ? Date.now() : date.getTime();
+}
+
+function fertilizerProductForRecord(record, productsById, productsByKey) {
+  if (!record) return null;
+  if (record.producto_id && productsById.has(record.producto_id)) return productsById.get(record.producto_id);
+  const productKey = fertilizerReportKey(record.producto || record.producto_nombre || record.nombre_producto);
+  return productsByKey.get(productKey) || null;
+}
+
+function fertilizerPreparationBatch(application, preparations) {
+  if (!preparations?.length) return [];
+  const appTime = fertilizerApplicationTime(application);
+  const eligible = preparations.filter((prep) => fertilizerPreparationTime(prep) <= appTime);
+  const anchor = (eligible.length ? eligible : preparations).at(-1);
+  const anchorTime = fertilizerPreparationTime(anchor);
+  const batchWindowMs = 5 * 60 * 1000;
+  return preparations.filter((prep) => Math.abs(fertilizerPreparationTime(prep) - anchorTime) <= batchWindowMs);
+}
+
+async function loadFertilizerReportRows() {
+  if (!supabaseSession?.access_token) throw new Error("Inicia sesion para descargar el informe desde Supabase");
+  if (!fertilizerRows) await loadFertilizerRows();
+  const visibleRows = fertilizerFilteredRows();
+  const activeFilter = fertilizerCasetaFilter !== "Todas" || fertilizerPotreroFilter !== "Todos" || fertilizerStatusFilter !== "Todos";
+  const visibleTankIds = new Set(visibleRows.map((row) => row.id));
+  const visibleTankKeys = new Set(visibleRows.map((row) =>
+    `${fertilizerReportKey(row.caseta)}|${fertilizerReportKey(row.numeroEstanque)}|${fertilizerReportKey(row.fip)}|${Number(row.volumenMaximoLitros) || 0}`
+  ));
+  const [applications, preparations, products, tanks, casetas, campos] = await Promise.all([
+    sbSelectAll("fertilizante_aplicaciones", "select=*&order=fecha.desc", 5000),
+    sbSelectAll("fertilizante_preparaciones", "select=*&order=fecha.asc", 5000),
+    sbSelectAll("fertilizante_productos", "select=*&activo=eq.true&order=nombre_comercial.asc", 1000),
+    sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true", 1000),
+    sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true", 1000),
+    sbSelectAll("campos", "select=id,potrero,bloque,hectareas", 5000)
+  ]);
+
+  const tanksById = new Map(tanks.map((tank) => [tank.id, tank]));
+  const casetasById = new Map(casetas.map((caseta) => [caseta.id, caseta]));
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsByKey = new Map(products.map((product) => [fertilizerReportKey(product.nombre_normalizado || product.nombre_comercial), product]));
+  const camposById = new Map(campos.map((campo) => [campo.id, campo]));
+  const camposByPotreroBloque = new Map(campos.map((campo) => [`${fertilizerReportKey(campo.potrero)}|${fertilizerReportKey(campo.bloque)}`, campo]));
+  const preparationsByTank = new Map();
+  preparations.forEach((prep) => {
+    if (!preparationsByTank.has(prep.estanque_id)) preparationsByTank.set(prep.estanque_id, []);
+    preparationsByTank.get(prep.estanque_id).push(prep);
+  });
+  preparationsByTank.forEach((items) => items.sort((a, b) => fertilizerPreparationTime(a) - fertilizerPreparationTime(b)));
+
+  const tankVisibleByApplication = (application) => {
+    if (!activeFilter) return true;
+    if (visibleTankIds.has(application.estanque_id)) return true;
+    const tank = tanksById.get(application.estanque_id);
+    const caseta = casetasById.get(tank?.caseta_id);
+    const key = `${fertilizerReportKey(caseta?.nombre)}|${fertilizerReportKey(tank?.numero_estanque)}|${fertilizerReportKey(tank?.fip)}|${Number(tank?.volumen_maximo_litros) || 0}`;
+    return visibleTankKeys.has(key);
+  };
+  const filteredApplications = applications.filter(tankVisibleByApplication);
+  const rows = [];
+  filteredApplications.forEach((application) => {
+    const tank = tanksById.get(application.estanque_id) || {};
+    const caseta = casetasById.get(tank.caseta_id) || {};
+    const campo = camposById.get(application.campo_id)
+      || camposByPotreroBloque.get(`${fertilizerReportKey(application.potrero)}|${fertilizerReportKey(application.bloque)}`)
+      || {};
+    const batch = fertilizerPreparationBatch(application, preparationsByTank.get(application.estanque_id));
+    const lines = batch.length ? batch : [null];
+    const appliedLiters = Number(application.cantidad_litros) || 0;
+    const hectares = Number(campo.hectareas ?? application.hectareas) || 0;
+
+    lines.forEach((preparation) => {
+      const product = fertilizerProductForRecord(preparation, productsById, productsByKey);
+      const preparationWater = Number(preparation?.cantidad_litros) || 0;
+      const dissolution = Number(product?.disolucion) || 0;
+      const productApplied = Number(preparation?.producto_cantidad) || 0;
+      const unit = String(preparation?.producto_unidad || product?.unidad || "").toUpperCase();
+      const kgApplied = appliedLiters * dissolution;
+      const kgHaApplied = hectares > 0 ? kgApplied / hectares : 0;
+      const row = {
+        "FECHA PREPARACION": fertilizerReportDateTime(preparation?.fecha || preparation?.creado_en),
+        "FECHA APLICACION": fertilizerReportDateTime(application.fecha || application.creado_en),
+        "CASETA": caseta.nombre || "",
+        "NRO ESTANQUE": tank.numero_estanque || "",
+        "PRODUCTO": product?.nombre_comercial || preparation?.producto || "",
+        "LITROS AGUA PREPARACION": fertilizerReportNumber(preparationWater),
+        "CANTIDAD PRODUCTO APLICADO": fertilizerReportNumber(productApplied),
+        "UNIDAD": unit,
+        "DISOLUCION": fertilizerReportNumber(dissolution, 4),
+        "POTRERO": application.potrero || campo.potrero || "",
+        "BLOQUE": application.bloque || campo.bloque || "",
+        "HECTAREAS": fertilizerReportNumber(hectares, 1),
+        "LITROS APLICADOS": fertilizerReportNumber(appliedLiters),
+        "KG APLICADOS": fertilizerReportNumber(kgApplied),
+        "KG/HA APLICADOS": fertilizerReportNumber(kgHaApplied),
+        "OBSERVACION PREPARACION": preparation?.observacion || ""
+      };
+      FERTILIZER_NUTRIENTS.forEach((nutrient) => {
+        row[`APORTE ${nutrient.toUpperCase()}`] = fertilizerReportNumber(kgApplied * (Number(product?.[nutrient]) || 0));
+      });
+      rows.push(row);
+    });
+  });
+  return rows;
+}
+
+async function exportFertilizerReportWorkbook() {
+  if (fertilizerReportExporting) return;
+  if (!window.XLSX) {
+    showToast("No se pudo cargar el exportador Excel");
+    return;
+  }
+  fertilizerReportExporting = true;
+  if (currentView === "fertilizers") renderFertilizers();
+  try {
+    const rows = await loadFertilizerReportRows();
+    if (!rows.length) {
+      showToast("No hay aplicaciones de fertilizante para exportar");
+      return;
+    }
+    const workbook = window.XLSX.utils.book_new();
+    const sheet = window.XLSX.utils.json_to_sheet(rows);
+    formatFertilizerReportSheet(sheet);
+    sheet["!cols"] = [
+      { wch: 22 }, { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 30 }, { wch: 22 },
+      { wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
+      { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 30 },
+      ...FERTILIZER_NUTRIENTS.map(() => ({ wch: 12 }))
+    ];
+    window.XLSX.utils.book_append_sheet(workbook, sheet, "Aplicaciones");
+    window.XLSX.writeFile(workbook, `informe-fertilizantes-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showToast("Informe de fertilizantes descargado");
+  } catch (error) {
+    console.error("No se pudo exportar fertilizantes", error);
+    showToast(`No se pudo exportar fertilizantes: ${error.message}`);
+  } finally {
+    fertilizerReportExporting = false;
+    if (currentView === "fertilizers") renderFertilizers();
+  }
+}
+
 function fertilizerKpis(rows) {
   const casetas = new Set(rows.map((row) => row.caseta)).size;
   const maxLiters = rows.reduce((sum, row) => sum + row.volumenMaximoLitros, 0);
@@ -6733,7 +7216,7 @@ function renderFertilizerTankCard(row) {
     <article class="fertilizer-tank-card status-${status}">
       <div class="fertilizer-tank-head">
         <strong>${escapeHtml(row.numeroEstanque)}</strong>
-        <span>${escapeHtml(row.fip)}</span>
+        <span class="fertilizer-fip-text">${escapeHtml(row.fip)}</span>
       </div>
       <div class="fertilizer-volume-row">
         <span>${number(row.litrosActuales, 0)} L</span>
@@ -6778,14 +7261,14 @@ function renderFertilizerDetailTable(rows) {
   return `
     <div class="fertilizer-table-wrap">
       <table class="fertilizer-table">
-        <thead><tr><th>Caseta</th><th>Estanque</th><th>FIP</th><th>Potreros</th><th>Max. L</th><th>Actual L</th><th>Preparado</th><th>Aplicado</th><th>Estado</th></tr></thead>
+        <thead><tr><th>Caseta</th><th>Estanque</th><th>Nombre estanque</th><th>Potreros</th><th>Max. L</th><th>Actual L</th><th>Preparado</th><th>Aplicado</th><th>Estado</th></tr></thead>
         <tbody>
           ${rows.map((row) => {
             const status = fertilizerTankStatus(row);
             return `<tr>
               <td><strong>${escapeHtml(row.caseta)}</strong></td>
               <td>${escapeHtml(row.numeroEstanque)}</td>
-              <td>${escapeHtml(row.fip)}</td>
+              <td class="fertilizer-table-fip">${escapeHtml(row.fip)}</td>
               <td>${row.potreros.map((potrero) => `<span class="fertilizer-potrero-chip">${escapeHtml(potrero)}</span>`).join("")}</td>
               <td>${number(row.volumenMaximoLitros, 0)}</td>
               <td><strong>${number(row.litrosActuales, 0)}</strong></td>
@@ -6845,6 +7328,7 @@ function renderFertilizers() {
             <option value="lleno" ${fertilizerStatusFilter === "lleno" ? "selected" : ""}>Lleno</option>
           </select></label>
           <button class="secondary-button" type="button" data-action="reload-fertilizers">Actualizar</button>
+          <button class="primary-button fertilizer-export-button" type="button" data-action="export-fertilizer-report" ${fertilizerReportExporting ? "disabled" : ""}>${fertilizerReportExporting ? "Generando..." : "Descargar Excel"}</button>
         </div>
       </div>
       <div class="kpi-grid fertilizer-kpis">
@@ -9004,6 +9488,7 @@ function startCloudSync() {
     "fertilizante_casetas",
     "fertilizante_estanques",
     "fertilizante_estanque_potreros",
+    "fertilizante_productos",
     "fertilizante_preparaciones",
     "fertilizante_aplicaciones",
     "registros_trazabilidad",
@@ -13198,6 +13683,9 @@ document.addEventListener("click", async (event) => {
     fertilizerRows = null;
     renderFertilizers();
   }
+  if (action === "export-fertilizer-report") {
+    await exportFertilizerReportWorkbook();
+  }
   if (action === "clear-pest-filters") {
     const dates = (pestMonitoringRecords || []).map((record) => record.date).filter(Boolean).sort();
     pestMonitoringDateFrom = dates[0] || "";
@@ -13267,6 +13755,18 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "save-irrigation-bandeja") {
     await saveIrrigationBandejaRecord();
+  }
+  if (action === "delete-irrigation-bandeja") {
+    await deleteIrrigationBandejaRecord();
+  }
+  if (action === "open-irrigation-bandeja-dialog") {
+    openIrrigationBandejaDialog();
+  }
+  if (action === "save-irrigation-rain") {
+    await saveIrrigationRainRecord();
+  }
+  if (action === "delete-irrigation-rain") {
+    await deleteIrrigationRainRecord();
   }
   if (action === "shift-irrigation-bandeja-year") {
     irrigationYear = String(Math.min(2100, Math.max(1900, Number(irrigationYear) + Number(actionTarget.dataset.delta || 0))));

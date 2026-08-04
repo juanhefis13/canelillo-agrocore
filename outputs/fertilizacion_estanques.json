@@ -1,33 +1,42 @@
 {
   "metadata": {
-    "source": "C:\\Users\\PC\\Documents\\bd fertilizacion.xlsx",
+    "source": "C:\\Users\\PC\\Desktop\\CORRELACION CASETAS CON POTREROS Y ESTANQUES.xlsx",
     "unit": "litros",
-    "rows_excel": 107,
+    "rows_excel": 180,
     "casetas": 12,
-    "estanques": 50,
-    "links": 107
+    "estanques": 48,
+    "links": 207,
+    "omitted_without_caseta": [
+      {
+        "potrero": "CirrusAgro",
+        "bloque": "2"
+      },
+      {
+        "potrero": "CirrusAgro",
+        "bloque": "3"
+      },
+      {
+        "potrero": "CirrusAgro",
+        "bloque": "4"
+      },
+      {
+        "potrero": "CirrusAgro",
+        "bloque": "1"
+      },
+      {
+        "potrero": "CirrusAgro",
+        "bloque": "5"
+      }
+    ],
+    "fip_source_column": "NOMBRE ESTANQUE"
   },
   "records": [
     {
-      "key": "CASETA-1|ESTANQUE-1|FIP-1|3000",
+      "key": "CASETA-1|ESTANQUE-1|ESTANQUE-1-EQ-CITRICOS-MIRADOR|5000",
       "caseta_key": "CASETA-1",
       "caseta": "CASETA 1",
       "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "Mirador 1"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-1|ESTANQUE-1|FIP-1|5000",
-      "caseta_key": "CASETA-1",
-      "caseta": "CASETA 1",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
+      "fip": "Estanque 1 Eq Cítricos Mirador",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
@@ -38,39 +47,11 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-1|ESTANQUE-1|FIP-2|2000",
-      "caseta_key": "CASETA-1",
-      "caseta": "CASETA 1",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 2000.0,
-      "volumen_origen": "2000",
-      "volumen_nota": "",
-      "potreros": [
-        "Mirador 1"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-1|ESTANQUE-1|FIP-3|3000",
-      "caseta_key": "CASETA-1",
-      "caseta": "CASETA 1",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 3",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "Mirador 1"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-1|ESTANQUE-2|FIP-2|5000",
+      "key": "CASETA-1|ESTANQUE-2|ESTANQUE-2-EQ-CITRICOS-MIRADOR|5000",
       "caseta_key": "CASETA-1",
       "caseta": "CASETA 1",
       "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
+      "fip": "Estanque 2 Eq Cítricos Mirador",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
@@ -81,11 +62,11 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-1|ESTANQUE-3|FIP-3|1000",
+      "key": "CASETA-1|ESTANQUE-3|ESTANQUE-3-EQ-CITRICOS-MIRADOR|1000",
       "caseta_key": "CASETA-1",
       "caseta": "CASETA 1",
       "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
+      "fip": "Estanque 3 Eq Cítricos Mirador",
       "volumen_maximo_litros": 1000.0,
       "volumen_origen": "1000",
       "volumen_nota": "",
@@ -96,222 +77,65 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-10|ESTANQUE-1|FIP-1|3000",
-      "caseta_key": "CASETA-10",
-      "caseta": "CASETA 10",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
+      "key": "CASETA-1|ESTANQUE-4|ESTANQUE-1-EQ-MIRADOR|3000",
+      "caseta_key": "CASETA-1",
+      "caseta": "CASETA 1",
+      "numero_estanque": "Estanque 4",
+      "fip": "Estanque 1 Eq Mirador",
       "volumen_maximo_litros": 3000.0,
       "volumen_origen": "3000",
       "volumen_nota": "",
       "potreros": [
-        "30"
+        "Mirador 1"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-10|ESTANQUE-2|FIP-2|2000",
-      "caseta_key": "CASETA-10",
-      "caseta": "CASETA 10",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
+      "key": "CASETA-1|ESTANQUE-5|ESTANQUE-2-EQ-MIRADOR|2000",
+      "caseta_key": "CASETA-1",
+      "caseta": "CASETA 1",
+      "numero_estanque": "Estanque 5",
+      "fip": "Estanque 2 Eq Mirador",
       "volumen_maximo_litros": 2000.0,
       "volumen_origen": "2000",
       "volumen_nota": "",
       "potreros": [
-        "30"
+        "Mirador 1"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-10|ESTANQUE-3|FIP-3|3000",
-      "caseta_key": "CASETA-10",
-      "caseta": "CASETA 10",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
+      "key": "CASETA-1|ESTANQUE-6|ESTANQUE-3-EQ-MIRADOR|3000",
+      "caseta_key": "CASETA-1",
+      "caseta": "CASETA 1",
+      "numero_estanque": "Estanque 6",
+      "fip": "Estanque 3 Eq Mirador",
       "volumen_maximo_litros": 3000.0,
       "volumen_origen": "3000",
       "volumen_nota": "",
       "potreros": [
-        "30"
+        "Mirador 1"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-10|ESTANQUE-4|FIP-4|3000",
-      "caseta_key": "CASETA-10",
-      "caseta": "CASETA 10",
-      "numero_estanque": "Estanque 4",
-      "fip": "FIP 4",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "30"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-11|MANUAL|MANUAL|200",
-      "caseta_key": "CASETA-11",
-      "caseta": "CASETA 11",
-      "numero_estanque": "Manual",
-      "fip": "MANUAL",
-      "volumen_maximo_litros": 200.0,
-      "volumen_origen": "200",
-      "volumen_nota": "",
-      "potreros": [
-        "10",
-        "Los pinos Paltos"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-12|ESTANQUE-1|FIP-1|5000",
-      "caseta_key": "CASETA-12",
-      "caseta": "CASETA 12",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "El parque 1",
-        "El parque 2",
-        "El parque 3",
-        "El parque 4"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-12|ESTANQUE-2|FIP-2|5000",
-      "caseta_key": "CASETA-12",
-      "caseta": "CASETA 12",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "El parque 1",
-        "El parque 2",
-        "El parque 3",
-        "El parque 4"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-12|ESTANQUE-3|FIP-3|5000",
-      "caseta_key": "CASETA-12",
-      "caseta": "CASETA 12",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "El parque 1",
-        "El parque 2",
-        "El parque 3",
-        "El parque 4"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-12|ESTANQUE-4|FIP-4|2000",
-      "caseta_key": "CASETA-12",
-      "caseta": "CASETA 12",
-      "numero_estanque": "Estanque 4",
-      "fip": "FIP 4",
-      "volumen_maximo_litros": 2000.0,
-      "volumen_origen": "2000",
-      "volumen_nota": "",
-      "potreros": [
-        "El parque 1",
-        "El parque 2",
-        "El parque 3",
-        "El parque 4"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-1|FIP-2|5000",
+      "key": "CASETA-2|ESTANQUE-1|ESTANQUE-1-MANDARINOS-NARANJOS|5000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
       "numero_estanque": "Estanque 1",
-      "fip": "FIP 2",
+      "fip": "Estanque 1 Mandarinos / Naranjos",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
         "20",
+        "20A",
+        "20B",
         "21",
+        "22",
+        "23",
         "24",
         "25",
-        "20A",
-        "20B"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-11|FIP-3|3000",
-      "caseta_key": "CASETA-2",
-      "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 11",
-      "fip": "FIP 3",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "22",
-        "23"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-12|FIP-2|5000",
-      "caseta_key": "CASETA-2",
-      "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 12",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "22",
-        "23"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-2|FIP-1|5000",
-      "caseta_key": "CASETA-2",
-      "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "20",
-        "21",
-        "24",
-        "25",
-        "20A",
-        "20B"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-3|FIP-1|3000",
-      "caseta_key": "CASETA-2",
-      "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
         "D",
         "E",
         "F",
@@ -320,30 +144,98 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-2|ESTANQUE-4|FIP-1|3000",
+      "key": "CASETA-2|ESTANQUE-2|ESTANQUE-2-MANDARINOS-NARANJOS|5000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 4",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque 2 Mandarinos / Naranjos",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
         "22",
-        "23"
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-2|ESTANQUE-5|FIP-3|2000",
+      "key": "CASETA-2|ESTANQUE-3|FERT-A|3000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 3",
+      "fip": "FERT A",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-2|ESTANQUE-4|FIP-1-LOMA-ESTANQUE-4|3000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 4",
+      "fip": "Fip 1 Loma Estanque 4",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-2|ESTANQUE-5|FERT-C|2000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
       "numero_estanque": "Estanque 5",
-      "fip": "FIP 3",
+      "fip": "FERT C",
       "volumen_maximo_litros": 2000.0,
       "volumen_origen": "2000",
       "volumen_nota": "",
       "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
         "D",
         "E",
         "F",
@@ -352,68 +244,73 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-2|ESTANQUE-6|FIP-3|5000",
+      "key": "CASETA-2|ESTANQUE-6|ESTANQUE-6-MANDARINOS-NARANJOS|5000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
       "numero_estanque": "Estanque 6",
-      "fip": "FIP 3",
+      "fip": "Estanque 6 Mandarinos / Naranjos",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
         "20",
+        "20A",
+        "20B",
         "21",
+        "22",
+        "23",
         "24",
         "25",
-        "20A",
-        "20B"
+        "D",
+        "E",
+        "F",
+        "G"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-2|ESTANQUE-7|FIP-4|5000",
+      "key": "CASETA-2|ESTANQUE-7|ESTANQUE-7-MANDARINOS-NARANJOS|5000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
       "numero_estanque": "Estanque 7",
-      "fip": "FIP 4",
+      "fip": "Estanque 7 Mandarinos / Naranjos",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
         "20",
+        "20A",
+        "20B",
         "21",
+        "22",
+        "23",
         "24",
         "25",
-        "20A",
-        "20B"
+        "D",
+        "E",
+        "F",
+        "G"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-2|ESTANQUE-8|FIP-4|3000",
+      "key": "CASETA-2|ESTANQUE-8|FIP-4-LOMA-ESTANQUE-8|3000",
       "caseta_key": "CASETA-2",
       "caseta": "CASETA 2",
       "numero_estanque": "Estanque 8",
-      "fip": "FIP 4",
+      "fip": "Fip 4 Loma Estanque 8",
       "volumen_maximo_litros": 3000.0,
       "volumen_origen": "3000",
       "volumen_nota": "",
       "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
         "22",
-        "23"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-2|ESTANQUE-9-10|FIP-2|10000",
-      "caseta_key": "CASETA-2",
-      "caseta": "CASETA 2",
-      "numero_estanque": "Estanque 9-10",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 10000.0,
-      "volumen_origen": "5000 - 5000",
-      "volumen_nota": "5000 + 5000",
-      "potreros": [
+        "23",
+        "24",
+        "25",
         "D",
         "E",
         "F",
@@ -422,11 +319,111 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-3|ESTANQUE-1|FIP-1|5000",
+      "key": "CASETA-2|ESTANQUE-9|FERT-B|5000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 9",
+      "fip": "FERT B",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-2|ESTANQUE-10|FERT-B|5000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 10",
+      "fip": "FERT B",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-2|ESTANQUE-11|FIP-3-LOMA-ESTANQUE-11|3000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 11",
+      "fip": "Fip 3 Loma Estanque 11",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-2|ESTANQUE-12|FIP-2-LOMA-ESTANQUE-12|5000",
+      "caseta_key": "CASETA-2",
+      "caseta": "CASETA 2",
+      "numero_estanque": "Estanque 12",
+      "fip": "Fip 2 Loma Estanque 12",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "20",
+        "20A",
+        "20B",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-3|ESTANQUE-1|ESTANQUE-1-T3|5000",
       "caseta_key": "CASETA-3",
       "caseta": "CASETA 3",
       "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
+      "fip": "ESTANQUE 1 T3",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
@@ -438,11 +435,11 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-3|ESTANQUE-2|FIP-2|4000",
+      "key": "CASETA-3|ESTANQUE-2|ESTANQUE-2-T3|4000",
       "caseta_key": "CASETA-3",
       "caseta": "CASETA 3",
       "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
+      "fip": "ESTANQUE 2 T3",
       "volumen_maximo_litros": 4000.0,
       "volumen_origen": "4000",
       "volumen_nota": "",
@@ -454,11 +451,11 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-3|ESTANQUE-3|FIP-3|8000",
+      "key": "CASETA-3|ESTANQUE-3|ESTANQUE-3-T3|8000",
       "caseta_key": "CASETA-3",
       "caseta": "CASETA 3",
       "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
+      "fip": "ESTANQUE 3 T3",
       "volumen_maximo_litros": 8000.0,
       "volumen_origen": "8000",
       "volumen_nota": "",
@@ -470,298 +467,398 @@
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-4|ESTANQUE-1|FIP1-G|2000",
+      "key": "CASETA-4|ESTANQUE-1|ESTANQUE-1-GRAV-IMP|2000",
       "caseta_key": "CASETA-4",
       "caseta": "CASETA 4",
       "numero_estanque": "Estanque 1",
-      "fip": "FIP1 G",
+      "fip": "Estanque 1 Grav / Imp",
       "volumen_maximo_litros": 2000.0,
       "volumen_origen": "2000",
       "volumen_nota": "",
       "potreros": [
-        "27 GRAV"
+        "15",
+        "16"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-4|ESTANQUE-1|FIP1-I|2000",
-      "caseta_key": "CASETA-4",
-      "caseta": "CASETA 4",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP1 I",
-      "volumen_maximo_litros": 2000.0,
-      "volumen_origen": "2000",
-      "volumen_nota": "",
-      "potreros": [
-        "27 IMP"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-4|ESTANQUE-2|FIP2-G|5000",
+      "key": "CASETA-4|ESTANQUE-2|ESTANQUE-2-GRAV-IMP|5000",
       "caseta_key": "CASETA-4",
       "caseta": "CASETA 4",
       "numero_estanque": "Estanque 2",
-      "fip": "FIP2 G",
+      "fip": "Estanque 2 Grav / Imp",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
-        "27 GRAV"
+        "15",
+        "16"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-4|ESTANQUE-2|FIP2-I|5000",
-      "caseta_key": "CASETA-4",
-      "caseta": "CASETA 4",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP2 I",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "27 IMP"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-4|ESTANQUE-3|FIP-3-G|5000",
+      "key": "CASETA-4|ESTANQUE-3|ESTANQUE-3-GRAV-IMP|5000",
       "caseta_key": "CASETA-4",
       "caseta": "CASETA 4",
       "numero_estanque": "Estanque 3",
-      "fip": "FIP 3 G",
+      "fip": "Estanque 3 Grav / Imp",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
-        "27 GRAV"
+        "15",
+        "16"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-4|ESTANQUE-3|FIP-3-I|5000",
-      "caseta_key": "CASETA-4",
-      "caseta": "CASETA 4",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3 I",
-      "volumen_maximo_litros": 5000.0,
-      "volumen_origen": "5000",
-      "volumen_nota": "",
-      "potreros": [
-        "27 IMP"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-4|ESTANQUE-4|FIP4-G|2400",
+      "key": "CASETA-4|ESTANQUE-4|ESTANQUE-4-GRAV-IMP|2400",
       "caseta_key": "CASETA-4",
       "caseta": "CASETA 4",
       "numero_estanque": "Estanque 4",
-      "fip": "FIP4 G",
+      "fip": "Estanque 4 Grav / Imp",
       "volumen_maximo_litros": 2400.0,
       "volumen_origen": "2400",
       "volumen_nota": "",
       "potreros": [
-        "27 GRAV"
+        "15",
+        "16"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-4|ESTANQUE-4|FIP4-I|2400",
-      "caseta_key": "CASETA-4",
-      "caseta": "CASETA 4",
-      "numero_estanque": "Estanque 4",
-      "fip": "FIP4 I",
-      "volumen_maximo_litros": 2400.0,
-      "volumen_origen": "2400",
-      "volumen_nota": "",
-      "potreros": [
-        "27 IMP"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-5|MANUAL|MANUAL|1000",
+      "key": "CASETA-5|ESTANQUE-1|FERTILIZACION-MANUAL|700",
       "caseta_key": "CASETA-5",
       "caseta": "CASETA 5",
-      "numero_estanque": "Manual",
-      "fip": "MANUAL",
-      "volumen_maximo_litros": 1000.0,
-      "volumen_origen": "1000",
+      "numero_estanque": "Estanque 1",
+      "fip": "FERTILIZACION MANUAL",
+      "volumen_maximo_litros": 700.0,
+      "volumen_origen": "700",
       "volumen_nota": "",
       "potreros": [
-        "5",
-        "6",
+        "17"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-6|ESTANQUE-1|ESTANQUE-PALTOS-1|2000",
+      "caseta_key": "CASETA-6",
+      "caseta": "CASETA 6",
+      "numero_estanque": "Estanque 1",
+      "fip": "Estanque Paltos 1",
+      "volumen_maximo_litros": 2000.0,
+      "volumen_origen": "2000",
+      "volumen_nota": "",
+      "potreros": [
+        "18"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-6|ESTANQUE-2|ESTANQUE-PALTOS-2|5000",
+      "caseta_key": "CASETA-6",
+      "caseta": "CASETA 6",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque Paltos 2",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "18"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-6|ESTANQUE-3|ESTANQUE-PALTOS-3|5000",
+      "caseta_key": "CASETA-6",
+      "caseta": "CASETA 6",
+      "numero_estanque": "Estanque 3",
+      "fip": "Estanque Paltos 3",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "18"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-7|ESTANQUE-1|ESTANQUE-1-S-G|3000",
+      "caseta_key": "CASETA-7",
+      "caseta": "CASETA 7",
+      "numero_estanque": "Estanque 1",
+      "fip": "Estanque 1 S.G",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
         "19"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-6|ESTANQUE-1|FIP-1|2000",
-      "caseta_key": "CASETA-6",
-      "caseta": "CASETA 6",
+      "key": "CASETA-7|ESTANQUE-2|ESTANQUE-2-S-G|3000",
+      "caseta_key": "CASETA-7",
+      "caseta": "CASETA 7",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque 2 S.G",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "19"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-7|ESTANQUE-3|ESTANQUE-3-S-G|5000",
+      "caseta_key": "CASETA-7",
+      "caseta": "CASETA 7",
+      "numero_estanque": "Estanque 3",
+      "fip": "Estanque 3 S.G",
+      "volumen_maximo_litros": 5000.0,
+      "volumen_origen": "5000",
+      "volumen_nota": "",
+      "potreros": [
+        "19"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-8|ESTANQUE-1|ESTANQUE-1-PEUMO|1000",
+      "caseta_key": "CASETA-8",
+      "caseta": "CASETA 8",
       "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
+      "fip": "ESTANQUE 1 PEUMO",
+      "volumen_maximo_litros": 1000.0,
+      "volumen_origen": "1000",
+      "volumen_nota": "",
+      "potreros": [
+        "20"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-8|ESTANQUE-2|ESTANQUE-2-PEUMO|3000",
+      "caseta_key": "CASETA-8",
+      "caseta": "CASETA 8",
+      "numero_estanque": "Estanque 2",
+      "fip": "ESTANQUE 2 PEUMO",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "20"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-8|ESTANQUE-3|ESTANQUE-3-PEUMO|3000",
+      "caseta_key": "CASETA-8",
+      "caseta": "CASETA 8",
+      "numero_estanque": "Estanque 3",
+      "fip": "ESTANQUE 3 PEUMO",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "20"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-9|ESTANQUE-1|ESTANQUE-FERTILIZANTE-1|3000",
+      "caseta_key": "CASETA-9",
+      "caseta": "CASETA 9",
+      "numero_estanque": "Estanque 1",
+      "fip": "Estanque Fertilizante 1",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "21"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-9|ESTANQUE-2|ESTANQUE-FERTILIZANTE-2|3000",
+      "caseta_key": "CASETA-9",
+      "caseta": "CASETA 9",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque Fertilizante 2",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "21"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-9|ESTANQUE-3|ESTANQUE-FERTILIZANTE-PRE|1000",
+      "caseta_key": "CASETA-9",
+      "caseta": "CASETA 9",
+      "numero_estanque": "Estanque 3",
+      "fip": "Estanque Fertilizante Pre",
+      "volumen_maximo_litros": 1000.0,
+      "volumen_origen": "1000",
+      "volumen_nota": "",
+      "potreros": [
+        "21"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-10|ESTANQUE-1|ESTANQUE-1|3000",
+      "caseta_key": "CASETA-10",
+      "caseta": "CASETA 10",
+      "numero_estanque": "Estanque 1",
+      "fip": "Estanque 1",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "30"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-10|ESTANQUE-2|ESTANQUE-2|2000",
+      "caseta_key": "CASETA-10",
+      "caseta": "CASETA 10",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque 2",
       "volumen_maximo_litros": 2000.0,
       "volumen_origen": "2000",
       "volumen_nota": "",
       "potreros": [
-        "Mirador 2"
+        "30"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-6|ESTANQUE-2|FIP-2|5000",
-      "caseta_key": "CASETA-6",
-      "caseta": "CASETA 6",
+      "key": "CASETA-10|ESTANQUE-3|ESTANQUE-3|3000",
+      "caseta_key": "CASETA-10",
+      "caseta": "CASETA 10",
+      "numero_estanque": "Estanque 3",
+      "fip": "Estanque 3",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "30"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-10|ESTANQUE-4|ESTANQUE-4|3000",
+      "caseta_key": "CASETA-10",
+      "caseta": "CASETA 10",
+      "numero_estanque": "Estanque 4",
+      "fip": "Estanque 4",
+      "volumen_maximo_litros": 3000.0,
+      "volumen_origen": "3000",
+      "volumen_nota": "",
+      "potreros": [
+        "30"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-11|ESTANQUE-1|FERTILIZACION-MANUAL|200",
+      "caseta_key": "CASETA-11",
+      "caseta": "CASETA 11",
+      "numero_estanque": "Estanque 1",
+      "fip": "FERTILIZACION MANUAL",
+      "volumen_maximo_litros": 200.0,
+      "volumen_origen": "200",
+      "volumen_nota": "",
+      "potreros": [
+        "10",
+        "Los pinos Paltos"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-11|ESTANQUE-2|FERTILIZACION-MANUAL|200",
+      "caseta_key": "CASETA-11",
+      "caseta": "CASETA 11",
       "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
+      "fip": "FERTILIZACION MANUAL",
+      "volumen_maximo_litros": 200.0,
+      "volumen_origen": "200",
+      "volumen_nota": "",
+      "potreros": [
+        "10",
+        "Los pinos Paltos"
+      ],
+      "litros_actuales": 0
+    },
+    {
+      "key": "CASETA-12|ESTANQUE-1|ESTANQUE-FIP1-PARQUE-1-PARQUE-2-PARQUE-3-PARQUE-4-IMPULSION|5000",
+      "caseta_key": "CASETA-12",
+      "caseta": "CASETA 12",
+      "numero_estanque": "Estanque 1",
+      "fip": "Estanque FIP1 Parque 1 / Parque 2/ Parque 3/ Parque 4 Impulsion",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
-        "Mirador 2"
+        "El parque 1",
+        "El parque 2",
+        "El parque 3",
+        "El parque 4"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-6|ESTANQUE-3|FIP-3|5000",
-      "caseta_key": "CASETA-6",
-      "caseta": "CASETA 6",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
+      "key": "CASETA-12|ESTANQUE-2|ESTANQUE-FIP2-PARQUE-1-PARQUE-2-PARQUE-3-PARQUE-4-IMPULSION|5000",
+      "caseta_key": "CASETA-12",
+      "caseta": "CASETA 12",
+      "numero_estanque": "Estanque 2",
+      "fip": "Estanque FIP2 Parque 1 / Parque 2/ Parque 3/ Parque 4 Impulsion",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
-        "Mirador 2"
+        "El parque 1",
+        "El parque 2",
+        "El parque 3",
+        "El parque 4"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-7|ESTANQUE-1|FIP-1|3000",
-      "caseta_key": "CASETA-7",
-      "caseta": "CASETA 7",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "7"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-7|ESTANQUE-2|FIP-2|3000",
-      "caseta_key": "CASETA-7",
-      "caseta": "CASETA 7",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "7"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-7|ESTANQUE-3|FIP-3|5000",
-      "caseta_key": "CASETA-7",
-      "caseta": "CASETA 7",
+      "key": "CASETA-12|ESTANQUE-3|ESTANQUE-FIP3-PARQUE-1-PARQUE-2-PARQUE-3-PARQUE-4-IMPULSION|5000",
+      "caseta_key": "CASETA-12",
+      "caseta": "CASETA 12",
       "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
+      "fip": "Estanque FIP3 Parque 1 / Parque 2/ Parque 3/ Parque 4 Impulsion",
       "volumen_maximo_litros": 5000.0,
       "volumen_origen": "5000",
       "volumen_nota": "",
       "potreros": [
-        "7"
+        "El parque 1",
+        "El parque 2",
+        "El parque 3",
+        "El parque 4"
       ],
       "litros_actuales": 0
     },
     {
-      "key": "CASETA-8|ESTANQUE-1|FIP-1|1000",
-      "caseta_key": "CASETA-8",
-      "caseta": "CASETA 8",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 1000.0,
-      "volumen_origen": "1000",
+      "key": "CASETA-12|ESTANQUE-4|ESTANQUE-FIP4-PARQUE-1-PARQUE-2-PARQUE-3-PARQUE-4-IMPULSION|2000",
+      "caseta_key": "CASETA-12",
+      "caseta": "CASETA 12",
+      "numero_estanque": "Estanque 4",
+      "fip": "Estanque FIP4 Parque 1 / Parque 2/ Parque 3/ Parque 4 Impulsion",
+      "volumen_maximo_litros": 2000.0,
+      "volumen_origen": "2000",
       "volumen_nota": "",
       "potreros": [
-        "29"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-8|ESTANQUE-2|FIP-2|3000",
-      "caseta_key": "CASETA-8",
-      "caseta": "CASETA 8",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "29"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-8|ESTANQUE-3|FIP-3|3000",
-      "caseta_key": "CASETA-8",
-      "caseta": "CASETA 8",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "29"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-9|ESTANQUE-1|FIP-1|3000",
-      "caseta_key": "CASETA-9",
-      "caseta": "CASETA 9",
-      "numero_estanque": "Estanque 1",
-      "fip": "FIP 1",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "28"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-9|ESTANQUE-2|FIP-2|3000",
-      "caseta_key": "CASETA-9",
-      "caseta": "CASETA 9",
-      "numero_estanque": "Estanque 2",
-      "fip": "FIP 2",
-      "volumen_maximo_litros": 3000.0,
-      "volumen_origen": "3000",
-      "volumen_nota": "",
-      "potreros": [
-        "28"
-      ],
-      "litros_actuales": 0
-    },
-    {
-      "key": "CASETA-9|ESTANQUE-3|FIP-3|1000",
-      "caseta_key": "CASETA-9",
-      "caseta": "CASETA 9",
-      "numero_estanque": "Estanque 3",
-      "fip": "FIP 3",
-      "volumen_maximo_litros": 1000.0,
-      "volumen_origen": "1000",
-      "volumen_nota": "",
-      "potreros": [
-        "28"
+        "El parque 1",
+        "El parque 2",
+        "El parque 3",
+        "El parque 4"
       ],
       "litros_actuales": 0
     }

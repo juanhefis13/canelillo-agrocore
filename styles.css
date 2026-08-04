@@ -1929,6 +1929,11 @@ td span,
   font-weight: 750;
 }
 
+.fertilizer-export-button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
 .fertilizer-source-note {
   display: flex;
   gap: 8px;
@@ -2021,9 +2026,11 @@ td span,
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .fertilizer-tank-head strong {
+  flex: 0 0 auto;
   color: #103b2f;
   font-size: 0.92rem;
 }
@@ -2033,6 +2040,16 @@ td span,
   color: #5f766c;
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.fertilizer-fip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  line-height: 1.12;
+  font-size: clamp(0.58rem, 0.68vw, 0.68rem);
 }
 
 .fertilizer-volume-row span {
@@ -2099,6 +2116,14 @@ td span,
   border-bottom: 1px solid rgba(25, 77, 62, 0.09);
   text-align: left;
   vertical-align: top;
+}
+
+.fertilizer-table-fip {
+  max-width: 220px;
+  overflow-wrap: anywhere;
+  line-height: 1.18;
+  font-size: 0.7rem;
+  font-weight: 800;
 }
 
 .fertilizer-table th {
@@ -2784,7 +2809,34 @@ td span,
 }
 
 .irrigation-bandeja-entry-panel {
+  display: grid;
+  gap: 8px;
   padding: 10px;
+}
+
+.irrigation-bandeja-entry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.irrigation-bandeja-entry-row div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.irrigation-bandeja-entry-row strong {
+  color: #0f3e32;
+  font-size: 0.86rem;
+}
+
+.irrigation-bandeja-entry-row span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 750;
 }
 
 .irrigation-bandeja-entry-panel .panel-header {
@@ -2823,6 +2875,93 @@ td span,
 
 .irrigation-bandeja-form button {
   min-height: 32px;
+  white-space: nowrap;
+}
+
+.irrigation-rain-form {
+  grid-template-columns: minmax(150px, 0.8fr) minmax(120px, 0.7fr) auto 1fr;
+  padding-top: 8px;
+  border-top: 1px solid rgba(4, 108, 82, 0.16);
+}
+
+.irrigation-bandeja-dialog {
+  width: min(720px, calc(100vw - 28px));
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f7fbf9, #ffffff);
+}
+
+.irrigation-bandeja-dialog .dialog-header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.irrigation-bandeja-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.irrigation-bandeja-dialog-form {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #c8ddd5;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.irrigation-bandeja-dialog-form-rain {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.irrigation-bandeja-dialog-form > div {
+  display: grid;
+  gap: 2px;
+}
+
+.irrigation-bandeja-dialog-form strong {
+  color: #0c4a3a;
+  font-size: 0.86rem;
+}
+
+.irrigation-bandeja-dialog-form span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.irrigation-bandeja-dialog-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.irrigation-bandeja-dialog-form input {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.irrigation-bandeja-dialog-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.irrigation-bandeja-dialog-actions button {
+  min-height: 34px;
   white-space: nowrap;
 }
 
@@ -2939,8 +3078,9 @@ td span,
   --bandeja-date-width: 82px;
   --bandeja-value-width: 68px;
   --bandeja-accum-width: 76px;
+  --bandeja-rain-width: 68px;
   --bandeja-historical-width: 112px;
-  width: calc(var(--bandeja-day-width) + var(--bandeja-years) * (var(--bandeja-date-width) + var(--bandeja-value-width) + var(--bandeja-accum-width)) + var(--bandeja-historical-width));
+  width: calc(var(--bandeja-day-width) + var(--bandeja-years) * (var(--bandeja-date-width) + var(--bandeja-value-width) + var(--bandeja-accum-width) + var(--bandeja-rain-width)) + var(--bandeja-historical-width));
   min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
@@ -2963,6 +3103,10 @@ td span,
 
 .irrigation-bandeja-matrix-table col.bandeja-col-accum {
   width: var(--bandeja-accum-width);
+}
+
+.irrigation-bandeja-matrix-table col.bandeja-col-rain {
+  width: var(--bandeja-rain-width);
 }
 
 .irrigation-bandeja-matrix-table col.bandeja-col-historical {
@@ -3107,6 +3251,18 @@ td span,
 .irrigation-bandeja-matrix-table .bandeja-accum.is-carried {
   color: #78939b;
   font-weight: 700;
+}
+
+.irrigation-bandeja-matrix-table .bandeja-rain {
+  background: #eef6ff;
+  color: #1d4f91;
+  font-weight: 800;
+}
+
+.irrigation-bandeja-matrix-table .bandeja-rain.has-rain {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 900;
 }
 
 .irrigation-bandeja-matrix-table .is-unavailable {
@@ -8860,6 +9016,23 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .irrigation-bandeja-entry-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .irrigation-bandeja-entry-row button {
+    width: 100%;
+  }
+
+  .irrigation-bandeja-dialog-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-bandeja-dialog-actions {
+    grid-template-columns: 1fr;
+  }
+
   .irrigation-program-tool-controls {
     grid-template-columns: 1fr 1fr;
   }
@@ -10949,6 +11122,7 @@ body {
     --bandeja-date-width: 72px;
     --bandeja-value-width: 60px;
     --bandeja-accum-width: 66px;
+    --bandeja-rain-width: 58px;
     --bandeja-historical-width: 96px;
   }
 

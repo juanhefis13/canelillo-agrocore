@@ -16,6 +16,9 @@ create table if not exists public.evaporacion_bandeja (
 create index if not exists evaporacion_bandeja_fecha_idx
   on public.evaporacion_bandeja (fecha);
 
+create unique index if not exists evaporacion_bandeja_fecha_uidx
+  on public.evaporacion_bandeja (fecha);
+
 alter table public.evaporacion_bandeja enable row level security;
 
 drop policy if exists evaporacion_bandeja_select on public.evaporacion_bandeja;
@@ -32,8 +35,25 @@ for insert
 to authenticated
 with check (true);
 
+drop policy if exists evaporacion_bandeja_update_auth on public.evaporacion_bandeja;
+create policy evaporacion_bandeja_update_auth
+on public.evaporacion_bandeja
+for update
+to authenticated
+using (true)
+with check (true);
+
+drop policy if exists evaporacion_bandeja_delete_auth on public.evaporacion_bandeja;
+create policy evaporacion_bandeja_delete_auth
+on public.evaporacion_bandeja
+for delete
+to authenticated
+using (true);
+
 grant select on public.evaporacion_bandeja to anon, authenticated;
 grant insert on public.evaporacion_bandeja to authenticated;
+grant update on public.evaporacion_bandeja to authenticated;
+grant delete on public.evaporacion_bandeja to authenticated;
 
 -- Recarga completa desde Excel para evitar duplicados si se ejecuta mas de una vez.
 truncate table public.evaporacion_bandeja;
