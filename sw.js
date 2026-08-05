@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v170-bandeja-legacy-rain-delete";
+const CACHE = "canelillo-agrocore-v196-export-variety-colors";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {

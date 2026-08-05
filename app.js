@@ -262,6 +262,17 @@ let harvestDateToFilter = "";
 let harvestCrewFilter = "Todas";
 let harvestStatusFilter = "Todos";
 let harvestSdpFilter = "Todos";
+let harvestExportSelectedYears = new Set();
+let harvestExportSpeciesFilter = "Todas";
+let harvestExportVarietyFilter = "Todas";
+let harvestExportPotreroFilter = "Todos";
+let harvestExportCalibreMode = "kg";
+let harvestAnalysisSpeciesFilter = "Todas";
+let harvestAnalysisVarietyFilter = "Todas";
+let harvestAnalysisPotreroFilter = "Todos";
+let harvestAnalysisSelectedSpecies = "Todas";
+let harvestAnalysisSelectedYears = new Set();
+let harvestAnalysisMetric = "kg";
 let harvestUniqueCacheSource = null;
 let harvestUniqueCache = [];
 let harvestFilteredCacheSource = null;
@@ -304,6 +315,18 @@ let supabaseSession = loadSession();
 let passwordRecoverySession = null;
 let currentProfile = null;
 let cloudInitialLoadInProgress = false;
+const CLOUD_MODULE_CACHE_META_KEY = "agrocore.cloud.module-cache.v1";
+const CLOUD_MODULE_TTL_MS = {
+  weather: 5 * 60 * 1000,
+  fields: 24 * 60 * 60 * 1000,
+  applications: 5 * 60 * 1000,
+  irrigation: 2 * 60 * 1000,
+  calicatas: 5 * 60 * 1000,
+  harvest: 60 * 1000
+};
+let cloudModuleCacheMeta = loadCloudModuleCacheMeta();
+let cloudLoadedModules = new Set();
+let cloudLoadingModules = new Map();
 const CHILE_HOLIDAYS_2026 = new Set([
   "2026-01-01",
   "2026-04-03",
@@ -346,6 +369,8 @@ const views = {
   reports: document.getElementById("reports"),
   harvestMap: document.getElementById("harvestMap"),
   harvestInfo: document.getElementById("harvestInfo"),
+  harvestExport: document.getElementById("harvestExport"),
+  harvestAnalysis: document.getElementById("harvestAnalysis"),
   masters: document.getElementById("masters")
 };
 
@@ -365,6 +390,8 @@ const titles = {
   reports: "Reportes y ahorro",
   harvestMap: "Mapa de cosecha",
   harvestInfo: "Informacion de cosecha",
+  harvestExport: "Exportacion",
+  harvestAnalysis: "Cosecha Analisis",
   masters: "Maestros del campo"
 };
 
@@ -496,6 +523,138 @@ async function loadCloudProfile() {
   return currentProfile;
 }
 
+function loadCloudModuleCacheMeta() {
+  try {
+    return JSON.parse(localStorage.getItem(CLOUD_MODULE_CACHE_META_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCloudModuleCacheMeta() {
+  try {
+    localStorage.setItem(CLOUD_MODULE_CACHE_META_KEY, JSON.stringify(cloudModuleCacheMeta));
+  } catch (error) {
+    console.warn("No se pudo guardar metadata de cache por modulo", error);
+  }
+}
+
+function cloudModuleHasUsableState(module) {
+  if (module === "weather") return Boolean(state.weatherStationDaily?.length || state.weatherStationLatest);
+  if (module === "fields") return Boolean(state.blocks?.length);
+  if (module === "applications") return Boolean(state.orders?.length || state.products?.length || state.programs?.length);
+  if (module === "irrigation") return Boolean(Object.keys(irrigationHours || {}).length || Object.keys(irrigationProgramHours || {}).length || state.irrigationEvaporation?.length);
+  if (module === "calicatas") return Boolean(state.calicatas?.length);
+  if (module === "harvest") return Boolean(state.harvestRecords?.length || state.harvestCrewSchedule?.length || state.harvestJornales?.length || state.harvestAnalysisRecords?.length || state.harvestExportRecords?.length);
+  return false;
+}
+
+function isCloudModuleFresh(module) {
+  const timestamp = Number(cloudModuleCacheMeta[module] || 0);
+  const ttl = CLOUD_MODULE_TTL_MS[module] || 0;
+  return Boolean(timestamp && ttl && Date.now() - timestamp < ttl && (cloudLoadedModules.has(module) || cloudModuleHasUsableState(module)));
+}
+
+function hydrateCloudLoadedModulesFromCache() {
+  const userId = supabaseSession?.user?.id || "";
+  if (userId && cloudModuleCacheMeta.__userId && cloudModuleCacheMeta.__userId !== userId) {
+    resetCloudModuleCache();
+    return;
+  }
+  if (userId && !cloudModuleCacheMeta.__userId) return;
+  Object.keys(CLOUD_MODULE_TTL_MS).forEach((module) => {
+    if (isCloudModuleFresh(module)) cloudLoadedModules.add(module);
+  });
+}
+
+function markCloudModulesLoaded(modules = []) {
+  const now = Date.now();
+  if (supabaseSession?.user?.id) cloudModuleCacheMeta.__userId = supabaseSession.user.id;
+  modules.forEach((module) => {
+    if (!module || module === "all") return;
+    cloudLoadedModules.add(module);
+    cloudModuleCacheMeta[module] = now;
+  });
+  saveCloudModuleCacheMeta();
+}
+
+function invalidateCloudModules(modules = []) {
+  modules.forEach((module) => {
+    cloudLoadedModules.delete(module);
+    delete cloudModuleCacheMeta[module];
+  });
+  saveCloudModuleCacheMeta();
+}
+
+function resetCloudModuleCache() {
+  cloudLoadedModules = new Set();
+  cloudLoadingModules = new Map();
+  cloudModuleCacheMeta = {};
+  try {
+    localStorage.removeItem(CLOUD_MODULE_CACHE_META_KEY);
+  } catch (error) {
+    console.warn("No se pudo limpiar metadata de cache por modulo", error);
+  }
+}
+
+function cloudModulesForView(view) {
+  if (view === "dashboard") return ["weather"];
+  if (view === "irrigation") {
+    const modules = ["fields", "irrigation"];
+    if (irrigationTab === "bandejas" || irrigationTab === "balance") modules.push("weather");
+    return modules;
+  }
+  if (view === "calicatas") return ["fields", "calicatas"];
+  if (view === "harvestMap" || view === "harvestInfo" || view === "harvestExport" || view === "harvestAnalysis") return ["harvest"];
+  if (["applicationDashboard", "program", "manager", "warehouse", "orders", "execution", "inventory", "prices", "reports", "masters"].includes(view)) {
+    return ["fields", "applications"];
+  }
+  return [];
+}
+
+function cloudModuleLoadingHtml(view) {
+  const label = titles[view] || "Modulo";
+  return `
+    <section class="panel module-loading-panel">
+      <div class="weather-import-loading" role="status" aria-live="polite">
+        <span class="weather-import-spinner" aria-hidden="true"></span>
+        <strong>Cargando ${escapeHtml(label)}</strong>
+        <small>Sincronizando solo los datos necesarios de este modulo...</small>
+      </div>
+    </section>`;
+}
+
+function shouldLoadCloudModule(module, force = false) {
+  if (force) return true;
+  return !isCloudModuleFresh(module);
+}
+
+async function ensureCloudDataForView(view, options = {}) {
+  if (!supabaseSession) return;
+  const force = Boolean(options.force);
+  const modules = [...new Set(cloudModulesForView(view))].filter((module) => shouldLoadCloudModule(module, force));
+  if (!modules.length) return;
+  const key = modules.sort().join("|");
+  if (cloudLoadingModules.has(key)) return cloudLoadingModules.get(key);
+  const task = (async () => {
+    const storageStatus = document.getElementById("storageStatus");
+    if (storageStatus) storageStatus.textContent = `Cargando ${modules.join(", ")} desde Supabase...`;
+    await loadCloudData({ modules, render: false, force });
+    if (currentView === view) render();
+  })().finally(() => cloudLoadingModules.delete(key));
+  cloudLoadingModules.set(key, task);
+  return task;
+}
+
+async function reloadCurrentCloudModules() {
+  const modules = cloudModulesForView(currentView);
+  await loadCloudData({
+    modules: modules.length ? modules : ["weather"],
+    render: false,
+    force: true
+  });
+}
+
 function showAuthenticatedShell(status = "Cargando datos desde Supabase...") {
   cloudInitialLoadInProgress = true;
   setAuthGate(false);
@@ -505,16 +664,20 @@ function showAuthenticatedShell(status = "Cargando datos desde Supabase...") {
 
 async function loadCloudDataInBackground({ toastOnSuccess = false } = {}) {
   try {
-    await loadCloudData();
+    const loadedFromNetwork = shouldLoadCloudModule("weather");
+    if (loadedFromNetwork) {
+      await loadCloudData({ modules: ["weather"], render: false });
+    }
     startCloudSync();
-    if (toastOnSuccess) showToast("Datos cargados desde Supabase");
+    if (currentView === "dashboard") renderDashboard();
+    if (toastOnSuccess) showToast(loadedFromNetwork ? "Inicio cargado desde Supabase" : "Inicio cargado desde cache");
   } catch (error) {
     console.error("Supabase no cargo", error);
     document.getElementById("storageStatus").textContent = `Supabase no cargo: ${error.message}`;
     showToast(`Supabase no cargo: ${error.message}`);
   } finally {
     cloudInitialLoadInProgress = false;
-    render();
+    if (currentView === "dashboard") render();
   }
 }
 
@@ -544,6 +707,8 @@ function normalizeState(rawState) {
   next.harvestOfficialRecords ||= [];
   next.harvestCrewSchedule ||= [];
   next.harvestJornales ||= [];
+  next.harvestAnalysisRecords ||= [];
+  next.harvestExportRecords ||= [];
   const localEquipmentCode = (id) => next.equipment.find((item) => item.id === id)?.code || "";
   next.orders.forEach((order) => {
     order.seasonId ??= next.settings?.currentSeasonId || next.seasons[0]?.id || "";
@@ -726,11 +891,11 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "orders", "execution", "masters"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
     bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return (permissions[normalized] || []).includes(view);
 }
@@ -745,11 +910,11 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
     bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return new Set(viewsByRole[normalized] || [defaultViewForRole(normalized)]);
 }
@@ -4460,7 +4625,7 @@ async function loginSupabase() {
     setGateStatus("Verificando credenciales...", "info");
     const session = await sbAuthPassword(email, password);
     saveSession(session);
-    await loadCloudData();
+    await reloadCurrentCloudModules();
     startCloudSync();
     document.getElementById("authDialog")?.close();
     setAuthGate(false);
@@ -4696,7 +4861,7 @@ async function loginSupabase() {
     await loadCloudProfile();
     document.getElementById("authDialog")?.close();
     setGateStatus("", "info");
-    showAuthenticatedShell("Cargando datos desde Supabase...");
+    showAuthenticatedShell("Cargando inicio desde Supabase...");
     loadCloudDataInBackground();
     showToast("Sesion Supabase iniciada");
   } catch (error) {
@@ -4953,6 +5118,7 @@ async function logoutSupabase() {
     }
   });
   if (CLOUD_ONLY_MODE) localStorage.removeItem(STORAGE_KEY);
+  resetCloudModuleCache();
 
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === currentView));
@@ -4990,7 +5156,19 @@ function switchView(view) {
   });
   Object.entries(views).forEach(([key, element]) => element.classList.toggle("active-view", key === view));
   document.getElementById("viewTitle").textContent = titles[view];
+  const neededModules = [...new Set(cloudModulesForView(view))];
+  const shouldLoad = neededModules.some((module) => shouldLoadCloudModule(module));
+  if (supabaseSession && shouldLoad && views[view]) {
+    views[view].innerHTML = cloudModuleLoadingHtml(view);
+    ensureCloudDataForView(view).catch((error) => {
+      console.error("No se pudo cargar modulo", view, error);
+      views[view].innerHTML = `<section class="panel"><div class="empty-state"><strong>No se pudo cargar ${escapeHtml(titles[view] || view)}</strong><p>${escapeHtml(error.message)}</p></div></section>`;
+      showToast(`No se pudo cargar ${titles[view] || view}: ${error.message}`);
+    });
+    return;
+  }
   render();
+  ensureCloudDataForView(view).catch((error) => console.warn("No se pudo refrescar modulo", view, error));
 }
 
 function render() {
@@ -5011,6 +5189,8 @@ function render() {
     reports: renderReports,
     harvestMap: renderHarvestMap,
     harvestInfo: renderHarvestInfo,
+    harvestExport: renderHarvestExport,
+    harvestAnalysis: renderHarvestAnalysis,
     masters: renderMasters
   };
   renderers[currentView]?.();
@@ -5449,6 +5629,55 @@ function parseWeatherStationExcelRows(matrix) {
   };
 }
 
+function weatherStationReadingKey(row) {
+  const date = stationExcelDate(row?.fecha) || String(row?.fecha || "").slice(0, 10);
+  const time = stationExcelTime(row?.hora) || String(row?.hora || "").slice(0, 8);
+  return date && time ? `${date}|${time}` : "";
+}
+
+async function loadManualRainRowsForRange(firstDate, lastDate) {
+  if (!firstDate || !lastDate) return [];
+  return sbSelectAll(
+    "estacion_climatica",
+    `select=fecha,hora,temp_out,hi_temp,low_temp,humedad,velocidad_viento,precipitacion,fuente&fecha=gte.${firstDate}&fecha=lte.${lastDate}&fuente=eq.bandeja_lluvia_manual&order=fecha.asc,hora.asc`
+  );
+}
+
+function protectWeatherImportManualRainRows(rows, manualRows) {
+  const manualKeys = new Set((manualRows || []).map(weatherStationReadingKey).filter(Boolean));
+  if (!manualKeys.size) return { rows, skipped: 0 };
+  const protectedRows = rows.filter((row) => !manualKeys.has(weatherStationReadingKey(row)));
+  return {
+    rows: protectedRows,
+    skipped: rows.length - protectedRows.length
+  };
+}
+
+async function restoreManualRainRows(manualRows) {
+  const rows = (manualRows || [])
+    .filter((row) => weatherStationReadingKey(row))
+    .map((row) => ({
+      fecha: stationExcelDate(row.fecha) || String(row.fecha).slice(0, 10),
+      hora: stationExcelTime(row.hora) || String(row.hora).slice(0, 8),
+      temp_out: row.temp_out,
+      hi_temp: row.hi_temp,
+      low_temp: row.low_temp,
+      humedad: row.humedad,
+      velocidad_viento: row.velocidad_viento,
+      precipitacion: row.precipitacion,
+      fuente: "bandeja_lluvia_manual"
+    }));
+  if (!rows.length) return;
+  const batchSize = 200;
+  for (let index = 0; index < rows.length; index += batchSize) {
+    await sbFetch("/rest/v1/estacion_climatica?on_conflict=fecha%2Chora", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: JSON.stringify(rows.slice(index, index + batchSize))
+    });
+  }
+}
+
 async function analyzeWeatherStationExcel(event) {
   const input = event.target;
   const file = input.files?.[0];
@@ -5560,9 +5789,28 @@ async function importWeatherStationExcel() {
   const preview = weatherStationImportPreview;
   const rowsToImport = preview?.importRows || preview?.newRows || [];
   if (!rowsToImport.length || !hasRole("admin")) return;
+  let manualRainRows = [];
+  let protectedRowsToImport = rowsToImport;
+  let protectedManualCount = 0;
+  try {
+    manualRainRows = await loadManualRainRowsForRange(preview.firstDate, preview.lastDate);
+    const protectedImport = protectWeatherImportManualRainRows(rowsToImport, manualRainRows);
+    protectedRowsToImport = protectedImport.rows;
+    protectedManualCount = protectedImport.skipped;
+  } catch (error) {
+    showToast(`No se pudo revisar lluvia manual: ${error.message}`);
+    return;
+  }
+  if (!protectedRowsToImport.length) {
+    showToast("No hay lecturas para importar sin tocar lluvia manual");
+    return;
+  }
+  const protectedMessage = protectedManualCount
+    ? `\n\nSe mantendran sin cambios ${protectedManualCount} lecturas de lluvia manual.`
+    : "";
   const confirmation = preview.importMode === "upsert-meteo"
-    ? `Actualizar ${rowsToImport.length} lecturas en estacion_climatica? Esto rellenara humedad, viento y precipitacion en registros existentes.`
-    : `Insertar ${rowsToImport.length} lecturas nuevas en estacion_climatica?`;
+    ? `Actualizar ${protectedRowsToImport.length} lecturas en estacion_climatica? Esto rellenara humedad, viento y precipitacion en registros existentes.${protectedMessage}`
+    : `Insertar ${protectedRowsToImport.length} lecturas nuevas en estacion_climatica?${protectedMessage}`;
   if (!confirm(confirmation)) return;
   const dialog = document.getElementById("weatherStationImportDialog");
   const loadingText = preview.importMode === "upsert-meteo" ? "Actualizando lecturas climaticas..." : "Insertando lecturas nuevas...";
@@ -5570,33 +5818,35 @@ async function importWeatherStationExcel() {
     <div class="modal-body weather-import-modal-body">
       <div class="modal-head"><div><h2>Actualizando base de datos</h2><p>${escapeHtml(preview.fileName)}</p></div></div>
       <div class="weather-import-loading" role="status" aria-live="polite"><span class="weather-import-spinner"></span><strong>${loadingText}</strong></div>
-      <div class="weather-import-progress" id="weatherStationImportProgress"><div><i></i></div><strong>0 de ${number(rowsToImport.length, 0)}</strong></div>
+      <div class="weather-import-progress" id="weatherStationImportProgress"><div><i></i></div><strong>0 de ${number(protectedRowsToImport.length, 0)}</strong></div>
     </div>
   `;
   const batchSize = 500;
   let inserted = 0;
   try {
-    for (let index = 0; index < rowsToImport.length; index += batchSize) {
-      const batch = rowsToImport.slice(index, index + batchSize);
+    for (let index = 0; index < protectedRowsToImport.length; index += batchSize) {
+      const batch = protectedRowsToImport.slice(index, index + batchSize);
       await sbFetch("/rest/v1/estacion_climatica?on_conflict=fecha%2Chora", {
         method: "POST",
         prefer: `${preview.importMode === "upsert-meteo" ? "resolution=merge-duplicates" : "resolution=ignore-duplicates"},return=minimal`,
         body: JSON.stringify(batch)
       });
       inserted += batch.length;
-      updateWeatherStationImportProgress(inserted, rowsToImport.length);
+      updateWeatherStationImportProgress(inserted, protectedRowsToImport.length);
     }
+    await restoreManualRainRows(manualRainRows);
     weatherStationImportPreview = null;
     if (preview.lastDate) {
       weatherStationYear = preview.lastDate.slice(0, 4);
       weatherStationMonth = preview.lastDate.slice(5, 7) || "Todos";
     }
-    await loadCloudData();
+    await reloadCurrentCloudModules();
     dialog.close();
     if (currentView === "dashboard") renderDashboard();
+    const protectedToast = protectedManualCount ? `; ${protectedManualCount} lluvias manuales protegidas` : "";
     showToast(preview.importMode === "upsert-meteo"
-      ? `${inserted} lecturas actualizadas en la base de datos`
-      : `${inserted} lecturas nuevas agregadas a la base de datos`);
+      ? `${inserted} lecturas actualizadas en la base de datos${protectedToast}`
+      : `${inserted} lecturas nuevas agregadas a la base de datos${protectedToast}`);
   } catch (error) {
     renderWeatherStationImportError(preview.fileName, `${inserted} lecturas procesadas antes del error. ${error.message}`);
     showToast(`No se completo la actualizacion: ${error.message}`);
@@ -6003,9 +6253,8 @@ function weatherRainSummaryCard(rows, summary) {
 
 function weatherRainBands(rows) {
   const bands = [
-    { label: "0,1 a 2 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 0 && Number(row.precipitationTotal || 0) <= 2).length, tone: "light" },
-    { label: "2 a 10 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 2 && Number(row.precipitationTotal || 0) <= 10).length, tone: "medium" },
-    { label: "Mayor a 10 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 10).length, tone: "severe" }
+    { label: "0,1 a 20 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 0 && Number(row.precipitationTotal || 0) <= 20).length, tone: "light" },
+    { label: "Sobre 20 mm", value: rows.filter((row) => Number(row.precipitationTotal || 0) > 20).length, tone: "severe" }
   ];
   const maximum = Math.max(1, ...bands.map((band) => band.value));
   return `<div class="weather-frost-bands weather-rain-bands">${bands.map((band) => `
@@ -8302,6 +8551,1515 @@ function renderHarvestInfo() {
   wireHarvestFilters();
 }
 
+function harvestCleanValue(value, fallback = "Sin dato") {
+  const text = String(value ?? "").trim();
+  return text && text.toLowerCase() !== "null" && text.toLowerCase() !== "nan" ? text : fallback;
+}
+
+function harvestDisplaySpecies(value) {
+  const text = harvestCleanValue(value, "Sin especie").toLocaleUpperCase("es");
+  if (["PALTOS", "PALTO", "PALTAS"].includes(text)) return "PALTA";
+  return text;
+}
+
+function harvestDisplayVariety(value) {
+  return harvestCleanValue(value, "Sin variedad").toLocaleUpperCase("es");
+}
+
+function harvestNumericValue(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function harvestExportPercentRatio(value) {
+  const numeric = harvestNumericValue(value);
+  return numeric > 1 ? numeric / 100 : numeric;
+}
+
+function harvestHasExportPercent(row) {
+  return Boolean(row?.hasExportPercent) || harvestNumericValue(row?.exportPercent) > 0;
+}
+
+function harvestJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function harvestRatioLabel(value, digits = 1) {
+  const ratio = harvestNumericValue(value);
+  return `${number(ratio * 100, digits)}%`;
+}
+
+function harvestOptionValues(rows, getValue, allLabel = "Todos") {
+  const values = [...new Set(rows.map(getValue).map((value) => harvestCleanValue(value, "")).filter(Boolean))]
+    .sort((a, b) => comparePotrero(a, b));
+  return [allLabel, ...values];
+}
+
+function harvestSelectOptions(values, selected) {
+  return values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("");
+}
+
+function harvestExportFilteredRows() {
+  return (state.harvestExportRecords || []).filter((row) => {
+    if (harvestExportYearFilter !== "Todos" && String(row.year) !== harvestExportYearFilter) return false;
+    if (harvestExportSpeciesFilter !== "Todas" && row.species !== harvestExportSpeciesFilter) return false;
+    if (harvestExportVarietyFilter !== "Todas" && row.variety !== harvestExportVarietyFilter) return false;
+    if (harvestExportPotreroFilter !== "Todos" && row.potrero !== harvestExportPotreroFilter) return false;
+    return true;
+  });
+}
+
+function harvestExportSummary(rows) {
+  const sentKg = rows.reduce((sum, row) => sum + harvestNumericValue(row.sentKg), 0);
+  const receivedKg = rows.reduce((sum, row) => sum + harvestNumericValue(row.receivedKg), 0);
+  const toProcessKg = rows.reduce((sum, row) => sum + harvestNumericValue(row.toProcessKg), 0);
+  const exportedKg = rows.reduce((sum, row) => sum + harvestNumericValue(row.exportedKg), 0);
+  const exportPercentRows = rows.filter(harvestHasExportPercent);
+  return {
+    rows: rows.length,
+    bins: rows.reduce((sum, row) => sum + harvestNumericValue(row.bins), 0),
+    sentKg,
+    receivedKg,
+    toProcessKg,
+    exportedKg,
+    exportPercent: exportPercentRows.length
+      ? exportPercentRows.reduce((sum, row) => sum + harvestExportPercentRatio(row.exportPercent), 0) / exportPercentRows.length
+      : 0
+  };
+}
+
+function harvestAggregateRows(rows, getKey, getValue, getDetail) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const label = harvestCleanValue(getKey(row));
+    const current = map.get(label) || { label, value: 0, detail: "" };
+    current.value += harvestNumericValue(getValue(row));
+    current.detail = getDetail ? getDetail(row, current) : current.detail;
+    map.set(label, current);
+  });
+  return [...map.values()].sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
+}
+
+function harvestAnalyticsBars(title, rows, options = {}) {
+  const top = rows.slice(0, options.limit || 14);
+  const max = Math.max(1, ...top.map((row) => harvestNumericValue(row.value)));
+  const unit = options.unit || "";
+  const decimals = options.decimals ?? 0;
+  return `
+    <article class="panel harvest-analytics-card">
+      <div class="panel-header">
+        <div><h2>${escapeHtml(title)}</h2></div>
+        ${options.badge ? `<span class="badge">${escapeHtml(options.badge)}</span>` : ""}
+      </div>
+      <div class="harvest-analytics-bars">
+        ${top.map((row) => {
+          const width = Math.max(3, harvestNumericValue(row.value) / max * 100);
+          const active = options.activeValue && row.label === options.activeValue ? " active" : "";
+          const body = `
+            <span title="${htmlAttr(row.detail || row.label)}">${escapeHtml(row.label)}</span>
+            <div><i style="width:${width}%"></i></div>
+            <strong>${number(row.value, decimals)}${unit}</strong>`;
+          if (!options.action) return `<div class="harvest-analytics-bar${active}">${body}</div>`;
+          return `<button class="harvest-analytics-bar${active}" type="button" data-action="${htmlAttr(options.action)}" data-value="${htmlAttr(row.label)}">${body}</button>`;
+        }).join("") || `<div class="empty">Sin datos para mostrar.</div>`}
+      </div>
+    </article>`;
+}
+
+function harvestExportCalibreEntries(rows, key = "calibresKg") {
+  const totals = new Map();
+  rows.forEach((row) => {
+    Object.entries(row[key] || {}).forEach(([calibre, value]) => {
+      const numeric = harvestNumericValue(value);
+      if (!numeric) return;
+      totals.set(calibre, (totals.get(calibre) || 0) + numeric);
+    });
+  });
+  return [...totals.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
+}
+
+function harvestExportCalibreDistribution(rows) {
+  const entries = harvestExportCalibreEntries(rows, "calibresKg");
+  const total = entries.reduce((sum, row) => sum + row.value, 0);
+  return harvestAnalyticsBars("Calibres kg", entries.map((row) => ({
+    ...row,
+    detail: `${number(total ? row.value / total * 100 : 0, 1)}% del total de calibres`
+  })), { unit: " kg", decimals: 0, badge: total ? `${number(total, 0)} kg` : "" });
+}
+
+function harvestExportCalibreByVariety(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const variety = row.variety || "Sin variedad";
+    const potrero = row.potrero || "Sin potrero";
+    const key = `${variety}|||${potrero}`;
+    if (!groups.has(key)) groups.set(key, { variety, potrero, rows: [] });
+    groups.get(key).rows.push(row);
+  });
+  const tableRows = [...groups.values()].map((group) => {
+    const scoped = group.rows;
+    const entries = harvestExportCalibreEntries(scoped, "calibresKg");
+    const total = entries.reduce((sum, row) => sum + row.value, 0);
+    const top = entries.slice(0, 6);
+    return { variety: group.variety, potrero: group.potrero, total, top };
+  }).filter((row) => row.total > 0)
+    .sort((a, b) => b.total - a.total || a.variety.localeCompare(b.variety, "es", { numeric: true }) || a.potrero.localeCompare(b.potrero, "es", { numeric: true }));
+  return `
+    <article class="panel harvest-analytics-card harvest-calibre-table-card">
+      <div class="panel-header"><div><h2>Calibres por variedad y potrero</h2></div></div>
+      <div class="table-wrap harvest-analytics-table">
+        <table>
+          <thead><tr><th>Variedad</th><th>Potrero</th><th>Total calibre kg</th><th>Principales calibres</th></tr></thead>
+          <tbody>${tableRows.map((row) => `
+            <tr>
+              <td data-label="Variedad"><strong>${escapeHtml(row.variety)}</strong></td>
+              <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+              <td data-label="Total calibre kg">${number(row.total, 0)} kg</td>
+              <td data-label="Principales calibres">
+                <div class="harvest-calibre-chips">
+                  ${row.top.map((item) => `<span>${escapeHtml(item.label)} <b>${number(row.total ? item.value / row.total * 100 : 0, 1)}%</b></span>`).join("")}
+                </div>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="4">Sin calibres para el filtro.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </article>`;
+}
+
+function renderHarvestExport() {
+  const allRows = state.harvestExportRecords || [];
+  if (!allRows.length) {
+    views.harvestExport.innerHTML = `
+      <section class="panel">
+        <div class="empty-state">
+          <strong>Sin datos de exportacion</strong>
+          <p>Ejecuta supabase_cosecha_analisis.sql y luego carga los datos de COSECHA SUPA.xlsx.</p>
+        </div>
+      </section>`;
+    return;
+  }
+  const years = ["Todos", ...new Set(allRows.map((row) => String(row.year || "")).filter(Boolean))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : Number(b) - Number(a));
+  const species = harvestOptionValues(allRows, (row) => row.species, "Todas");
+  const scopedForVarieties = allRows.filter((row) => harvestExportSpeciesFilter === "Todas" || row.species === harvestExportSpeciesFilter);
+  const varieties = harvestOptionValues(scopedForVarieties, (row) => row.variety, "Todas");
+  const potreros = harvestOptionValues(scopedForVarieties, (row) => row.potrero, "Todos");
+  if (!years.includes(harvestExportYearFilter)) harvestExportYearFilter = "Todos";
+  if (!species.includes(harvestExportSpeciesFilter)) harvestExportSpeciesFilter = "Todas";
+  if (!varieties.includes(harvestExportVarietyFilter)) harvestExportVarietyFilter = "Todas";
+  if (!potreros.includes(harvestExportPotreroFilter)) harvestExportPotreroFilter = "Todos";
+  const rows = harvestExportFilteredRows();
+  const summary = harvestExportSummary(rows);
+  const byPotrero = harvestAggregateRows(rows, (row) => row.potrero, (row) => row.receivedKg, (row, current) => `${number(current.value, 0)} kg recepcionados`);
+  const byVariety = harvestAggregateRows(rows, (row) => row.variety, (row) => row.exportedKg || row.receivedKg);
+  views.harvestExport.innerHTML = `
+      ${kpi("Enviados kg", number(summary.sentKg, 0), `${number(summary.bins, 0)} bins`)}
+      ${kpi("Recepcionados kg", number(summary.receivedKg, 0), `${number(summary.rows, 0)} registros`)}
+      ${kpi("Kg por procesar", number(summary.toProcessKg, 0), "Pendiente de proceso")}
+      ${kpi("% Expo", harvestRatioLabel(summary.exportPercent), "Columna % expo")}
+    </div>
+    <section class="panel harvest-analytics-panel">
+      <div class="panel-header">
+        <div><h2>Exportacion</h2><p>Analisis por potrero, variedad y calibre.</p></div>
+      </div>
+      <div class="program-filters harvest-analytics-filters">
+        <label>Año<select data-harvest-export-filter="year">${harvestSelectOptions(years, harvestExportYearFilter)}</select></label>
+        <label>Especie<select data-harvest-export-filter="species">${harvestSelectOptions(species, harvestExportSpeciesFilter)}</select></label>
+        <label>Variedad<select data-harvest-export-filter="variety">${harvestSelectOptions(varieties, harvestExportVarietyFilter)}</select></label>
+        <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter)}</select></label>
+        <button class="secondary-button" type="button" data-action="clear-harvest-export-filters">Limpiar</button>
+      </div>
+      <div class="harvest-analytics-grid">
+        ${harvestAnalyticsBars("Recepcionados por potrero", byPotrero, { unit: " kg", decimals: 0 })}
+        ${harvestAnalyticsBars("Exportacion por variedad", byVariety, { unit: " kg", decimals: 0 })}
+        ${harvestExportCalibreDistribution(rows)}
+        ${harvestExportCalibreByVariety(rows)}
+      </div>
+      ${renderHarvestExportTable(rows)}
+    </section>`;
+  wireHarvestExportFilters();
+}
+
+function renderHarvestExportTable(rows) {
+  const grouped = harvestAggregateExportRows(rows);
+  return `
+    <section class="panel harvest-analytics-card harvest-full-width">
+      <div class="panel-header"><div><h2>Resumen exportacion</h2></div></div>
+      <div class="table-wrap harvest-analytics-table">
+        <table>
+          <thead><tr><th>Año</th><th>Potrero</th><th>Especie</th><th>Variedad</th><th>Enviados</th><th>Recepcionados</th><th>Por procesar</th><th>% Expo</th></tr></thead>
+          <tbody>${grouped.map((row) => `
+            <tr>
+              <td data-label="Año">${escapeHtml(row.year)}</td>
+              <td data-label="Potrero"><strong>${escapeHtml(row.potrero)}</strong></td>
+              <td data-label="Especie">${escapeHtml(row.species)}</td>
+              <td data-label="Variedad">${escapeHtml(row.variety)}</td>
+              <td data-label="Enviados">${number(row.sentKg, 0)} kg</td>
+              <td data-label="Recepcionados">${number(row.receivedKg, 0)} kg</td>
+              <td data-label="Por procesar">${number(row.toProcessKg, 0)} kg</td>
+              <td data-label="% Expo">${harvestRatioLabel(row.exportPercent)}</td>
+            </tr>`).join("") || `<tr><td colspan="8">Sin datos para el filtro.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function harvestAggregateExportRows(rows) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = `${row.year}|${row.potrero}|${row.species}|${row.variety}`;
+    const current = map.get(key) || {
+      year: row.year || "",
+      potrero: row.potrero || "Sin potrero",
+      species: row.species || "Sin especie",
+      variety: row.variety || "Sin variedad",
+      sentKg: 0,
+      receivedKg: 0,
+      inProcessKg: 0,
+      toProcessKg: 0,
+      exportedKg: 0,
+      wasteKg: 0,
+      exportPercentSum: 0,
+      exportPercentCount: 0
+    };
+    current.sentKg += harvestNumericValue(row.sentKg);
+    current.receivedKg += harvestNumericValue(row.receivedKg);
+    current.inProcessKg += harvestNumericValue(row.inProcessKg);
+    current.toProcessKg += harvestNumericValue(row.toProcessKg);
+    current.exportedKg += harvestNumericValue(row.exportedKg);
+    current.wasteKg += harvestNumericValue(row.wasteKg);
+    if (harvestHasExportPercent(row)) {
+      current.exportPercentSum += harvestExportPercentRatio(row.exportPercent);
+      current.exportPercentCount += 1;
+    }
+    map.set(key, current);
+  });
+  return [...map.values()].map((row) => ({
+    ...row,
+    exportPercent: harvestExportPercentFromTotals(row.exportedKg, row.inProcessKg, row.exportPercentSum, row.exportPercentCount)
+  })).sort((a, b) => String(b.year).localeCompare(String(a.year)) || comparePotrero(a.potrero, b.potrero) || a.variety.localeCompare(b.variety, "es", { numeric: true }));
+}
+
+function wireHarvestExportFilters() {
+  document.querySelectorAll("[data-harvest-export-filter]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.dataset.harvestExportFilter === "year") harvestExportYearFilter = target.value;
+      if (target.dataset.harvestExportFilter === "species") {
+        harvestExportSpeciesFilter = target.value;
+        harvestExportVarietyFilter = "Todas";
+        harvestExportPotreroFilter = "Todos";
+      }
+      if (target.dataset.harvestExportFilter === "variety") harvestExportVarietyFilter = target.value;
+      if (target.dataset.harvestExportFilter === "potrero") harvestExportPotreroFilter = target.value;
+      renderHarvestExport();
+    });
+  });
+}
+
+function harvestExportYears(rows = state.harvestExportRecords || []) {
+  return [...new Set(rows.map((row) => String(row.year || "")).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+}
+
+function ensureHarvestExportYearSelection(rows = state.harvestExportRecords || []) {
+  const available = harvestExportYears(rows);
+  harvestExportSelectedYears = new Set([...harvestExportSelectedYears].filter((year) => available.includes(year)));
+  if (!harvestExportSelectedYears.size && available.length) {
+    harvestExportSelectedYears = new Set([available.includes("2026") ? "2026" : available[available.length - 1]]);
+  }
+}
+
+function harvestExportFilteredRows() {
+  ensureHarvestExportYearSelection();
+  return (state.harvestExportRecords || []).filter((row) => {
+    if (harvestExportSelectedYears.size && !harvestExportSelectedYears.has(String(row.year))) return false;
+    if (harvestExportSpeciesFilter !== "Todas" && row.species !== harvestExportSpeciesFilter) return false;
+    if (harvestExportVarietyFilter !== "Todas" && row.variety !== harvestExportVarietyFilter) return false;
+    if (harvestExportPotreroFilter !== "Todos" && row.potrero !== harvestExportPotreroFilter) return false;
+    return true;
+  });
+}
+
+function harvestParseCalibreLabel(value) {
+  const text = String(value || "").trim().replace(/\s+/g, " ").replace(/^(CAJ|CAJA|CAJAS)\s+/i, "");
+  const match = text.match(/^(.+?)\s+(CAT\s*1|CAT\s*2)$/i);
+  if (!match) return { calibre: text, category: "" };
+  return {
+    calibre: match[1].trim(),
+    category: match[2].replace(/\s+/g, "").toUpperCase()
+  };
+}
+
+function harvestAggregateExportRows(rows) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = `${row.year}|${row.species}|${row.variety}|${row.potrero}`;
+    const current = map.get(key) || {
+      year: row.year || "",
+      species: row.species || "Sin especie",
+      variety: row.variety || "Sin variedad",
+      potrero: row.potrero || "Sin potrero",
+      bins: 0,
+      sentKg: 0,
+      receivedKg: 0,
+      differenceKg: 0,
+      inProcessKg: 0,
+      toProcessKg: 0,
+      exportedKg: 0,
+      discardKg: 0,
+      precalibreKg: 0,
+      wasteKg: 0,
+      shrinkKg: 0,
+      exportPercentSum: 0,
+      exportPercentCount: 0
+    };
+    current.bins += harvestNumericValue(row.bins);
+    current.sentKg += harvestNumericValue(row.sentKg);
+    current.receivedKg += harvestNumericValue(row.receivedKg);
+    current.differenceKg += harvestNumericValue(row.differenceKg);
+    current.inProcessKg += harvestNumericValue(row.inProcessKg);
+    current.toProcessKg += harvestNumericValue(row.toProcessKg);
+    current.exportedKg += harvestNumericValue(row.exportedKg);
+    current.discardKg += harvestNumericValue(row.discardKg);
+    current.precalibreKg += harvestNumericValue(row.precalibreKg);
+    current.wasteKg += harvestNumericValue(row.wasteKg);
+    current.shrinkKg += harvestNumericValue(row.shrinkKg);
+    if (harvestHasExportPercent(row)) {
+      current.exportPercentSum += harvestExportPercentRatio(row.exportPercent);
+      current.exportPercentCount += 1;
+    }
+    map.set(key, current);
+  });
+  return [...map.values()].map((row) => ({
+    ...row,
+    exportPercent: harvestExportPercentFromTotals(row.exportedKg, row.inProcessKg, row.exportPercentSum, row.exportPercentCount)
+  })).sort((a, b) =>
+    String(b.year).localeCompare(String(a.year), "es", { numeric: true })
+    || a.species.localeCompare(b.species, "es", { numeric: true })
+    || a.variety.localeCompare(b.variety, "es", { numeric: true })
+    || comparePotrero(a.potrero, b.potrero)
+  );
+}
+
+function harvestExportComparisonRows(rows) {
+  const years = [...harvestExportSelectedYears].sort((a, b) => Number(a) - Number(b));
+  const groups = new Map();
+  rows.forEach((row) => {
+    const label = `${row.variety || "Sin variedad"} / ${row.potrero || "Sin potrero"}`;
+    const key = `${row.species || "Sin especie"}|${label}`;
+    if (!groups.has(key)) groups.set(key, { label, species: row.species || "Sin especie", values: new Map(), total: 0 });
+    const value = harvestNumericValue(row.exportedKg);
+    groups.get(key).values.set(String(row.year), (groups.get(key).values.get(String(row.year)) || 0) + value);
+    groups.get(key).total += value;
+  });
+  return [...groups.values()]
+    .filter((row) => row.total)
+    .sort((a, b) => a.species.localeCompare(b.species, "es", { numeric: true }) || b.total - a.total || a.label.localeCompare(b.label, "es", { numeric: true }))
+    .slice(0, 18)
+    .map((group) => ({
+      ...group,
+      bars: years.map((year, index) => ({
+        year,
+        value: group.values.get(year) || 0,
+        color: harvestYearColor(index)
+      }))
+    }));
+}
+
+function harvestExportPercentFromTotals(exportedKg, inProcessKg, percentSum = 0, percentCount = 0) {
+  const process = harvestNumericValue(inProcessKg);
+  if (process) return harvestNumericValue(exportedKg) / process;
+  return percentCount ? percentSum / percentCount : 0;
+}
+
+function harvestExportYearPercentRows(rows) {
+  const byYear = new Map();
+  rows.forEach((row) => {
+    const year = String(row.year || "");
+    if (!year) return;
+    const current = byYear.get(year) || {
+      year,
+      inProcessKg: 0,
+      receivedKg: 0,
+      exportedKg: 0,
+      bins: 0,
+      rows: 0,
+      percentSum: 0,
+      percentCount: 0
+    };
+    current.inProcessKg += harvestNumericValue(row.inProcessKg);
+    current.receivedKg += harvestNumericValue(row.receivedKg);
+    current.exportedKg += harvestNumericValue(row.exportedKg);
+    current.bins += harvestNumericValue(row.bins);
+    current.rows += 1;
+    if (harvestHasExportPercent(row)) {
+      current.percentSum += harvestExportPercentRatio(row.exportPercent);
+      current.percentCount += 1;
+    }
+    byYear.set(year, current);
+  });
+  const items = [...byYear.values()]
+    .map((row) => ({
+      ...row,
+      percent: harvestExportPercentFromTotals(row.exportedKg, row.inProcessKg, row.percentSum, row.percentCount)
+    }))
+    .sort((a, b) => Number(a.year) - Number(b.year));
+  const yearsWithPercent = items.filter((row) => row.percentCount);
+  return {
+    items,
+    average: yearsWithPercent.length ? yearsWithPercent.reduce((sum, row) => sum + row.percent, 0) / yearsWithPercent.length : 0
+  };
+}
+
+function harvestExportVarietyPercentRows(rows) {
+  const byVarietyYear = new Map();
+  rows.forEach((row) => {
+    const year = String(row.year || "");
+    const variety = row.variety || "Sin variedad";
+    if (!year || !variety) return;
+    const key = `${year}|${row.species || "Sin especie"}|${variety}`;
+    const current = byVarietyYear.get(key) || {
+      year,
+      species: row.species || "Sin especie",
+      variety,
+      inProcessKg: 0,
+      exportedKg: 0,
+      percentSum: 0,
+      percentCount: 0
+    };
+    current.inProcessKg += harvestNumericValue(row.inProcessKg);
+    current.exportedKg += harvestNumericValue(row.exportedKg);
+    if (harvestHasExportPercent(row)) {
+      current.percentSum += harvestExportPercentRatio(row.exportPercent);
+      current.percentCount += 1;
+    }
+    byVarietyYear.set(key, current);
+  });
+  return [...byVarietyYear.values()]
+    .map((row) => ({
+      ...row,
+      percent: harvestExportPercentFromTotals(row.exportedKg, row.inProcessKg, row.percentSum, row.percentCount)
+    }))
+    .filter((row) => row.inProcessKg || row.exportedKg || row.percentCount)
+    .sort((a, b) =>
+      a.species.localeCompare(b.species, "es", { numeric: true })
+      || a.variety.localeCompare(b.variety, "es", { numeric: true })
+      || Number(a.year) - Number(b.year)
+    );
+}
+
+function renderHarvestExportPercentSummary(rows) {
+  const { items, average } = harvestExportYearPercentRows(rows);
+  const maxPercent = Math.max(0.01, ...items.map((row) => row.percent));
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-export-percent-summary">
+      <div class="panel-header">
+        <div>
+          <h2>% exportacion promedio por a&ntilde;o</h2>
+          <p>Exportados sobre kg en proceso.</p>
+        </div>
+        <span>${harvestRatioLabel(average)}</span>
+      </div>
+      <div class="harvest-export-percent-list">
+        ${items.map((row, index) => {
+          const diff = row.percent - average;
+          const diffClass = Math.abs(diff) < 0.0001 ? "neutral" : diff > 0 ? "positive" : "negative";
+          const diffLabel = `${diff > 0 ? "+" : ""}${number(diff * 100, 1)} pts`;
+          return `<section class="harvest-export-percent-card">
+            <header>
+              <strong>A&ntilde;o ${escapeHtml(row.year)}</strong>
+              <b>${harvestRatioLabel(row.percent)}</b>
+            </header>
+            <div><i style="width:${Math.max(3, row.percent / maxPercent * 100)}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></i></div>
+            <footer>
+              <small>${number(row.exportedKg, 0)} / ${number(row.inProcessKg, 0)} kg</small>
+              <em class="${diffClass}">${escapeHtml(diffLabel)}</em>
+            </footer>
+          </section>`;
+        }).join("") || `<div class="empty">Sin datos de porcentaje para el filtro.</div>`}
+      </div>
+    </article>`;
+}
+
+function renderHarvestExportVarietyPercentSummary(rows) {
+  const items = harvestExportVarietyPercentRows(rows);
+  const maxPercent = Math.max(0.01, ...items.map((row) => row.percent));
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-export-percent-summary harvest-export-variety-percent-summary">
+      <div class="panel-header">
+        <div>
+          <h2>% exportacion por variedad y a&ntilde;o</h2>
+          <p>Exportados sobre kg en proceso por variedad.</p>
+        </div>
+        <span>${items.length} grupos</span>
+      </div>
+      <div class="harvest-export-percent-list harvest-export-variety-percent-list">
+        ${items.map((row) => {
+          return `<section class="harvest-export-percent-card harvest-export-variety-percent-card">
+          <header>
+            <strong>${escapeHtml(row.variety)}</strong>
+            <b>${harvestRatioLabel(row.percent)}</b>
+          </header>
+          <div><i style="width:${Math.max(3, row.percent / maxPercent * 100)}%; --bar-color:${htmlAttr(harvestVarietyColor(row.variety))}"></i></div>
+          <footer>
+            <small>${escapeHtml(row.species)} · ${escapeHtml(row.year)}</small>
+            <em class="neutral">${number(row.exportedKg, 0)} / ${number(row.inProcessKg, 0)} kg</em>
+          </footer>
+        </section>`;
+        }).join("") || `<div class="empty">Sin datos por variedad para el filtro.</div>`}
+      </div>
+    </article>`;
+}
+
+function renderHarvestExportVarietyPercentSummaryByYear(rows) {
+  const items = harvestExportVarietyPercentRows(rows);
+  const maxPercent = Math.max(0.01, ...items.map((row) => row.percent));
+  const yearGroups = new Map();
+  items.forEach((row) => {
+    const year = String(row.year || "Sin ano");
+    if (!yearGroups.has(year)) yearGroups.set(year, []);
+    yearGroups.get(year).push(row);
+  });
+  const orderedYears = [...yearGroups.entries()].sort((a, b) => String(b[0]).localeCompare(String(a[0]), "es", { numeric: true }));
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-export-percent-summary harvest-export-variety-percent-summary">
+      <div class="panel-header">
+        <div>
+          <h2>% exportacion por variedad y a&ntilde;o</h2>
+          <p>Exportados sobre kg en proceso por variedad.</p>
+        </div>
+        <span>${items.length} grupos</span>
+      </div>
+      <div class="harvest-export-variety-year-stack">
+        ${orderedYears.map(([year, yearRows]) => {
+          const yearExported = yearRows.reduce((sum, row) => sum + harvestNumericValue(row.exportedKg), 0);
+          const yearInProcess = yearRows.reduce((sum, row) => sum + harvestNumericValue(row.inProcessKg), 0);
+          const yearPercent = harvestExportPercentFromTotals(yearExported, yearInProcess);
+          return `<section class="harvest-export-variety-year-block">
+            <header>
+              <div>
+                <strong>A&ntilde;o ${escapeHtml(year)}</strong>
+                <small>${yearRows.length} variedades</small>
+              </div>
+              <b>${harvestRatioLabel(yearPercent)}</b>
+              <span>${number(yearExported, 0)} / ${number(yearInProcess, 0)} kg</span>
+            </header>
+            <div class="harvest-export-percent-list harvest-export-variety-percent-list">
+              ${yearRows.map((row) => `<section class="harvest-export-percent-card harvest-export-variety-percent-card">
+                <header>
+                  <strong>${escapeHtml(row.variety)}</strong>
+                  <b>${harvestRatioLabel(row.percent)}</b>
+                </header>
+                <div><i style="width:${Math.max(3, row.percent / maxPercent * 100)}%; --bar-color:${htmlAttr(harvestVarietyColor(row.variety))}"></i></div>
+                <footer>
+                  <small>${escapeHtml(row.species)}</small>
+                  <em class="neutral">${number(row.exportedKg, 0)} / ${number(row.inProcessKg, 0)} kg</em>
+                </footer>
+              </section>`).join("")}
+            </div>
+          </section>`;
+        }).join("") || `<div class="empty">Sin datos por variedad para el filtro.</div>`}
+      </div>
+    </article>`;
+}
+
+function harvestExportYearTotals(yearRows) {
+  const totals = yearRows.reduce((acc, row) => {
+    acc.bins += harvestNumericValue(row.bins);
+    acc.sentKg += harvestNumericValue(row.sentKg);
+    acc.receivedKg += harvestNumericValue(row.receivedKg);
+    acc.differenceKg += harvestNumericValue(row.differenceKg);
+    acc.inProcessKg += harvestNumericValue(row.inProcessKg);
+    acc.toProcessKg += harvestNumericValue(row.toProcessKg);
+    acc.exportedKg += harvestNumericValue(row.exportedKg);
+    acc.discardKg += harvestNumericValue(row.discardKg);
+    acc.precalibreKg += harvestNumericValue(row.precalibreKg);
+    acc.wasteKg += harvestNumericValue(row.wasteKg);
+    acc.shrinkKg += harvestNumericValue(row.shrinkKg);
+    return acc;
+  }, {
+    bins: 0,
+    sentKg: 0,
+    receivedKg: 0,
+    differenceKg: 0,
+    inProcessKg: 0,
+    toProcessKg: 0,
+    exportedKg: 0,
+    discardKg: 0,
+    precalibreKg: 0,
+    wasteKg: 0,
+    shrinkKg: 0
+  });
+  return {
+    ...totals,
+    exportPercent: harvestExportPercentFromTotals(totals.exportedKg, totals.inProcessKg)
+  };
+}
+
+function renderHarvestExportTableByYear(rows) {
+  const grouped = harvestAggregateExportRows(rows);
+  const yearGroups = new Map();
+  grouped.forEach((row) => {
+    const year = String(row.year || "Sin ano");
+    if (!yearGroups.has(year)) yearGroups.set(year, []);
+    yearGroups.get(year).push(row);
+  });
+  const orderedYears = [...yearGroups.entries()].sort((a, b) => String(b[0]).localeCompare(String(a[0]), "es", { numeric: true }));
+  return `
+    <section class="panel harvest-analytics-card harvest-full-width harvest-export-summary-panel">
+      <div class="panel-header"><div><h2>Resumen exportacion</h2><p>Datos agregados por ano, especie, variedad y potrero.</p></div></div>
+      <div class="table-wrap harvest-analytics-table harvest-export-table-wrap">
+        <table class="harvest-export-main-table">
+          <thead><tr><th>Ano</th><th>Variedad</th><th>Potrero</th><th>Bins</th><th>Enviados</th><th>Recep.</th><th>Dif.</th><th>Proces.</th><th>P/proc.</th><th>Export.</th><th>Desc.</th><th>Precal.</th><th>Desecho</th><th>Merma</th><th>%</th></tr></thead>
+          <tbody>${orderedYears.map(([year, yearRows]) => {
+            let currentSpecies = "";
+            const totals = harvestExportYearTotals(yearRows);
+            return `<tr class="harvest-export-year-row">
+              <td colspan="15"><div><strong>A&ntilde;o ${escapeHtml(year)}</strong><span>${yearRows.length} grupos</span><b>${number(totals.exportedKg, 0)} kg exportados</b></div></td>
+            </tr>${yearRows.map((row) => {
+              const header = row.species !== currentSpecies ? `<tr class="harvest-species-row"><td colspan="15">${escapeHtml(row.species)}</td></tr>` : "";
+              currentSpecies = row.species;
+              return `${header}<tr>
+                <td data-label="Ano">${escapeHtml(row.year)}</td>
+                <td data-label="VARIEDAD"><strong>${escapeHtml(row.variety)}</strong></td>
+                <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+                <td data-label="Nro Bins.">${number(row.bins, 1)}</td>
+                <td data-label="Enviados Kg.">${number(row.sentKg, 0)}</td>
+                <td data-label="Kg Recepcionados.">${number(row.receivedKg, 0)}</td>
+                <td data-label="Dif Kg">${number(row.differenceKg, 0)}</td>
+                <td data-label="Kg Procesados.">${number(row.inProcessKg, 0)}</td>
+                <td data-label="Por Procesar.">${number(row.toProcessKg, 0)}</td>
+                <td data-label="Real Exportado.">${number(row.exportedKg, 0)}</td>
+                <td data-label="Descarte.">${number(row.discardKg, 0)}</td>
+                <td data-label="Precalibre.">${number(row.precalibreKg, 0)}</td>
+                <td data-label="Desecho.">${number(row.wasteKg, 0)}</td>
+                <td data-label="Merma.">${number(row.shrinkKg, 0)}</td>
+                <td data-label="Porcentaje %.">${harvestRatioLabel(row.exportPercent)}</td>
+              </tr>`;
+            }).join("")}<tr class="harvest-export-year-total-row">
+              <td data-label="Ano"><strong>${escapeHtml(year)}</strong></td>
+              <td data-label="VARIEDAD" colspan="2"><strong>Total a&ntilde;o ${escapeHtml(year)}</strong></td>
+              <td data-label="Nro Bins."><strong>${number(totals.bins, 1)}</strong></td>
+              <td data-label="Enviados Kg."><strong>${number(totals.sentKg, 0)}</strong></td>
+              <td data-label="Kg Recepcionados."><strong>${number(totals.receivedKg, 0)}</strong></td>
+              <td data-label="Dif Kg"><strong>${number(totals.differenceKg, 0)}</strong></td>
+              <td data-label="Kg Procesados."><strong>${number(totals.inProcessKg, 0)}</strong></td>
+              <td data-label="Por Procesar."><strong>${number(totals.toProcessKg, 0)}</strong></td>
+              <td data-label="Real Exportado."><strong>${number(totals.exportedKg, 0)}</strong></td>
+              <td data-label="Descarte."><strong>${number(totals.discardKg, 0)}</strong></td>
+              <td data-label="Precalibre."><strong>${number(totals.precalibreKg, 0)}</strong></td>
+              <td data-label="Desecho."><strong>${number(totals.wasteKg, 0)}</strong></td>
+              <td data-label="Merma."><strong>${number(totals.shrinkKg, 0)}</strong></td>
+              <td data-label="Porcentaje %."><strong>${harvestRatioLabel(totals.exportPercent)}</strong></td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="15">Sin datos para el filtro.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function renderHarvestExportComparison(rows) {
+  const items = harvestExportComparisonRows(rows);
+  const max = Math.max(1, ...items.flatMap((item) => item.bars.map((bar) => bar.value)));
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-export-comparison-card">
+      <div class="panel-header"><div><h2>Comparacion anual de real exportado</h2><p>Por variedad y potrero.</p></div></div>
+      <div class="harvest-variety-year-legend">
+        ${[...harvestExportSelectedYears].sort((a, b) => Number(a) - Number(b)).map((year, index) => `<span><i style="--bar-color:${htmlAttr(harvestYearColor(index))}"></i>${escapeHtml(year)}</span>`).join("")}
+      </div>
+      <div class="harvest-export-comparison-list">
+        ${items.map((item) => `<section class="harvest-export-comparison-row">
+          <strong>${escapeHtml(item.label)}</strong>
+          <small>${escapeHtml(item.species)}</small>
+          <div>${item.bars.map((bar) => {
+            const height = bar.value ? Math.max(5, bar.value / max * 100) : 0;
+            return `<span title="${htmlAttr(`${item.label} ${bar.year}: ${number(bar.value, 0)} kg`)}"><b>${number(bar.value, 0)}</b><i style="height:${height}%; --bar-color:${htmlAttr(bar.color)}"></i><em>${escapeHtml(bar.year)}</em></span>`;
+          }).join("")}</div>
+        </section>`).join("") || `<div class="empty">Sin datos para comparar.</div>`}
+      </div>
+    </article>`;
+}
+
+function renderHarvestExportTable(rows) {
+  const grouped = harvestAggregateExportRows(rows);
+  let currentSpecies = "";
+  return `
+    <section class="panel harvest-analytics-card harvest-full-width harvest-export-summary-panel">
+      <div class="panel-header"><div><h2>Resumen exportacion</h2><p>Datos agregados por ano, especie, variedad y potrero.</p></div></div>
+      <div class="table-wrap harvest-analytics-table harvest-export-table-wrap">
+        <table class="harvest-export-main-table">
+          <thead><tr><th>Ano</th><th>Variedad</th><th>Potrero</th><th>Bins</th><th>Enviados</th><th>Recep.</th><th>Dif.</th><th>Proces.</th><th>P/proc.</th><th>Export.</th><th>Desc.</th><th>Precal.</th><th>Desecho</th><th>Merma</th><th>%</th></tr></thead>
+          <tbody>${grouped.map((row) => {
+            const header = row.species !== currentSpecies ? `<tr class="harvest-species-row"><td colspan="15">${escapeHtml(row.species)}</td></tr>` : "";
+            currentSpecies = row.species;
+            return `${header}<tr>
+              <td data-label="Ano">${escapeHtml(row.year)}</td>
+              <td data-label="VARIEDAD"><strong>${escapeHtml(row.variety)}</strong></td>
+              <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+              <td data-label="Nro Bins.">${number(row.bins, 1)}</td>
+              <td data-label="Enviados Kg.">${number(row.sentKg, 0)}</td>
+              <td data-label="Kg Recepcionados.">${number(row.receivedKg, 0)}</td>
+              <td data-label="Dif Kg">${number(row.differenceKg, 0)}</td>
+              <td data-label="Kg Procesados.">${number(row.inProcessKg, 0)}</td>
+              <td data-label="Por Procesar.">${number(row.toProcessKg, 0)}</td>
+              <td data-label="Real Exportado.">${number(row.exportedKg, 0)}</td>
+              <td data-label="Descarte.">${number(row.discardKg, 0)}</td>
+              <td data-label="Precalibre.">${number(row.precalibreKg, 0)}</td>
+              <td data-label="Desecho.">${number(row.wasteKg, 0)}</td>
+              <td data-label="Merma.">${number(row.shrinkKg, 0)}</td>
+              <td data-label="Porcentaje %.">${harvestRatioLabel(row.exportPercent)}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="15">Sin datos para el filtro.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+  </section>`;
+}
+
+function harvestExportCalibreRows(rows, valueKey = "calibresKg") {
+  const pivot = new Map();
+  rows.forEach((row) => {
+    const groupKey = `${row.year}|${row.species}|${row.variety}|${row.potrero}`;
+    Object.entries(row[valueKey] || {}).forEach(([label, value]) => {
+      const numeric = harvestNumericValue(value);
+      if (!numeric) return;
+      const parsed = harvestParseCalibreLabel(label);
+      const category = parsed.category || "General";
+      const key = `${groupKey}|${category}`;
+      const current = pivot.get(key) || {
+        year: row.year || "",
+        species: row.species || "Sin especie",
+        variety: row.variety || "Sin variedad",
+        potrero: row.potrero || "Sin potrero",
+        category,
+        calibres: new Map(),
+        total: 0
+      };
+      current.calibres.set(parsed.calibre, (current.calibres.get(parsed.calibre) || 0) + numeric);
+      current.total += numeric;
+      pivot.set(key, current);
+    });
+  });
+  const rowsOut = [...pivot.values()].sort((a, b) =>
+    String(b.year).localeCompare(String(a.year), "es", { numeric: true })
+    || a.species.localeCompare(b.species, "es", { numeric: true })
+    || a.variety.localeCompare(b.variety, "es", { numeric: true })
+    || comparePotrero(a.potrero, b.potrero)
+    || a.category.localeCompare(b.category, "es", { numeric: true })
+  );
+  return { rows: rowsOut };
+}
+
+function renderHarvestExportCalibreTable(rows, options = {}) {
+  const valueKey = options.valueKey || "calibresKg";
+  const title = options.title || "Calibres kg por especie, variedad y potrero";
+  const subtitle = options.subtitle || "Cada especie muestra solo los calibres con datos en el filtro.";
+  const totalLabel = options.totalLabel || "Total kg";
+  const unitLabel = options.unitLabel || "kg";
+  const modeValue = options.modeValue || "kg";
+  const { rows: calibreRows } = harvestExportCalibreRows(rows, valueKey);
+  const yearGroups = new Map();
+  calibreRows.forEach((row) => {
+    const year = String(row.year || "Sin ano");
+    if (!yearGroups.has(year)) yearGroups.set(year, []);
+    yearGroups.get(year).push(row);
+  });
+  const grandTotal = calibreRows.reduce((sum, row) => sum + harvestNumericValue(row.total), 0);
+  const orderedYears = [...yearGroups.entries()].sort((a, b) => String(b[0]).localeCompare(String(a[0]), "es", { numeric: true }));
+  return `
+    <section class="panel harvest-analytics-card harvest-full-width harvest-export-calibre-menu harvest-export-calibre-panel">
+      <div class="harvest-export-calibre-header">
+        <div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        <label>
+          Vista
+          <select data-harvest-export-calibre-mode>
+            <option value="kg" ${modeValue === "kg" ? "selected" : ""}>Calibres por kg</option>
+            <option value="cajas" ${modeValue === "cajas" ? "selected" : ""}>Cajas</option>
+          </select>
+        </label>
+        <strong>${escapeHtml(totalLabel)}: ${number(grandTotal, 0)}</strong>
+      </div>
+      <div class="harvest-calibre-year-stack">
+        ${orderedYears.map(([year, yearRows]) => {
+          const yearTotal = yearRows.reduce((sum, row) => sum + harvestNumericValue(row.total), 0);
+          const speciesGroups = new Map();
+          yearRows.forEach((row) => {
+            if (!speciesGroups.has(row.species)) speciesGroups.set(row.species, []);
+            speciesGroups.get(row.species).push(row);
+          });
+          return `<section class="harvest-calibre-year-block">
+            <header>
+              <strong>A&ntilde;o ${escapeHtml(year)}</strong>
+              <span>${escapeHtml(totalLabel)}: ${number(yearTotal, 0)} ${escapeHtml(unitLabel)}</span>
+            </header>
+            <div class="harvest-calibre-species-stack">
+              ${[...speciesGroups.entries()].map(([species, speciesRows]) => {
+                const speciesTotal = speciesRows.reduce((sum, row) => sum + harvestNumericValue(row.total), 0);
+                const calibres = [...new Set(speciesRows.flatMap((row) => [...row.calibres.keys()]))]
+                  .sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
+                const colSpan = 3 + calibres.length + 2;
+                return `<article class="harvest-calibre-species-block">
+                  <h3><span>${escapeHtml(species)}</span><b>${escapeHtml(totalLabel)}: ${number(speciesTotal, 0)}</b></h3>
+                  <div class="table-wrap harvest-analytics-table harvest-calibre-table-wrap">
+                    <table class="harvest-export-calibre-table">
+                      <thead><tr><th>Var.</th><th>Pot.</th><th>Cat.</th>${calibres.map((calibre) => `<th>${escapeHtml(calibre)}</th>`).join("")}<th>${escapeHtml(totalLabel)}</th><th>%</th></tr></thead>
+                      <tbody>${speciesRows.map((row) => `<tr>
+                        <td data-label="Variedad"><strong>${escapeHtml(row.variety)}</strong></td>
+                        <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+                        <td data-label="Categoria">${escapeHtml(row.category)}</td>
+                        ${calibres.map((calibre) => {
+                          const value = row.calibres.get(calibre) || 0;
+                          const percent = row.total ? value / row.total : 0;
+                          return `<td data-label="${htmlAttr(calibre)}">${value ? `<strong>${number(value, 0)}</strong><small>${harvestRatioLabel(percent)}</small>` : ""}</td>`;
+                        }).join("")}
+                        <td data-label="${htmlAttr(totalLabel)}"><strong>${number(row.total, 0)}</strong></td>
+                        <td data-label="%"><strong>100%</strong><small>${escapeHtml(unitLabel)}</small></td>
+                      </tr>`).join("") || `<tr><td colspan="${colSpan}">Sin datos para esta especie.</td></tr>`}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>`;
+              }).join("")}
+            </div>
+          </section>`;
+        }).join("") || `<div class="empty">Sin datos para el filtro.</div>`}
+      </div>
+    </section>`;
+}
+
+function renderHarvestExport() {
+  const allRows = state.harvestExportRecords || [];
+  if (!allRows.length) {
+    views.harvestExport.innerHTML = `
+      <section class="panel">
+        <div class="empty-state">
+          <strong>Sin datos de exportacion</strong>
+          <p>Ejecuta supabase_cosecha_analisis.sql y luego carga los datos de COSECHA SUPA.xlsx.</p>
+        </div>
+      </section>`;
+    return;
+  }
+  ensureHarvestExportYearSelection(allRows);
+  const years = harvestExportYears(allRows);
+  const species = harvestOptionValues(allRows, (row) => row.species, "Todas");
+  const scopedForVarieties = allRows.filter((row) => harvestExportSpeciesFilter === "Todas" || row.species === harvestExportSpeciesFilter);
+  const varieties = harvestOptionValues(scopedForVarieties, (row) => row.variety, "Todas");
+  const potreros = harvestOptionValues(scopedForVarieties, (row) => row.potrero, "Todos");
+  if (!species.includes(harvestExportSpeciesFilter)) harvestExportSpeciesFilter = "Todas";
+  if (!varieties.includes(harvestExportVarietyFilter)) harvestExportVarietyFilter = "Todas";
+  if (!potreros.includes(harvestExportPotreroFilter)) harvestExportPotreroFilter = "Todos";
+  const rows = harvestExportFilteredRows();
+  const calibreMode = harvestExportCalibreMode === "cajas" ? "cajas" : "kg";
+  const calibreConfig = calibreMode === "cajas"
+    ? {
+      valueKey: "calibresCajas",
+      title: "Cajas por calibre",
+      subtitle: "Datos CAJ agrupados por calibre y categoria.",
+      totalLabel: "Total cajas",
+      unitLabel: "cajas",
+      modeValue: "cajas"
+    }
+    : {
+      valueKey: "calibresKg",
+      title: "Calibres por kg",
+      subtitle: "Distribucion de kilos por calibre y categoria.",
+      totalLabel: "Total kg",
+      unitLabel: "kg",
+      modeValue: "kg"
+    };
+  views.harvestExport.innerHTML = `
+    <section class="panel harvest-analytics-panel">
+      <div class="panel-header">
+        <div><h2>Exportacion</h2><p>Resumen de exportacion, proceso y calibres por ano.</p></div>
+      </div>
+      <div class="harvest-export-filter-panel">
+        <div class="harvest-export-filter-title">
+          <strong>Filtros</strong>
+          <span>${number(rows.length, 0)} de ${number(allRows.length, 0)} registros</span>
+        </div>
+        <div class="harvest-export-filter-grid">
+          <label>Especie<select data-harvest-export-filter="species">${harvestSelectOptions(species, harvestExportSpeciesFilter)}</select></label>
+          <label>Variedad<select data-harvest-export-filter="variety">${harvestSelectOptions(varieties, harvestExportVarietyFilter)}</select></label>
+          <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter)}</select></label>
+          <div class="harvest-export-years-field">
+            <span>A&ntilde;os</span>
+            <div class="harvest-year-checks" aria-label="Anos exportacion">
+              ${years.map((year) => `<label><input data-harvest-export-year="${htmlAttr(year)}" type="checkbox" ${harvestExportSelectedYears.has(year) ? "checked" : ""}>${escapeHtml(year)}</label>`).join("")}
+            </div>
+          </div>
+          <button class="secondary-button" type="button" data-action="clear-harvest-export-filters">Limpiar</button>
+        </div>
+      </div>
+      ${renderHarvestExportPercentSummary(rows)}
+      ${renderHarvestExportVarietyPercentSummaryByYear(rows)}
+      <div class="harvest-analytics-grid">
+        ${renderHarvestExportComparison(rows)}
+      </div>
+      ${renderHarvestExportTableByYear(rows)}
+      ${renderHarvestExportCalibreTable(rows, calibreConfig)}
+    </section>`;
+  wireHarvestExportFilters();
+}
+
+function wireHarvestExportFilters() {
+  document.querySelectorAll("[data-harvest-export-filter]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.dataset.harvestExportFilter === "species") {
+        harvestExportSpeciesFilter = target.value;
+        harvestExportVarietyFilter = "Todas";
+        harvestExportPotreroFilter = "Todos";
+      }
+      if (target.dataset.harvestExportFilter === "variety") harvestExportVarietyFilter = target.value;
+      if (target.dataset.harvestExportFilter === "potrero") harvestExportPotreroFilter = target.value;
+      renderHarvestExport();
+    });
+  });
+  document.querySelectorAll("[data-harvest-export-year]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const year = event.target.dataset.harvestExportYear;
+      if (event.target.checked) harvestExportSelectedYears.add(year);
+      else if (harvestExportSelectedYears.size > 1) harvestExportSelectedYears.delete(year);
+      else {
+        event.target.checked = true;
+        showToast("Manten al menos un ano seleccionado");
+        return;
+      }
+      renderHarvestExport();
+    });
+  });
+  document.querySelectorAll("[data-harvest-export-calibre-mode]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      harvestExportCalibreMode = event.target.value === "cajas" ? "cajas" : "kg";
+      renderHarvestExport();
+    });
+  });
+}
+
+function harvestAnalysisYears(rows = state.harvestAnalysisRecords || []) {
+  return [...new Set(rows.map((row) => String(row.year || "")).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+}
+
+function ensureHarvestAnalysisYearSelection(rows = state.harvestAnalysisRecords || []) {
+  const available = harvestAnalysisYears(rows);
+  harvestAnalysisSelectedYears = new Set([...harvestAnalysisSelectedYears].filter((year) => available.includes(year)));
+  if (!harvestAnalysisSelectedYears.size) harvestAnalysisSelectedYears = new Set(available);
+}
+
+function harvestAnalysisFilteredRows() {
+  ensureHarvestAnalysisYearSelection();
+  return (state.harvestAnalysisRecords || []).filter((row) => {
+    if (harvestAnalysisSelectedYears.size && !harvestAnalysisSelectedYears.has(String(row.year))) return false;
+    if (harvestAnalysisSpeciesFilter !== "Todas" && row.species !== harvestAnalysisSpeciesFilter) return false;
+    if (harvestAnalysisVarietyFilter !== "Todas" && row.variety !== harvestAnalysisVarietyFilter) return false;
+    if (harvestAnalysisPotreroFilter !== "Todos" && row.potrero !== harvestAnalysisPotreroFilter) return false;
+    return true;
+  });
+}
+
+function harvestAnalysisMetricValue(row) {
+  return harvestAnalysisMetric === "bins" ? harvestNumericValue(row.totalBins) : harvestNumericValue(row.kgTotal);
+}
+
+function harvestAnalysisMetricUnit() {
+  return harvestAnalysisMetric === "bins" ? " bins" : " kg";
+}
+
+function harvestAnalysisMetricLabel() {
+  return harvestAnalysisMetric === "bins" ? "Bins" : "Kg";
+}
+
+function harvestAnalysisMetricDecimals() {
+  return harvestAnalysisMetric === "bins" ? 1 : 0;
+}
+
+function harvestAnalysisSummary(rows) {
+  const kg = rows.reduce((sum, row) => sum + harvestNumericValue(row.kgTotal), 0);
+  const bins = rows.reduce((sum, row) => sum + harvestNumericValue(row.totalBins), 0);
+  return {
+    kg,
+    bins,
+    kgPerBin: bins ? kg / bins : 0,
+    years: new Set(rows.map((row) => row.year).filter(Boolean)).size
+  };
+}
+
+const HARVEST_YEAR_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#d97706",
+  "#7c3aed",
+  "#dc2626",
+  "#059669",
+  "#0891b2",
+  "#be123c"
+];
+
+const HARVEST_VARIETY_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#d97706",
+  "#7c3aed",
+  "#be123c",
+  "#059669",
+  "#0891b2",
+  "#9333ea",
+  "#ea580c",
+  "#15803d",
+  "#0369a1",
+  "#b45309",
+  "#c026d3",
+  "#047857"
+];
+
+function harvestYearColor(index) {
+  return HARVEST_YEAR_COLORS[index % HARVEST_YEAR_COLORS.length];
+}
+
+function harvestStablePaletteColor(value, palette, fallbackIndex = 0) {
+  const text = String(value || "");
+  const hash = [...text].reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, fallbackIndex);
+  return palette[hash % palette.length];
+}
+
+function harvestVarietyColor(variety) {
+  return harvestStablePaletteColor(variety || "Sin variedad", HARVEST_VARIETY_COLORS);
+}
+
+function harvestMonthDayValue(dateValue) {
+  const match = String(dateValue || "").slice(0, 10).match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 100 + Number(match[2]);
+}
+
+function harvestTodayDayMonthLabel() {
+  const today = todayChileIso();
+  const match = today.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return match ? `${match[2]}-${match[1]}` : "hoy";
+}
+
+function harvestAnalysisRowInComparison(row, year, untilToday = false) {
+  if (String(row.year) !== String(year)) return false;
+  if (!untilToday) return true;
+  const todayMonthDay = harvestMonthDayValue(todayChileIso());
+  const monthDay = harvestMonthDayValue(row.date);
+  return monthDay !== null && monthDay <= todayMonthDay;
+}
+
+function harvestComparisonDifference(current, previousValues = []) {
+  const validPrevious = previousValues.filter((value) => Number.isFinite(Number(value)));
+  if (!validPrevious.length) return null;
+  const baseline = validPrevious.reduce((sum, value) => sum + Number(value || 0), 0) / validPrevious.length;
+  const diff = Number(current || 0) - baseline;
+  const percent = baseline ? diff / baseline * 100 : null;
+  return { baseline, diff, percent };
+}
+
+function harvestDifferenceClass(diff) {
+  if (!diff || Math.abs(diff.diff) < 0.0001) return "neutral";
+  return diff.diff > 0 ? "positive" : "negative";
+}
+
+function harvestDifferenceLabel(diff, unit, decimals) {
+  if (!diff) return "";
+  const sign = diff.diff > 0 ? "+" : "";
+  const percent = diff.percent === null ? "" : ` (${sign}${number(diff.percent, 1)}%)`;
+  return `Dif. ${sign}${number(diff.diff, decimals)}${unit}${percent}`;
+}
+
+function renderHarvestVarietyYearComparison(title, rows, options = {}) {
+  const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b));
+  const varieties = harvestAggregateRows(rows, (row) => row.variety, harvestAnalysisMetricValue).map((row) => row.label);
+  const values = new Map();
+  varieties.forEach((variety) => {
+    years.forEach((year) => {
+      const value = rows
+        .filter((row) => row.variety === variety && harvestAnalysisRowInComparison(row, year, options.untilToday))
+        .reduce((sum, row) => sum + harvestAnalysisMetricValue(row), 0);
+      values.set(`${variety}|${year}`, value);
+    });
+  });
+  const max = Math.max(1, ...values.values());
+  const decimals = harvestAnalysisMetricDecimals();
+  const unit = harvestAnalysisMetricUnit();
+  const totalsByYear = years.map((year) => ({
+    year,
+    value: varieties.reduce((sum, variety) => sum + (values.get(`${variety}|${year}`) || 0), 0)
+  }));
+  const selectedTotal = totalsByYear.reduce((sum, row) => sum + row.value, 0);
+  const latestYear = years[years.length - 1];
+  const previousYears = years.slice(0, -1);
+  const latestTotal = totalsByYear.find((row) => row.year === latestYear)?.value || 0;
+  const totalDiff = options.showDifference
+    ? harvestComparisonDifference(latestTotal, previousYears.map((year) => totalsByYear.find((row) => row.year === year)?.value || 0))
+    : null;
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-variety-year-card">
+      <div class="panel-header">
+        <div>
+          <h2>${escapeHtml(title)}</h2>
+          ${options.subtitle ? `<p>${escapeHtml(options.subtitle)}</p>` : ""}
+        </div>
+      </div>
+      <div class="harvest-variety-year-totals">
+        <span class="harvest-total-selected"><b>Total seleccionados</b>${number(selectedTotal, decimals)}${unit}</span>
+        ${totalsByYear.map((row) => `<span><b>${escapeHtml(row.year)}</b>${number(row.value, decimals)}${unit}</span>`).join("")}
+        ${totalDiff ? `<em class="${harvestDifferenceClass(totalDiff)}">${escapeHtml(harvestDifferenceLabel(totalDiff, unit, decimals))}</em>` : ""}
+      </div>
+      <div class="harvest-variety-year-legend">
+        ${years.map((year, index) => `<span><i style="--bar-color:${htmlAttr(harvestYearColor(index))}"></i>${escapeHtml(year)}</span>`).join("")}
+      </div>
+      <div class="harvest-variety-year-groups">
+        ${varieties.map((variety) => {
+          const total = years.reduce((sum, year) => sum + (values.get(`${variety}|${year}`) || 0), 0);
+          const latestValue = values.get(`${variety}|${latestYear}`) || 0;
+          const varietyDiff = options.showDifference
+            ? harvestComparisonDifference(latestValue, previousYears.map((year) => values.get(`${variety}|${year}`) || 0))
+            : null;
+          const rankByYear = new Map(years
+            .map((year) => ({ year, value: values.get(`${variety}|${year}`) || 0 }))
+            .filter((item) => item.value > 0)
+            .sort((a, b) => b.value - a.value || Number(a.year) - Number(b.year))
+            .slice(0, 3)
+            .map((item, index) => [item.year, index + 1]));
+          return `<section class="harvest-variety-year-group">
+            <header>
+              <div>
+                <strong>${escapeHtml(variety)}</strong>
+                ${varietyDiff ? `<em class="${harvestDifferenceClass(varietyDiff)}">${escapeHtml(harvestDifferenceLabel(varietyDiff, unit, decimals))}</em>` : ""}
+              </div>
+              <span>${number(total, decimals)}${unit}</span>
+            </header>
+            <div class="harvest-variety-year-bars">
+              ${years.map((year, index) => {
+                const value = values.get(`${variety}|${year}`) || 0;
+                const height = value > 0 ? Math.max(4, value / max * 100) : 0;
+                const rank = rankByYear.get(year);
+                return `<div class="harvest-variety-year-bar" title="${htmlAttr(`${variety} ${year}: ${number(value, decimals)}${unit}`)}">
+                  <strong>${number(value, decimals)}</strong>
+                  <div>
+                    ${rank ? `<em class="harvest-bar-medal rank-${rank}" title="${rank === 1 ? "1 dorado" : rank === 2 ? "2 plata" : "3 bronce"}">${rank}</em>` : ""}
+                    <i style="height:${height}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></i>
+                  </div>
+                  <span>${escapeHtml(year)}</span>
+                </div>`;
+              }).join("")}
+            </div>
+          </section>`;
+        }).join("") || `<div class="empty">Sin variedades para comparar.</div>`}
+      </div>
+    </article>`;
+}
+
+function harvestUniqueValues(rows, getValue) {
+  return [...new Set(rows.map(getValue).map((value) => harvestCleanValue(value, "")).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
+}
+
+function harvestStartDateKey(year, species, variety) {
+  return `${year || ""}|${harvestDisplaySpecies(species)}|${harvestDisplayVariety(variety)}`;
+}
+
+function harvestStartDateRows(rows = []) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const date = String(row.date || "").slice(0, 10);
+    if (!row.year || !row.species || !row.variety || !date) return;
+    const key = harvestStartDateKey(row.year, row.species, row.variety);
+    const entry = groups.get(key) || {
+      key,
+      year: Number(row.year) || row.year,
+      species: row.species,
+      variety: row.variety,
+      detectedStart: "",
+      detectedEnd: "",
+      kg: 0,
+      bins: 0
+    };
+    entry.detectedStart = !entry.detectedStart || date < entry.detectedStart ? date : entry.detectedStart;
+    entry.detectedEnd = !entry.detectedEnd || date > entry.detectedEnd ? date : entry.detectedEnd;
+    entry.kg += harvestNumericValue(row.kgTotal);
+    entry.bins += harvestNumericValue(row.totalBins);
+    groups.set(key, entry);
+  });
+
+  return [...groups.values()].sort((a, b) => {
+    const yearDiff = Number(b.year) - Number(a.year);
+    if (yearDiff) return yearDiff;
+    const speciesDiff = a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" });
+    if (speciesDiff) return speciesDiff;
+    return a.variety.localeCompare(b.variety, "es", { numeric: true, sensitivity: "base" });
+  });
+}
+
+function harvestDaysBetween(startDate, endDate) {
+  if (!startDate || !endDate) return null;
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null;
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function harvestStartDiffClass(days) {
+  if (days === null) return "empty";
+  if (days === 0) return "same";
+  return days > 0 ? "late" : "early";
+}
+
+function harvestStartDiffLabel(days) {
+  if (days === null) return "-";
+  if (days === 0) return "Misma fecha";
+  return days > 0 ? `${days} dias despues` : `${Math.abs(days)} dias antes`;
+}
+
+function harvestStartDateMatrixRows(startRows = []) {
+  const matrix = new Map();
+  startRows.forEach((row) => {
+    const key = `${row.species}|${row.variety}`;
+    const entry = matrix.get(key) || {
+      key,
+      species: row.species,
+      variety: row.variety,
+      years: new Map()
+    };
+    entry.years.set(String(row.year), row);
+    matrix.set(key, entry);
+  });
+  return [...matrix.values()].sort((a, b) => {
+    const speciesDiff = a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" });
+    if (speciesDiff) return speciesDiff;
+    return a.variety.localeCompare(b.variety, "es", { numeric: true, sensitivity: "base" });
+  });
+}
+
+function renderHarvestStartDatesPanel(rows, allRows, years) {
+  const startRows = harvestStartDateRows(rows);
+  const yearOptions = [...new Set(years.map(String))].sort((a, b) => Number(b) - Number(a));
+  const visibleYears = [...(harvestAnalysisSelectedYears.size ? harvestAnalysisSelectedYears : new Set(yearOptions))]
+    .map(String)
+    .sort((a, b) => Number(b) - Number(a));
+  const matrixRows = harvestStartDateMatrixRows(startRows);
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-start-card">
+      <div class="panel-header">
+        <div>
+          <h2>Inicio de cosecha</h2>
+          <p>Primera fecha registrada por variedad y ano segun Supabase.</p>
+        </div>
+      </div>
+      <div class="harvest-start-matrix-wrap">
+        <div class="harvest-start-matrix" style="--harvest-start-years:${Math.max(1, visibleYears.length)}">
+          <div class="harvest-start-matrix-head">
+            <strong>Variedad</strong>
+            ${visibleYears.map((year) => `<span>A&ntilde;o ${escapeHtml(year)}</span>`).join("")}
+          </div>
+          ${matrixRows.map((entry) => `
+            <div class="harvest-start-matrix-row">
+              <div class="harvest-start-variety">
+                <strong>${escapeHtml(entry.species)}</strong>
+                <span>${escapeHtml(entry.variety)}</span>
+              </div>
+              ${visibleYears.map((year) => {
+                const row = entry.years.get(String(year)) || { year, species: entry.species, variety: entry.variety, detectedStart: "" };
+                const displayDate = row.detectedStart || "";
+                return `<div class="harvest-start-cell ${displayDate ? "is-detected" : "is-empty"}" title="${htmlAttr(`${entry.species} ${entry.variety} ${year}`)}">
+                  <b>${escapeHtml(year)}</b>
+                  <strong>${displayDate ? `Fecha: ${printDate(displayDate)}` : "-"}</strong>
+                  <small>${displayDate ? `${number(row.kg, 0)} kg - ${number(row.bins, 1)} bins` : "Sin registro"}</small>
+                </div>`;
+              }).join("")}
+            </div>`).join("") || `<div class="empty">Sin datos para el filtro seleccionado.</div>`}
+        </div>
+      </div>
+    </article>`;
+}
+
+function renderHarvestAnalysis() {
+  const allRows = state.harvestAnalysisRecords || [];
+  if (!allRows.length) {
+    views.harvestAnalysis.innerHTML = `
+      <section class="panel">
+        <div class="empty-state">
+          <strong>Sin datos de cosecha analisis</strong>
+          <p>Ejecuta supabase_cosecha_analisis.sql y luego carga los datos de COSECHA SUPA.xlsx.</p>
+        </div>
+      </section>`;
+    return;
+  }
+  ensureHarvestAnalysisYearSelection(allRows);
+  const years = harvestAnalysisYears(allRows);
+  const species = harvestOptionValues(allRows, (row) => row.species, "Todas");
+  const scopedForVarieties = allRows.filter((row) => harvestAnalysisSpeciesFilter === "Todas" || row.species === harvestAnalysisSpeciesFilter);
+  const varieties = harvestOptionValues(scopedForVarieties, (row) => row.variety, "Todas");
+  const potreros = harvestOptionValues(scopedForVarieties, (row) => row.potrero, "Todos");
+  if (!species.includes(harvestAnalysisSpeciesFilter)) harvestAnalysisSpeciesFilter = "Todas";
+  if (!varieties.includes(harvestAnalysisVarietyFilter)) harvestAnalysisVarietyFilter = "Todas";
+  if (!potreros.includes(harvestAnalysisPotreroFilter)) harvestAnalysisPotreroFilter = "Todos";
+  const rows = harvestAnalysisFilteredRows();
+  views.harvestAnalysis.innerHTML = `
+    <section class="panel harvest-analytics-panel">
+      <div class="panel-header">
+        <div><h2>Cosecha Analisis</h2><p>Comparativo historico por especie, variedad, potrero y bloque.</p></div>
+      </div>
+      <div class="program-filters harvest-analytics-filters harvest-analysis-filters">
+        <label>Especie<select data-harvest-analysis-filter="species">${harvestSelectOptions(species, harvestAnalysisSpeciesFilter)}</select></label>
+        <label>Variedad<select data-harvest-analysis-filter="variety">${harvestSelectOptions(varieties, harvestAnalysisVarietyFilter)}</select></label>
+        <label>Potrero<select data-harvest-analysis-filter="potrero">${harvestSelectOptions(potreros, harvestAnalysisPotreroFilter)}</select></label>
+        <label>Medida<select data-harvest-analysis-filter="metric">
+          <option value="kg" ${harvestAnalysisMetric === "kg" ? "selected" : ""}>Kg totales</option>
+          <option value="bins" ${harvestAnalysisMetric === "bins" ? "selected" : ""}>Bins</option>
+        </select></label>
+        <div class="harvest-year-checks" aria-label="Años">
+          ${years.map((year) => `<label><input data-harvest-analysis-year="${htmlAttr(year)}" type="checkbox" ${harvestAnalysisSelectedYears.has(year) ? "checked" : ""}>${escapeHtml(year)}</label>`).join("")}
+        </div>
+        <button class="secondary-button" type="button" data-action="clear-harvest-analysis-filters">Limpiar</button>
+      </div>
+      <div class="harvest-analytics-grid">
+        ${renderHarvestStartDatesPanel(rows, allRows, years)}
+        ${renderHarvestVarietyYearComparison(`Comparacion por variedad - total anual - ${harvestAnalysisMetricLabel()}`, rows, { subtitle: "Suma completa de cada ano seleccionado" })}
+        ${renderHarvestVarietyYearComparison(`Comparacion por variedad - avance al ${harvestTodayDayMonthLabel()} - ${harvestAnalysisMetricLabel()}`, rows, { untilToday: true, showDifference: true, subtitle: "Suma hasta la misma fecha calendario de cada ano" })}
+        ${renderHarvestPotreroBlockSummary(rows)}
+      </div>
+    </section>`;
+  wireHarvestAnalysisFilters();
+}
+
+function renderHarvestPotreroBlockSummary(rows) {
+  const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b));
+  const decimals = harvestAnalysisMetricDecimals();
+  const unit = harvestAnalysisMetricUnit();
+  const speciesGroups = new Map();
+  rows.forEach((row) => {
+    const year = String(row.year || "");
+    if (!year || (years.length && !years.includes(year))) return;
+    const species = harvestCleanValue(row.species, "Sin especie");
+    const variety = harvestCleanValue(row.variety, "Sin variedad");
+    const potrero = harvestCleanValue(row.potrero, "Sin potrero");
+    const value = harvestAnalysisMetricValue(row);
+    const speciesEntry = speciesGroups.get(species) || { species, total: 0, varieties: new Map() };
+    const varietyEntry = speciesEntry.varieties.get(variety) || { variety, total: 0, potreros: new Map() };
+    const potreroEntry = varietyEntry.potreros.get(potrero) || { potrero, total: 0, years: new Map() };
+    const currentYearValue = harvestNumericValue(potreroEntry.years.get(year));
+    potreroEntry.years.set(year, currentYearValue + value);
+    potreroEntry.total += value;
+    varietyEntry.total += value;
+    speciesEntry.total += value;
+    varietyEntry.potreros.set(potrero, potreroEntry);
+    speciesEntry.varieties.set(variety, varietyEntry);
+    speciesGroups.set(species, speciesEntry);
+  });
+  const sections = [...speciesGroups.values()]
+    .sort((a, b) => a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" }))
+    .map((speciesEntry) => {
+      const cards = [...speciesEntry.varieties.values()]
+        .sort((a, b) => b.total - a.total || a.variety.localeCompare(b.variety, "es", { numeric: true }))
+        .map((entry) => {
+          const potreros = [...entry.potreros.values()].sort((a, b) => b.total - a.total || comparePotrero(a.potrero, b.potrero));
+          const max = Math.max(1, ...potreros.flatMap((potrero) => years.map((year) => harvestNumericValue(potrero.years.get(year)))));
+          return `
+            <section class="harvest-potrero-variety-card">
+              <header>
+                <div>
+                  <strong>${escapeHtml(entry.variety)}</strong>
+                  <span>${potreros.length} potreros</span>
+                </div>
+                <b>${number(entry.total, decimals)}${unit}</b>
+              </header>
+              <div class="harvest-potrero-year-list">
+                ${potreros.map((potrero) => `
+                  <div class="harvest-potrero-year-row">
+                    <strong title="${htmlAttr(potrero.potrero)}">${escapeHtml(potrero.potrero)}</strong>
+                    <div class="harvest-potrero-year-bars">
+                      ${years.map((year, index) => {
+                        const value = harvestNumericValue(potrero.years.get(year));
+                        const width = value > 0 ? Math.max(3, value / max * 100) : 0;
+                        return `<span title="${htmlAttr(`${speciesEntry.species} - ${entry.variety} - ${potrero.potrero} - ${year}: ${number(value, decimals)}${unit}`)}">
+                          <b>${escapeHtml(year)}</b>
+                          <i><em style="width:${width}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></em></i>
+                          <small>${number(value, decimals)}</small>
+                        </span>`;
+                      }).join("")}
+                    </div>
+                  </div>`).join("")}
+              </div>
+            </section>`;
+        });
+      return `
+        <section class="harvest-potrero-species-section">
+          <header>
+            <div>
+              <strong>${escapeHtml(speciesEntry.species)}</strong>
+              <span>${speciesEntry.varieties.size} variedades</span>
+            </div>
+            <b>${number(speciesEntry.total, decimals)}${unit}</b>
+          </header>
+          <div class="harvest-potrero-variety-masonry">
+            ${cards.join("")}
+          </div>
+        </section>`;
+    });
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-potrero-summary-card">
+      <div class="panel-header">
+        <div>
+          <h2>Resumen por especie, variedad y potrero</h2>
+          <p>Barras por ano, sin separar por bloque.</p>
+        </div>
+      </div>
+      <div class="harvest-variety-year-legend">
+        ${years.map((year, index) => `<span><i style="--bar-color:${htmlAttr(harvestYearColor(index))}"></i>${escapeHtml(year)}</span>`).join("")}
+      </div>
+      <div class="harvest-potrero-species-stack">
+        ${sections.join("") || `<div class="empty">Sin datos para el filtro.</div>`}
+      </div>
+    </article>`;
+}
+
+function wireHarvestAnalysisFilters() {
+  document.querySelectorAll("[data-harvest-analysis-filter]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.dataset.harvestAnalysisFilter === "species") {
+        harvestAnalysisSpeciesFilter = target.value;
+        harvestAnalysisVarietyFilter = "Todas";
+        harvestAnalysisPotreroFilter = "Todos";
+        harvestAnalysisSelectedSpecies = target.value === "Todas" ? "Todas" : target.value;
+      }
+      if (target.dataset.harvestAnalysisFilter === "variety") harvestAnalysisVarietyFilter = target.value;
+      if (target.dataset.harvestAnalysisFilter === "potrero") harvestAnalysisPotreroFilter = target.value;
+      if (target.dataset.harvestAnalysisFilter === "metric") harvestAnalysisMetric = target.value;
+      renderHarvestAnalysis();
+    });
+  });
+  document.querySelectorAll("[data-harvest-analysis-year]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      const year = event.target.dataset.harvestAnalysisYear;
+      if (event.target.checked) harvestAnalysisSelectedYears.add(year);
+      else if (harvestAnalysisSelectedYears.size > 1) harvestAnalysisSelectedYears.delete(year);
+      else {
+        event.target.checked = true;
+        showToast("Mantén al menos un año seleccionado");
+        return;
+      }
+      renderHarvestAnalysis();
+    });
+  });
+}
+
 function groupCount(records, getKey) {
   const map = new Map();
   records.forEach((record) => {
@@ -8982,32 +10740,42 @@ async function loadCloudData(options = {}) {
   await loadCloudProfile();
   const role = currentUserRole();
   const canSeePlanning = ["admin", "supervisor"].includes(role);
+  const requestedModules = new Set(options.modules || ["all"]);
+  const loadAll = requestedModules.has("all");
+  const wantsModule = (...modules) => loadAll || modules.some((module) => requestedModules.has(module));
+  const loadFields = wantsModule("fields", "applications", "irrigation", "calicatas", "pestMonitoring", "harvest");
+  const loadApplications = wantsModule("applications");
+  const loadPlanning = canSeePlanning && loadApplications;
+  const loadIrrigation = wantsModule("irrigation");
+  const loadCalicatas = wantsModule("calicatas");
+  const loadWeather = wantsModule("weather");
+  const loadHarvest = wantsModule("harvest");
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, programProductRows, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales] = await Promise.all([
-    canSeePlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve([]),
-    canSeePlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve([]),
-    canSeePlanning ? sbSelect("programa_productos", "select=*&order=programa_id.asc,orden.asc").catch((error) => {
+  const [seasons, programs, programProductRows, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
+    loadPlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve(null),
+    loadPlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve(null),
+    loadPlanning ? sbSelect("programa_productos", "select=*&order=programa_id.asc,orden.asc").catch((error) => {
       console.warn("Tabla programa_productos no disponible. Ejecuta supabase_programa_fitosanitario.sql", error);
       return [];
-    }) : Promise.resolve([]),
-    sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc"),
-    sbSelect("productos", "select=*&activo=eq.true&order=nombre.asc"),
-    sbSelect("ordenes_aplicacion", "select=*&order=creado_en.desc,fecha_planificada.desc,numero_orden.desc"),
-    sbSelect("orden_productos", "select=*"),
-    sbSelect("despachos", "select=*&order=fecha.asc"),
-    sbSelect("despacho_productos", "select=*"),
-    sbSelect("movimientos_stock", "select=*&order=fecha.asc"),
-    sbSelect("vehiculos", "select=*&order=codigo.asc").catch((error) => {
+    }) : Promise.resolve(null),
+    loadFields ? sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc") : Promise.resolve(null),
+    loadApplications ? sbSelect("productos", "select=*&activo=eq.true&order=nombre.asc") : Promise.resolve(null),
+    loadApplications ? sbSelect("ordenes_aplicacion", "select=*&order=creado_en.desc,fecha_planificada.desc,numero_orden.desc") : Promise.resolve(null),
+    loadApplications ? sbSelect("orden_productos", "select=*") : Promise.resolve(null),
+    loadApplications ? sbSelect("despachos", "select=*&order=fecha.asc") : Promise.resolve(null),
+    loadApplications ? sbSelect("despacho_productos", "select=*") : Promise.resolve(null),
+    loadApplications ? sbSelect("movimientos_stock", "select=*&order=fecha.asc") : Promise.resolve(null),
+    loadApplications ? sbSelect("vehiculos", "select=*&order=codigo.asc").catch((error) => {
       console.warn("Tabla vehiculos no disponible. Ejecuta supabase_vehiculos.sql", error);
       return [];
-    }),
-    sbSelect("calicatas", "select=*&order=created_at.desc").catch((error) => {
+    }) : Promise.resolve(null),
+    loadCalicatas ? sbSelect("calicatas", "select=*&order=created_at.desc").catch((error) => {
       console.warn("No se pudieron cargar calicatas", error);
       return [];
-    }),
-    sbSelectAll("riego", "select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at&order=fecha.asc,campo_id.asc")
+    }) : Promise.resolve(null),
+    loadIrrigation ? sbSelectAll("riego", "select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at&order=fecha.asc,campo_id.asc")
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
         return sbSelectAll("riego", "select=id,campo_id,fecha,horas_riego,volumen&order=fecha.asc,campo_id.asc");
@@ -9020,8 +10788,8 @@ async function loadCloudData(options = {}) {
         console.warn("No se pudieron cargar registros de riego", error);
         irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
         return null;
-      }),
-    sbSelectAll("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en&order=fecha.asc,campo_id.asc")
+      }) : Promise.resolve(null),
+    loadIrrigation ? sbSelectAll("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en&order=fecha.asc,campo_id.asc")
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en"])) throw error;
         return sbSelectAll("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado&order=fecha.asc,campo_id.asc");
@@ -9034,15 +10802,15 @@ async function loadCloudData(options = {}) {
         console.warn("No se pudo cargar programa de riego", error);
         irrigationProgramCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
         return null;
-      }),
-    sbSelectAll("observaciones_riego", "select=id,tipo,campo_id,fecha,observacion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en&order=fecha.asc")
+      }) : Promise.resolve(null),
+    loadIrrigation ? sbSelectAll("observaciones_riego", "select=id,tipo,campo_id,fecha,observacion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en&order=fecha.asc")
       .catch((error) => {
         console.warn("No se pudieron cargar observaciones de riego", error);
         const message = String(error?.message || "").toLowerCase();
         irrigationObservationsCloudAvailable = !message.includes("could not find the table") && !message.includes("schema cache");
         return null;
-      }),
-    sbSelectAll("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc")
+      }) : Promise.resolve(null),
+    loadIrrigation ? sbSelectAll("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc")
       .then((rows) => rows?.length ? rows : sbSelectAllPublic("evaporacion_bandeja", "select=fecha,evaporacion,estacion&order=fecha.asc"))
       .catch((error) => {
         console.warn("No se pudo cargar evaporacion de bandeja con sesion, probando lectura publica", error);
@@ -9050,8 +10818,8 @@ async function loadCloudData(options = {}) {
           console.warn("No se pudo cargar evaporacion de bandeja", publicError);
           return [];
         });
-      }),
-    sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,humedad_promedio,velocidad_viento_promedio,precipitacion_acumulada,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2,helada_inicio,helada_termino&order=fecha.asc")
+      }) : Promise.resolve(null),
+    loadWeather ? sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,humedad_promedio,velocidad_viento_promedio,precipitacion_acumulada,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2,helada_inicio,helada_termino&order=fecha.asc")
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["humedad_promedio", "velocidad_viento_promedio", "precipitacion_acumulada", "helada_inicio", "helada_termino"])) throw error;
         return sbSelectAll("v_estacion_climatica_diaria", "select=fecha,registros,temperatura_promedio,temperatura_minima,temperatura_maxima,horas_sobre_7,grados_dia_base_7,helada_0_menos_1,helada_menos_1_menos_2,helada_menor_igual_menos_2&order=fecha.asc");
@@ -9064,13 +10832,13 @@ async function loadCloudData(options = {}) {
         console.warn("No se pudo cargar el resumen de la estacion climatica", error);
         weatherStationCloudAvailable = false;
         return [];
-      }),
-    sbSelectAll("estacion_climatica", "select=fecha,hora,temp_out&temp_out=lte.0&order=fecha.asc,hora.asc")
+      }) : Promise.resolve(null),
+    loadWeather ? sbSelectAll("estacion_climatica", "select=fecha,hora,temp_out&temp_out=lte.0&order=fecha.asc,hora.asc")
       .catch((error) => {
         console.warn("No se pudieron cargar los horarios de helada", error);
         return [];
-      }),
-    sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp,humedad,velocidad_viento,precipitacion&order=fecha.desc,hora.desc&limit=1")
+      }) : Promise.resolve(null),
+    loadWeather ? sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp,humedad,velocidad_viento,precipitacion&order=fecha.desc,hora.desc&limit=1")
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["humedad", "velocidad_viento", "precipitacion"])) throw error;
         return sbSelect("estacion_climatica", "select=fecha,hora,temp_out,hi_temp,low_temp&order=fecha.desc,hora.desc&limit=1");
@@ -9078,133 +10846,155 @@ async function loadCloudData(options = {}) {
       .catch((error) => {
         console.warn("No se pudo cargar la ultima lectura de la estacion climatica", error);
         return [];
-      }),
-    sbSelectAll("registros_trazabilidad", "select=id,tipo_registro,num_bin,codigo_local,contratista,cuadrilla,cuartel,bloque,cuartel_sdp,bloque_sdp,sdp,especie,variedad,fecha_cosecha,fecha_escaneo,patente,conductor_nombre,fecha_despacho_camion,latitud,longitud,fecha_sincronizacion,ultima_sincronizacion&order=id.desc").catch((error) => {
+      }) : Promise.resolve(null),
+    loadHarvest ? sbSelectAll("registros_trazabilidad", "select=id,tipo_registro,num_bin,codigo_local,contratista,cuadrilla,cuartel,bloque,cuartel_sdp,bloque_sdp,sdp,especie,variedad,fecha_cosecha,fecha_escaneo,patente,conductor_nombre,fecha_despacho_camion,latitud,longitud,fecha_sincronizacion,ultima_sincronizacion&order=id.desc").catch((error) => {
       console.warn("No se pudieron cargar registros de cosecha", error);
       return [];
-    }),
-    sbSelect("v_programacion_cuadrillas_dia", "select=*").catch((error) => {
+    }) : Promise.resolve(null),
+    loadHarvest ? sbSelect("v_programacion_cuadrillas_dia", "select=*").catch((error) => {
       console.warn("No se pudo cargar programacion de cuadrillas", error);
       return [];
-    }),
-    sbSelect("v_jornales_cuadrilla_dia", "select=*").catch((error) => {
+    }) : Promise.resolve(null),
+    loadHarvest ? sbSelect("v_jornales_cuadrilla_dia", "select=*").catch((error) => {
       console.warn("No se pudieron cargar jornales de cosecha", error);
       return [];
-    })
+    }) : Promise.resolve(null),
+    loadHarvest ? sbSelectAll("cosecha_analisis", "select=id,campo_id,fecha,anio,semana,especie,variedad,potrero_excel,bloque_formula,bloque_excel,potrero_normalizado,bloque_normalizado,contratista,cuadrilla,jornales,bins_nac,bins_expo,total_bins,kg_nac,kg_exp,kg_totales&order=fecha.asc,id.asc").catch((error) => {
+      console.warn("No se pudo cargar cosecha_analisis", error);
+      return [];
+    }) : Promise.resolve(null),
+    loadHarvest ? sbSelectAll("exportacion_analisis", "select=id,fecha,anio,especie,variedad,potrero_excel,potrero_normalizado,cant_bins,enviados_kg,recepcionados_kg,diferencia_kg,bins_por_confirmar,kg_en_proceso,kg_por_procesar,exportados_kg,descarte_kg,precalibre_kg,desecho_kg,merma_kg,x_kg,porcentaje_expo,calibres_kg,calibres_cajas,calibres_kg_total,calibres_cajas_total&order=fecha.asc,id.asc").catch((error) => {
+      console.warn("No se pudo cargar exportacion_analisis", error);
+      return [];
+    }) : Promise.resolve(null)
   ]);
-  const weatherDailyRows = await completeWeatherStationDailyRows(weatherDailyRowsRaw || [], weatherLatestRows || []);
-  state.seasons = seasons.map((season) => ({
-    id: season.id,
-    name: season.nombre,
-    startYear: season.anio_inicio,
-    endYear: season.anio_fin,
-    status: season.estado
-  }));
-  state.settings.currentSeasonId = state.seasons[0]?.id || "";
-  state.settings.season = state.seasons[0]?.name || state.settings.season;
-  state.programs = programs.map((program) => ({
-    id: program.id,
-    sourceKey: program.clave_fuente || "",
-    seasonId: program.temporada_id,
-    number: program.numero_programa,
-    code: program.codigo_aplicacion || String(program.numero_programa || ""),
-    name: program.nombre,
-    crop: program.cultivo,
-    sourceSpecies: program.especie_fuente || program.cultivo || "",
-    objective: program.objetivo,
-    epoch: program.epoca || "",
-    stage: program.etapa || "",
-    carency: program.carencia || "",
-    observations: program.observaciones || program.notas || "",
-    source: program.fuente || "manual",
-    active: program.activo !== false,
-    incomplete: Boolean(program.incompleto),
-    official: program.fuente === "PROGRAMA.xlsx" || program.nombre === "Programa Fitosanitario",
-    cloudReady: true,
-    startDate: program.fecha_inicio || "",
-    endDate: program.fecha_termino || "",
-    waterHa: Number(program.agua_por_ha) || 0
-  }));
-  state.programProducts = programProductRows.map((line) => ({
-    id: line.id,
-    programId: line.programa_id,
-    productId: line.producto_id || "",
-    name: line.nombre_producto_oficial || "",
-    type: line.tipo_producto || "",
-    dose: line.dosis === null || line.dosis === undefined ? null : Number(line.dosis),
-    unit: line.unidad_dosis || "",
-    basis: line.base_dosis || "unknown",
-    outputUnit: line.unidad_resultado || "kg/L",
-    divisor: Number(line.divisor_conversion) || 1,
-    order: Number(line.orden) || 1,
-    excelRow: Number(line.fila_excel) || null,
-    incomplete: Boolean(line.incompleto)
-  }));
-  state.blocks = fields.map((field) => ({
-    id: field.id,
-    potrero: field.potrero,
-    block: field.bloque,
-    crop: field.especie || field.cultivo,
-    variety: field.variedad,
-    hectares: Number(field.hectareas) || 0,
-    precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
-    flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
-    baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base),
-    active: field.activo !== false,
-    plants: Number(field.plantas) || 0,
-    plantsPerHa: Number(field.plantas_por_ha) || 0
-  }));
-  state.calicatas = calicatas.map((item) => ({
-    id: item.id,
-    workerId: item.trabajador_id || "",
-    workerName: item.trabajador_nombre || "",
-    potrero: item.potrero || "",
-    block: item.bloque || "",
-    depth20: calicataDepthNumber(item.profundidad_20),
-    depth40: calicataDepthNumber(item.profundidad_40),
-    depth60: calicataDepthNumber(item.profundidad_60),
-    depth80: calicataDepthNumber(item.profundidad_80),
-    latitude: item.latitud,
-    longitude: item.longitud,
-    photoUrl: item.foto_url || "",
-    createdAt: item.created_at || "",
-    empty: Boolean(item.vacio),
-    observation: item.observacion || ""
-  }));
+  const weatherDailyRows = Array.isArray(weatherDailyRowsRaw)
+    ? await completeWeatherStationDailyRows(weatherDailyRowsRaw || [], weatherLatestRows || [])
+    : null;
+  if (Array.isArray(seasons)) {
+    state.seasons = seasons.map((season) => ({
+      id: season.id,
+      name: season.nombre,
+      startYear: season.anio_inicio,
+      endYear: season.anio_fin,
+      status: season.estado
+    }));
+    state.settings.currentSeasonId = state.seasons[0]?.id || "";
+    state.settings.season = state.seasons[0]?.name || state.settings.season;
+  }
+  if (Array.isArray(programs)) {
+    state.programs = programs.map((program) => ({
+      id: program.id,
+      sourceKey: program.clave_fuente || "",
+      seasonId: program.temporada_id,
+      number: program.numero_programa,
+      code: program.codigo_aplicacion || String(program.numero_programa || ""),
+      name: program.nombre,
+      crop: program.cultivo,
+      sourceSpecies: program.especie_fuente || program.cultivo || "",
+      objective: program.objetivo,
+      epoch: program.epoca || "",
+      stage: program.etapa || "",
+      carency: program.carencia || "",
+      observations: program.observaciones || program.notas || "",
+      source: program.fuente || "manual",
+      active: program.activo !== false,
+      incomplete: Boolean(program.incompleto),
+      official: program.fuente === "PROGRAMA.xlsx" || program.nombre === "Programa Fitosanitario",
+      cloudReady: true,
+      startDate: program.fecha_inicio || "",
+      endDate: program.fecha_termino || "",
+      waterHa: Number(program.agua_por_ha) || 0
+    }));
+  }
+  if (Array.isArray(programProductRows)) {
+    state.programProducts = programProductRows.map((line) => ({
+      id: line.id,
+      programId: line.programa_id,
+      productId: line.producto_id || "",
+      name: line.nombre_producto_oficial || "",
+      type: line.tipo_producto || "",
+      dose: line.dosis === null || line.dosis === undefined ? null : Number(line.dosis),
+      unit: line.unidad_dosis || "",
+      basis: line.base_dosis || "unknown",
+      outputUnit: line.unidad_resultado || "kg/L",
+      divisor: Number(line.divisor_conversion) || 1,
+      order: Number(line.orden) || 1,
+      excelRow: Number(line.fila_excel) || null,
+      incomplete: Boolean(line.incompleto)
+    }));
+  }
+  if (Array.isArray(fields)) {
+    state.blocks = fields.map((field) => ({
+      id: field.id,
+      potrero: field.potrero,
+      block: field.bloque,
+      crop: field.especie || field.cultivo,
+      variety: field.variedad,
+      hectares: Number(field.hectareas) || 0,
+      precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
+      flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
+      baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base),
+      active: field.activo !== false,
+      plants: Number(field.plantas) || 0,
+      plantsPerHa: Number(field.plantas_por_ha) || 0
+    }));
+  }
+  if (Array.isArray(calicatas)) {
+    state.calicatas = calicatas.map((item) => ({
+      id: item.id,
+      workerId: item.trabajador_id || "",
+      workerName: item.trabajador_nombre || "",
+      potrero: item.potrero || "",
+      block: item.bloque || "",
+      depth20: calicataDepthNumber(item.profundidad_20),
+      depth40: calicataDepthNumber(item.profundidad_40),
+      depth60: calicataDepthNumber(item.profundidad_60),
+      depth80: calicataDepthNumber(item.profundidad_80),
+      latitude: item.latitud,
+      longitude: item.longitud,
+      photoUrl: item.foto_url || "",
+      createdAt: item.created_at || "",
+      empty: Boolean(item.vacio),
+      observation: item.observacion || ""
+    }));
+  }
   if (Array.isArray(irrigationRows)) applyIrrigationRecords(irrigationRows);
   if (Array.isArray(irrigationProgramRows)) applyIrrigationProgramRecords(irrigationProgramRows);
   if (Array.isArray(irrigationObservationRows)) applyIrrigationObservationRecords(irrigationObservationRows);
-  state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
-  const frostWindowsByDate = weatherStationFrostWindowsByDate(weatherFrostRows || []);
-  state.weatherStationDaily = (weatherDailyRows || []).map((item) => ({
-    date: item.fecha || "",
-    records: Number(item.registros) || 0,
-    average: Number(item.temperatura_promedio) || 0,
-    minimum: Number(item.temperatura_minima),
-    maximum: Number(item.temperatura_maxima),
-    humidityAverage: item.humedad_promedio === null || item.humedad_promedio === undefined ? null : Number(item.humedad_promedio),
-    windAverage: item.velocidad_viento_promedio === null || item.velocidad_viento_promedio === undefined ? null : Number(item.velocidad_viento_promedio),
-    precipitationTotal: Number(item.precipitacion_acumulada) || 0,
-    hoursAbove7: Number(item.horas_sobre_7) || 0,
-    degreeDays: Number(item.grados_dia_base_7) || 0,
-    frost0ToMinus1: Number(item.helada_0_menos_1) || 0,
-    frostMinus1ToMinus2: Number(item.helada_menos_1_menos_2) || 0,
-    frostBelowMinus2: Number(item.helada_menor_igual_menos_2) || 0,
-    frostStart: frostWindowsByDate.get(item.fecha)?.start || item.helada_inicio || "",
-    frostEnd: frostWindowsByDate.get(item.fecha)?.end || item.helada_termino || "",
-    frostWindows: frostWindowsByDate.get(item.fecha)?.label || ""
-  })).filter((item) => item.date && Number.isFinite(item.minimum) && Number.isFinite(item.maximum));
-  const latestWeather = weatherLatestRows?.[0];
-  state.weatherStationLatest = latestWeather ? {
-    date: latestWeather.fecha || "",
-    time: latestWeather.hora || "",
-    tempOut: Number(latestWeather.temp_out),
-    hiTemp: Number(latestWeather.hi_temp),
-    lowTemp: Number(latestWeather.low_temp),
-    humidity: latestWeather.humedad === null || latestWeather.humedad === undefined ? null : Number(latestWeather.humedad),
-    windSpeed: latestWeather.velocidad_viento === null || latestWeather.velocidad_viento === undefined ? null : Number(latestWeather.velocidad_viento),
-    precipitation: latestWeather.precipitacion === null || latestWeather.precipitacion === undefined ? null : Number(latestWeather.precipitacion)
-  } : null;
+  if (Array.isArray(evaporationRows)) state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
+  if (Array.isArray(weatherDailyRows)) {
+    const frostWindowsByDate = weatherStationFrostWindowsByDate(weatherFrostRows || []);
+    state.weatherStationDaily = (weatherDailyRows || []).map((item) => ({
+      date: item.fecha || "",
+      records: Number(item.registros) || 0,
+      average: Number(item.temperatura_promedio) || 0,
+      minimum: Number(item.temperatura_minima),
+      maximum: Number(item.temperatura_maxima),
+      humidityAverage: item.humedad_promedio === null || item.humedad_promedio === undefined ? null : Number(item.humedad_promedio),
+      windAverage: item.velocidad_viento_promedio === null || item.velocidad_viento_promedio === undefined ? null : Number(item.velocidad_viento_promedio),
+      precipitationTotal: Number(item.precipitacion_acumulada) || 0,
+      hoursAbove7: Number(item.horas_sobre_7) || 0,
+      degreeDays: Number(item.grados_dia_base_7) || 0,
+      frost0ToMinus1: Number(item.helada_0_menos_1) || 0,
+      frostMinus1ToMinus2: Number(item.helada_menos_1_menos_2) || 0,
+      frostBelowMinus2: Number(item.helada_menor_igual_menos_2) || 0,
+      frostStart: frostWindowsByDate.get(item.fecha)?.start || item.helada_inicio || "",
+      frostEnd: frostWindowsByDate.get(item.fecha)?.end || item.helada_termino || "",
+      frostWindows: frostWindowsByDate.get(item.fecha)?.label || ""
+    })).filter((item) => item.date && Number.isFinite(item.minimum) && Number.isFinite(item.maximum));
+    const latestWeather = weatherLatestRows?.[0];
+    state.weatherStationLatest = latestWeather ? {
+      date: latestWeather.fecha || "",
+      time: latestWeather.hora || "",
+      tempOut: Number(latestWeather.temp_out),
+      hiTemp: Number(latestWeather.hi_temp),
+      lowTemp: Number(latestWeather.low_temp),
+      humidity: latestWeather.humedad === null || latestWeather.humedad === undefined ? null : Number(latestWeather.humedad),
+      windSpeed: latestWeather.velocidad_viento === null || latestWeather.velocidad_viento === undefined ? null : Number(latestWeather.velocidad_viento),
+      precipitation: latestWeather.precipitacion === null || latestWeather.precipitacion === undefined ? null : Number(latestWeather.precipitacion)
+    } : null;
+  }
   const mapHarvestRecord = (item, source = "operativo") => {
     const scanDate = harvestScanDateFromItem(item);
     return {
@@ -9234,40 +11024,103 @@ async function loadCloudData(options = {}) {
       createdAt: firstHarvestDateValue(item, ["creado_en", "created_at", "fecha_sincronizacion", "ultima_sincronizacion", "actualizado_en"])
     };
   };
-  state.harvestRecords = harvestRecords.map((item) => mapHarvestRecord(item, "operativo"));
-  state.harvestOfficialRecords = [];
-  state.harvestCrewSchedule = harvestCrewSchedule.map((item) => ({
-    date: item.fecha || item.fecha_cosecha || "",
-    contractor: item.nombre_empresa || item.contratista || "",
-    crew: item.codigo_cuadrilla || item.cuadrilla || ""
-  }));
-  state.harvestJornales = harvestJornales.map((item) => ({
-    id: item.id,
-    date: item.fecha || "",
-    workerName: `${item.nombre_jornal || ""} ${item.apellido_jornal || ""}`.trim(),
-    workerRut: item.rut_jornal || "",
-    capachoCode: item.codigo_capacho || "",
-    contractor: item.nombre_empresa || item.contratista || "",
-    crew: item.codigo_cuadrilla || item.cuadrilla || "",
-    active: item.activo !== false
-  })).filter((item) => item.active);
-  state.products = products.map((product) => ({
-    id: product.id,
-    name: product.nombre,
-    ingredient: product.ingrediente_activo,
-    unit: product.unidad,
-    dose100: Number(product.dosis_por_100) || 0,
-    reentryHours: product.horas_reingreso,
-    carencyDays: product.dias_carencia,
-    stock: Number(product.stock_actual) || 0,
-    minStock: Number(product.stock_minimo) || 0,
-    cost: Number(product.costo_unitario) || 0,
-    sackPrice: Number(product.precio_saco) || 0,
-    kgPerSack: Number(product.kg_por_saco) || 0,
-    lot: product.lote,
-    expires: product.fecha_vencimiento
-  }));
-  if (!officialPrograms().length || !state.programProducts.length) {
+  if (Array.isArray(harvestRecords)) {
+    state.harvestRecords = harvestRecords.map((item) => mapHarvestRecord(item, "operativo"));
+    state.harvestOfficialRecords = [];
+  }
+  if (Array.isArray(harvestCrewSchedule)) {
+    state.harvestCrewSchedule = harvestCrewSchedule.map((item) => ({
+      date: item.fecha || item.fecha_cosecha || "",
+      contractor: item.nombre_empresa || item.contratista || "",
+      crew: item.codigo_cuadrilla || item.cuadrilla || ""
+    }));
+  }
+  if (Array.isArray(harvestJornales)) {
+    state.harvestJornales = harvestJornales.map((item) => ({
+      id: item.id,
+      date: item.fecha || "",
+      workerName: `${item.nombre_jornal || ""} ${item.apellido_jornal || ""}`.trim(),
+      workerRut: item.rut_jornal || "",
+      capachoCode: item.codigo_capacho || "",
+      contractor: item.nombre_empresa || item.contratista || "",
+      crew: item.codigo_cuadrilla || item.cuadrilla || "",
+      active: item.activo !== false
+    })).filter((item) => item.active);
+  }
+  if (Array.isArray(harvestAnalysisRows)) {
+    state.harvestAnalysisRecords = harvestAnalysisRows.map((item) => ({
+      id: item.id,
+      fieldId: item.campo_id || "",
+      date: item.fecha || "",
+      year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
+      week: Number(item.semana) || null,
+      species: harvestDisplaySpecies(item.especie),
+      variety: harvestDisplayVariety(item.variedad),
+      excelPotrero: harvestCleanValue(item.potrero_excel, ""),
+      potrero: harvestCleanValue(item.potrero_normalizado || item.potrero_excel, "Sin potrero"),
+      formulaBlock: harvestCleanValue(item.bloque_formula, ""),
+      excelBlock: harvestCleanValue(item.bloque_excel, ""),
+      block: harvestCleanValue(item.bloque_normalizado || item.bloque_excel, ""),
+      contractor: harvestCleanValue(item.contratista, "Sin contratista"),
+      crew: harvestCleanValue(item.cuadrilla, "Sin cuadrilla"),
+      jornales: harvestNumericValue(item.jornales),
+      binsNac: harvestNumericValue(item.bins_nac),
+      binsExpo: harvestNumericValue(item.bins_expo),
+      totalBins: harvestNumericValue(item.total_bins),
+      kgNac: harvestNumericValue(item.kg_nac),
+      kgExp: harvestNumericValue(item.kg_exp),
+      kgTotal: harvestNumericValue(item.kg_totales)
+    }));
+  }
+  if (Array.isArray(harvestExportRows)) {
+    state.harvestExportRecords = harvestExportRows.map((item) => ({
+      id: item.id,
+      date: item.fecha || "",
+      year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
+      species: harvestDisplaySpecies(item.especie),
+      variety: harvestDisplayVariety(item.variedad),
+      excelPotrero: harvestCleanValue(item.potrero_excel, ""),
+      potrero: harvestCleanValue(item.potrero_normalizado || item.potrero_excel, "Sin potrero"),
+      bins: harvestNumericValue(item.cant_bins),
+      sentKg: harvestNumericValue(item.enviados_kg),
+      receivedKg: harvestNumericValue(item.recepcionados_kg),
+      differenceKg: harvestNumericValue(item.diferencia_kg),
+      binsToConfirm: harvestNumericValue(item.bins_por_confirmar),
+      inProcessKg: harvestNumericValue(item.kg_en_proceso),
+      toProcessKg: harvestNumericValue(item.kg_por_procesar),
+      exportedKg: harvestNumericValue(item.exportados_kg),
+      discardKg: harvestNumericValue(item.descarte_kg),
+      precalibreKg: harvestNumericValue(item.precalibre_kg),
+      wasteKg: harvestNumericValue(item.desecho_kg),
+      shrinkKg: harvestNumericValue(item.merma_kg),
+      xKg: harvestNumericValue(item.x_kg),
+      exportPercent: harvestExportPercentRatio(item.porcentaje_expo),
+      hasExportPercent: item.porcentaje_expo !== null && item.porcentaje_expo !== undefined && String(item.porcentaje_expo).trim() !== "",
+      calibresKg: harvestJsonObject(item.calibres_kg),
+      calibresCajas: harvestJsonObject(item.calibres_cajas),
+      calibresKgTotal: harvestNumericValue(item.calibres_kg_total),
+      calibresCajasTotal: harvestNumericValue(item.calibres_cajas_total)
+    }));
+  }
+  if (Array.isArray(products)) {
+    state.products = products.map((product) => ({
+      id: product.id,
+      name: product.nombre,
+      ingredient: product.ingrediente_activo,
+      unit: product.unidad,
+      dose100: Number(product.dosis_por_100) || 0,
+      reentryHours: product.horas_reingreso,
+      carencyDays: product.dias_carencia,
+      stock: Number(product.stock_actual) || 0,
+      minStock: Number(product.stock_minimo) || 0,
+      cost: Number(product.costo_unitario) || 0,
+      sackPrice: Number(product.precio_saco) || 0,
+      kgPerSack: Number(product.kg_por_saco) || 0,
+      lot: product.lote,
+      expires: product.fecha_vencimiento
+    }));
+  }
+  if (loadPlanning && (Array.isArray(programs) || Array.isArray(programProductRows) || Array.isArray(products)) && (!officialPrograms().length || !state.programProducts.length)) {
     const fallback = await loadOfficialProgramFallback();
     const productsByName = new Map(state.products.map((product) => [normalizeCatalogText(product.name), product.id]));
     const seasonsByName = new Map(state.seasons.map((season) => [normalizeCatalogText(season.name), season.id]));
@@ -9319,20 +11172,22 @@ async function loadCloudData(options = {}) {
       }
     });
   }
-  state.vehicles = vehicles.map((vehicle) => ({
-    id: vehicle.id,
-    classification: vehicle.clasificacion,
-    type: vehicle.tipo_vehiculo,
-    brand: vehicle.marca,
-    model: vehicle.modelo,
-    serialNumber: vehicle.numero_serie,
-    year: vehicle.anio,
-    code: String(vehicle.codigo || "")
-  }));
-  const productsByOrder = groupBy(orderProducts, "orden_id");
-  const dispatchProductsByDispatch = groupBy(dispatchProducts, "despacho_id");
-  const dispatchesByOrder = groupBy(dispatches, "orden_id");
-  state.orders = sortOrdersNewestFirst(orders.map((order) => ({
+  if (Array.isArray(vehicles)) {
+    state.vehicles = vehicles.map((vehicle) => ({
+      id: vehicle.id,
+      classification: vehicle.clasificacion,
+      type: vehicle.tipo_vehiculo,
+      brand: vehicle.marca,
+      model: vehicle.modelo,
+      serialNumber: vehicle.numero_serie,
+      year: vehicle.anio,
+      code: String(vehicle.codigo || "")
+    }));
+  }
+  const productsByOrder = groupBy(orderProducts || [], "orden_id");
+  const dispatchProductsByDispatch = groupBy(dispatchProducts || [], "despacho_id");
+  const dispatchesByOrder = groupBy(dispatches || [], "orden_id");
+  if (Array.isArray(orders)) state.orders = sortOrdersNewestFirst(orders.map((order) => ({
     id: order.id,
     number: order.numero_orden,
     seasonId: order.temporada_id,
@@ -9400,25 +11255,35 @@ async function loadCloudData(options = {}) {
     syncOrderStatus(order);
     return order;
   }));
-  state.inventoryMovements = stockMovements.map((movement) => ({
-    id: movement.id,
-    date: movement.fecha,
-    type: movement.tipo,
-    productId: movement.producto_id,
-    orderId: movement.orden_id,
-    dispatchId: movement.despacho_id,
-    quantity: Number(movement.cantidad) || 0,
-    unitCost: Number(movement.costo_unitario) || 0,
-    sacks: Number(movement.sacos) || 0,
-    kgPerSack: Number(movement.kg_por_saco) || 0,
-    sackPrice: Number(movement.precio_saco) || 0,
-    lot: movement.lote,
-    note: movement.nota
-  }));
+  if (Array.isArray(stockMovements)) {
+    state.inventoryMovements = stockMovements.map((movement) => ({
+      id: movement.id,
+      date: movement.fecha,
+      type: movement.tipo,
+      productId: movement.producto_id,
+      orderId: movement.orden_id,
+      dispatchId: movement.despacho_id,
+      quantity: Number(movement.cantidad) || 0,
+      unitCost: Number(movement.costo_unitario) || 0,
+      sacks: Number(movement.sacos) || 0,
+      kgPerSack: Number(movement.kg_por_saco) || 0,
+      sackPrice: Number(movement.precio_saco) || 0,
+      lot: movement.lote,
+      note: movement.nota
+    }));
+  }
   state = normalizeState(state);
   const isRealtimeLoad = options.source === "realtime";
+  const loadedModules = [];
+  if (loadWeather) loadedModules.push("weather");
+  if (loadFields) loadedModules.push("fields");
+  if (loadApplications) loadedModules.push("applications");
+  if (loadIrrigation) loadedModules.push("irrigation");
+  if (loadCalicatas) loadedModules.push("calicatas");
+  if (loadHarvest) loadedModules.push("harvest");
+  markCloudModulesLoaded(loadedModules);
   if (!isRealtimeLoad) {
-    await reconcileCloudOrderStatuses();
+    if (loadPlanning) await reconcileCloudOrderStatuses();
     applyRoleNavigation();
     saveState();
   }
@@ -9431,7 +11296,7 @@ async function loadCloudData(options = {}) {
 }
 
 function shouldRenderAfterCloudLoad(options = {}) {
-  return options.source !== "realtime";
+  return options.render !== false && options.source !== "realtime";
 }
 
 function hasOpenModal() {
@@ -9456,14 +11321,30 @@ function createRealtimeClient() {
   return client;
 }
 
+function cloudModulesForRealtimeTable(table = "") {
+  if (table === "campos") return ["fields"];
+  if (["riego", "programa_riego", "observaciones_riego", "evaporacion_bandeja"].includes(table)) return ["fields", "irrigation"];
+  if (table === "estacion_climatica") return ["weather"];
+  if (table === "calicatas") return ["fields", "calicatas"];
+  if (["registros_trazabilidad", "cosecha_analisis", "exportacion_analisis"].includes(table)) return ["harvest"];
+  if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos"].includes(table)) return ["fields", "applications"];
+  return cloudModulesForView(currentView);
+}
+
 function scheduleRealtimeCloudReload(reason = "cambio remoto") {
   if (!supabaseSession || document.hidden || hasOpenModal()) return;
   clearTimeout(cloudRealtimeReloadTimer);
   cloudRealtimeReloadTimer = setTimeout(async () => {
     if (!supabaseSession || cloudSyncInProgress || document.hidden || hasOpenModal()) return;
+    const affectedModules = [...new Set(cloudModulesForRealtimeTable(reason))];
+    const modules = affectedModules
+      .filter((module) => cloudLoadedModules.has(module) || cloudModulesForView(currentView).includes(module));
+    invalidateCloudModules(affectedModules);
+    if (!modules.length) return;
     cloudSyncInProgress = true;
     try {
-      await loadCloudData({ source: "realtime" });
+      await loadCloudData({ source: "realtime", modules, render: false, force: true });
+      if (modules.some((module) => cloudModulesForView(currentView).includes(module))) render();
       document.getElementById("storageStatus").textContent = `Supabase sincronizado por ${reason} ${new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
     } catch (error) {
       console.warn("No se pudo sincronizar Supabase Realtime", error);
@@ -9492,6 +11373,8 @@ function startCloudSync() {
     "fertilizante_preparaciones",
     "fertilizante_aplicaciones",
     "registros_trazabilidad",
+    "cosecha_analisis",
+    "exportacion_analisis",
     "ordenes_aplicacion",
     "orden_productos",
     "despachos",
@@ -12038,7 +13921,7 @@ async function saveOrder(orderId) {
       : { id: uid("o"), createdAt: new Date().toISOString(), tanks: [], dispatches: [], movements: [], ...payload };
     try {
       await cloudSaveOrder(orderToSave);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
       document.getElementById("orderDialog").close();
       render();
       showToast("Orden guardada en Supabase");
@@ -12162,7 +14045,7 @@ async function finishOrder(orderId) {
         prefer: "return=minimal",
         body: JSON.stringify({ estado: toDbOrderStatus("closed"), finalizada_por_jefe: true })
       });
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se guardo en Supabase: ${error.message}`);
     }
@@ -12184,7 +14067,7 @@ async function cancelOrder(orderId) {
         prefer: "return=minimal",
         body: JSON.stringify({ estado: toDbOrderStatus("cancelled") })
       });
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se guardo en Supabase: ${error.message}`);
       render();
@@ -12468,7 +14351,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   if (supabaseSession) {
     try {
       await cloudUpdateDispatch(order, dispatch);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
       dialog.close();
       render();
       showToast("Salida modificada en Supabase");
@@ -12520,7 +14403,7 @@ async function deleteDispatch(orderId, dispatchId) {
   if (supabaseSession) {
     try {
       await cloudDeleteDispatch(order, dispatch);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
       render();
       showToast("Salida borrada en Supabase");
     } catch (error) {
@@ -12677,7 +14560,7 @@ async function saveDispatch(orderId, type, dialog) {
     }
     try {
       await cloudSaveDispatch(order, dispatch);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
       dialog.close();
       render();
       showToast(type === "devolucion" ? "Devolucion guardada en Supabase" : "Salida guardada en Supabase");
@@ -13284,7 +15167,7 @@ async function savePurchase() {
   if (supabaseSession) {
     try {
       await cloudSavePurchase(product, state.inventoryMovements[state.inventoryMovements.length - 1]);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se guardo en Supabase: ${error.message}`);
     }
@@ -13378,7 +15261,7 @@ async function undoLastStockIngress() {
         await sbFetch(`/rest/v1/movimientos_stock?${stockMovementMatchQuery(movement)}`, { method: "DELETE", prefer: "return=minimal" });
       }
       await updateCloudProductStocks();
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se pudo deshacer en Supabase: ${error.message}`);
     }
@@ -13442,7 +15325,7 @@ async function saveProduct() {
   if (supabaseSession) {
     try {
       await cloudSaveProduct(product);
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se guardo en Supabase: ${error.message}`);
     }
@@ -13492,7 +15375,7 @@ async function saveMovement() {
     });
     if (saved?.[0]?.id) movement.id = saved[0].id;
     await updateCloudProductStocks();
-    await loadCloudData();
+    await reloadCurrentCloudModules();
     document.getElementById("movementDialog").close();
     render();
     showToast("Movimiento guardado en Supabase");
@@ -13615,6 +15498,27 @@ document.addEventListener("click", async (event) => {
     const open = !menu.classList.contains("open");
     menu.classList.toggle("open", open);
     actionTarget.setAttribute("aria-expanded", String(open));
+  }
+  if (action === "clear-harvest-export-filters") {
+    harvestExportSelectedYears = new Set();
+    harvestExportSpeciesFilter = "Todas";
+    harvestExportVarietyFilter = "Todas";
+    harvestExportPotreroFilter = "Todos";
+    harvestExportCalibreMode = "kg";
+    renderHarvestExport();
+  }
+  if (action === "clear-harvest-analysis-filters") {
+    harvestAnalysisSpeciesFilter = "Todas";
+    harvestAnalysisVarietyFilter = "Todas";
+    harvestAnalysisPotreroFilter = "Todos";
+    harvestAnalysisSelectedSpecies = "Todas";
+    harvestAnalysisSelectedYears = new Set(harvestAnalysisYears());
+    harvestAnalysisMetric = "kg";
+    renderHarvestAnalysis();
+  }
+  if (action === "select-harvest-analysis-species") {
+    harvestAnalysisSelectedSpecies = actionTarget.dataset.value || "Todas";
+    renderHarvestAnalysis();
   }
   if (action === "select-gantt-order") {
     selectedGanttOrderId = id;
@@ -13840,7 +15744,7 @@ document.addEventListener("click", async (event) => {
             prefer: "return=minimal",
             body: JSON.stringify({ estado: toDbOrderStatus(order.status) })
           });
-          await loadCloudData();
+          await reloadCurrentCloudModules();
         } catch (error) {
           showToast(`No se actualizo Supabase: ${error.message}`);
         }
@@ -13910,7 +15814,7 @@ document.addEventListener("change", async (event) => {
         prefer: "return=minimal",
         body: JSON.stringify(body)
       });
-      await loadCloudData();
+      await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se actualizo Supabase: ${error.message}`);
       return;
@@ -13990,6 +15894,7 @@ if ("serviceWorker" in navigator) {
 
 async function initApp() {
   enhanceAuthGate();
+  hydrateCloudLoadedModulesFromCache();
   passwordRecoverySession = readRecoverySessionFromUrl();
   if (passwordRecoverySession?.access_token) {
     saveSession(null);
@@ -14003,7 +15908,7 @@ async function initApp() {
       setAuthGate(true);
       await ensureSupabaseSession(false);
       await loadCloudProfile();
-      showAuthenticatedShell("Cargando datos desde Supabase...");
+      showAuthenticatedShell("Cargando inicio desde Supabase...");
       loadCloudDataInBackground({ toastOnSuccess: true });
       return;
     } catch (error) {

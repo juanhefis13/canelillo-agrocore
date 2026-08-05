@@ -2839,6 +2839,12 @@ td span,
   font-weight: 750;
 }
 
+.module-loading-panel {
+  display: grid;
+  min-height: min(360px, calc(100svh - 220px));
+  place-items: center;
+}
+
 .irrigation-bandeja-entry-panel .panel-header {
   margin-bottom: 8px;
 }
@@ -4651,20 +4657,36 @@ td span,
 
 @media (max-width: 980px) {
   .harvest-filters,
-  .harvest-dashboard-grid {
+  .harvest-dashboard-grid,
+  .harvest-analytics-grid,
+  .harvest-analytics-filters,
+  .harvest-analysis-filters {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width: 640px) {
   .harvest-filters,
-  .harvest-dashboard-grid {
+  .harvest-dashboard-grid,
+  .harvest-analytics-grid,
+  .harvest-analytics-filters,
+  .harvest-analysis-filters {
     grid-template-columns: 1fr;
   }
 
   .harvest-date-range span {
     grid-template-columns: 1fr;
   }
+
+  .harvest-analytics-bar,
+  .harvest-year-row {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-year-row span {
+    grid-template-columns: 38px minmax(80px, 1fr) 64px;
+  }
+
 }
 
 .harvest-rank-list {
@@ -4730,6 +4752,1535 @@ td span,
   color: var(--warn);
   font-size: 0.76rem;
   font-weight: 900;
+}
+
+.harvest-analytics-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.harvest-analytics-filters {
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) auto;
+  margin-bottom: 0;
+}
+
+.harvest-analysis-filters {
+  grid-template-columns: repeat(4, minmax(120px, 0.8fr)) minmax(220px, 1.2fr) auto;
+}
+
+.harvest-export-filters {
+  grid-template-columns: repeat(3, minmax(130px, 0.9fr)) minmax(220px, 1.2fr) auto;
+}
+
+.harvest-export-filter-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #cfe3d8;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdfb, #f2f8f4);
+}
+
+.harvest-export-filter-title {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.harvest-export-filter-title strong {
+  color: var(--brand);
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.harvest-export-filter-title span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(132px, 0.75fr)) minmax(260px, 1.2fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.harvest-export-filter-grid > label,
+.harvest-export-years-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-export-filter-grid select {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid #c8dfd3;
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.harvest-year-checks {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.harvest-year-checks label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.harvest-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.harvest-analytics-card {
+  min-width: 0;
+  padding: 14px;
+  box-shadow: none;
+}
+
+.harvest-year-vertical-card {
+  overflow: hidden;
+}
+
+.harvest-full-width,
+.harvest-calibre-table-card {
+  grid-column: 1 / -1;
+}
+
+.harvest-analytics-bars,
+.harvest-year-comparison {
+  display: grid;
+  gap: 8px;
+}
+
+.harvest-analytics-bar {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(120px, 1.5fr) minmax(76px, auto);
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+}
+
+button.harvest-analytics-bar {
+  cursor: pointer;
+}
+
+.harvest-analytics-bar.active span,
+button.harvest-analytics-bar:hover span {
+  color: var(--brand-strong);
+}
+
+.harvest-analytics-bar span,
+.harvest-year-row > strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-analytics-bar div,
+.harvest-year-row span {
+  position: relative;
+  overflow: hidden;
+  min-height: 13px;
+  border-radius: 999px;
+  background: #e9f3ee;
+}
+
+.harvest-analytics-bar i,
+.harvest-year-row i {
+  display: block;
+  height: 100%;
+  min-height: inherit;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1f8a70, #f0b429);
+}
+
+.harvest-analytics-bar strong {
+  color: var(--brand);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.harvest-year-vertical-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 10px;
+  align-items: end;
+  min-height: 218px;
+  padding-top: 6px;
+}
+
+.harvest-year-vertical-bar {
+  display: grid;
+  grid-template-rows: auto 168px auto;
+  gap: 6px;
+  min-width: 0;
+  align-items: end;
+  text-align: center;
+}
+
+.harvest-year-vertical-bar > strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-year-vertical-bar > div {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 168px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f7fbf8, #edf5f0);
+}
+
+.harvest-year-vertical-bar i {
+  display: block;
+  width: min(38px, 62%);
+  min-height: 0;
+  border-radius: 8px 8px 0 0;
+  background: linear-gradient(180deg, var(--bar-color, var(--brand)), color-mix(in srgb, var(--bar-color, var(--brand)) 72%, #102b24));
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.45) inset;
+  transition: height 180ms ease;
+}
+
+.harvest-year-vertical-bar span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-variety-year-card {
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.harvest-variety-year-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0 2px;
+}
+
+.harvest-variety-year-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #d5e6dd;
+  border-radius: 8px;
+  background: #f6fbf8;
+}
+
+.harvest-variety-year-totals span,
+.harvest-variety-year-totals em,
+.harvest-variety-year-group header em {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-variety-year-totals span {
+  background: #eaf6ef;
+  color: var(--ink);
+}
+
+.harvest-variety-year-totals .harvest-total-selected {
+  border: 1px solid #b8dccb;
+  background: #dff3e8;
+}
+
+.harvest-variety-year-totals b {
+  color: var(--brand);
+}
+
+.harvest-variety-year-totals em,
+.harvest-variety-year-group header em {
+  border: 1px solid #dfe9e3;
+  background: #fff;
+}
+
+.harvest-variety-year-totals em.positive,
+.harvest-variety-year-group header em.positive {
+  border-color: #b8e0cb;
+  background: #e9f8ef;
+  color: #087443;
+}
+
+.harvest-variety-year-totals em.negative,
+.harvest-variety-year-group header em.negative {
+  border-color: #f1c2bd;
+  background: #fff0ee;
+  color: #b42318;
+}
+
+.harvest-variety-year-totals em.neutral,
+.harvest-variety-year-group header em.neutral {
+  border-color: #d6dee2;
+  background: #f4f7f8;
+  color: var(--muted);
+}
+
+.harvest-variety-year-legend span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.harvest-variety-year-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bar-color, var(--brand));
+}
+
+.harvest-variety-year-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 12px;
+}
+
+.harvest-variety-year-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #cfe3d8;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdfb, #f1f8f4);
+}
+
+.harvest-variety-year-group header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #d9e9e0;
+}
+
+.harvest-variety-year-group header > div {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.harvest-variety-year-group header strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-variety-year-group header span {
+  color: var(--brand);
+  font-size: 0.74rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-variety-year-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
+  gap: 8px;
+  align-items: end;
+  min-height: 172px;
+}
+
+.harvest-variety-year-bar {
+  display: grid;
+  grid-template-rows: auto 126px auto;
+  gap: 5px;
+  min-width: 0;
+  align-items: end;
+  text-align: center;
+}
+
+.harvest-variety-year-bar strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-variety-year-bar > div {
+  position: relative;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 126px;
+  overflow: hidden;
+  border: 1px solid #d8e8df;
+  border-radius: 7px;
+  background: #edf5f0;
+}
+
+.harvest-bar-medal {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border: 1px solid rgba(36, 45, 40, 0.16);
+  border-radius: 999px;
+  color: #17251f;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 950;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.harvest-bar-medal.rank-1 {
+  background: linear-gradient(180deg, #ffe991, #d69a17);
+}
+
+.harvest-bar-medal.rank-2 {
+  background: linear-gradient(180deg, #f4f7fb, #aeb8c4);
+}
+
+.harvest-bar-medal.rank-3 {
+  background: linear-gradient(180deg, #f6c79d, #b66a2f);
+}
+
+.harvest-variety-year-bar i {
+  display: block;
+  width: min(34px, 66%);
+  min-height: 0;
+  border-radius: 7px 7px 0 0;
+  background: linear-gradient(180deg, var(--bar-color, var(--brand)), color-mix(in srgb, var(--bar-color, var(--brand)) 76%, #162d26));
+  transition: height 160ms ease;
+}
+
+.harvest-variety-year-bar span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-start-card {
+  display: grid;
+  gap: 10px;
+}
+
+.harvest-start-matrix-wrap {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.harvest-start-matrix {
+  display: grid;
+  gap: 6px;
+  min-width: max(720px, calc(210px + var(--harvest-start-years, 1) * 172px));
+}
+
+.harvest-start-matrix-head,
+.harvest-start-matrix-row {
+  display: grid;
+  grid-template-columns: 210px repeat(var(--harvest-start-years, 1), minmax(154px, 1fr));
+  gap: 6px;
+  align-items: stretch;
+}
+
+.harvest-start-matrix-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.harvest-start-matrix-head strong,
+.harvest-start-matrix-head span {
+  min-height: 28px;
+  padding: 7px 9px;
+  border: 1px solid #cfe3d8;
+  border-radius: 7px;
+  background: #e7f4ed;
+  color: var(--brand);
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.harvest-start-variety {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #d5e5dd;
+  border-radius: 8px;
+  background: #fbfdfb;
+}
+
+.harvest-start-variety strong,
+.harvest-start-variety span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-start-variety strong {
+  color: var(--brand);
+  font-size: 0.75rem;
+  font-weight: 950;
+}
+
+.harvest-start-variety span {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.harvest-start-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 9px;
+  border: 1px solid #d4e4dc;
+  border-radius: 8px;
+  background: #f8fbf9;
+  color: var(--ink);
+  text-align: left;
+}
+
+.harvest-start-cell b,
+.harvest-start-cell strong,
+.harvest-start-cell small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-start-cell b {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+}
+
+.harvest-start-cell strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.harvest-start-cell small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.harvest-start-cell.is-defined {
+  border-color: #a9dac0;
+  background: #ecf9f1;
+}
+
+.harvest-start-cell.is-defined strong {
+  color: #087443;
+}
+
+.harvest-start-cell.is-detected {
+  border-color: #d6e6dc;
+  background: #f7fbf8;
+}
+
+.harvest-start-cell.is-empty {
+  border-style: dashed;
+  background: #fbfcfb;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.harvest-export-comparison-card {
+  display: grid;
+  gap: 10px;
+}
+
+.harvest-export-percent-summary {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+
+.harvest-export-percent-summary .panel-header {
+  margin-bottom: 0;
+}
+
+.harvest-export-percent-summary .panel-header > span {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid #b8dccb;
+  border-radius: 999px;
+  background: #dff3e8;
+  color: var(--brand);
+  font-size: 0.84rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-export-percent-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.harvest-export-percent-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d3e6dc;
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.harvest-export-percent-card header,
+.harvest-export-percent-card footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.harvest-export-percent-card strong,
+.harvest-export-percent-card b,
+.harvest-export-percent-card small,
+.harvest-export-percent-card em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-percent-card strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.harvest-export-percent-card b {
+  color: var(--brand);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.harvest-export-percent-card > div {
+  overflow: hidden;
+  height: 9px;
+  border-radius: 999px;
+  background: #e7f0eb;
+}
+
+.harvest-export-percent-card > div i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--bar-color, var(--brand)), color-mix(in srgb, var(--bar-color, var(--brand)) 68%, #f0b429));
+}
+
+.harvest-export-percent-card small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.harvest-export-percent-card em {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.harvest-export-percent-card em.positive {
+  background: #e8f7ef;
+  color: #087443;
+}
+
+.harvest-export-percent-card em.negative {
+  background: #fff0ee;
+  color: #b42318;
+}
+
+.harvest-export-percent-card em.neutral {
+  background: #f1f5f3;
+  color: var(--muted);
+}
+
+.harvest-export-variety-percent-summary {
+  padding-top: 10px;
+}
+
+.harvest-export-variety-percent-list {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.harvest-export-variety-year-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.harvest-export-variety-year-block {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d6e8de;
+  border-radius: 9px;
+  background: #fbfefc;
+}
+
+.harvest-export-variety-year-block > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid #bdd9cb;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #dff3e8, #f5fbf7);
+}
+
+.harvest-export-variety-year-block > header div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.harvest-export-variety-year-block > header strong,
+.harvest-export-variety-year-block > header small,
+.harvest-export-variety-year-block > header b,
+.harvest-export-variety-year-block > header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-variety-year-block > header strong {
+  color: var(--brand);
+  font-size: 0.84rem;
+  font-weight: 950;
+}
+
+.harvest-export-variety-year-block > header small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.harvest-export-variety-year-block > header b {
+  color: var(--brand);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.harvest-export-variety-year-block > header span {
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.harvest-export-variety-percent-card footer {
+  align-items: end;
+}
+
+.harvest-export-variety-percent-card em.neutral {
+  max-width: 118px;
+}
+
+.harvest-export-comparison-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.harvest-export-comparison-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d3e6dc;
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.harvest-export-comparison-row > strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-comparison-row > small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.harvest-export-comparison-row > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  gap: 7px;
+  align-items: end;
+  min-height: 118px;
+}
+
+.harvest-export-comparison-row span {
+  display: grid;
+  grid-template-rows: auto 86px auto;
+  gap: 4px;
+  min-width: 0;
+  text-align: center;
+}
+
+.harvest-export-comparison-row b,
+.harvest-export-comparison-row em {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-comparison-row span i {
+  align-self: end;
+  justify-self: center;
+  width: min(30px, 64%);
+  min-height: 0;
+  border-radius: 7px 7px 0 0;
+  background: linear-gradient(180deg, var(--bar-color, var(--brand)), color-mix(in srgb, var(--bar-color, var(--brand)) 76%, #162d26));
+}
+
+.harvest-species-row td {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #e0f1e8;
+  color: var(--brand);
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-export-year-row td {
+  padding: 0 !important;
+  border-top: 10px solid #ffffff;
+  background: #f8fcf9;
+}
+
+.harvest-export-year-row div {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid #b9d9c9;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #dff3e8, #f7fcf9);
+}
+
+.harvest-export-year-row strong {
+  color: var(--brand);
+  font-size: 0.86rem;
+  font-weight: 950;
+}
+
+.harvest-export-year-row span,
+.harvest-export-year-row b {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-export-year-row b {
+  color: var(--ink);
+}
+
+.harvest-export-year-total-row td {
+  border-top: 2px solid #9dcdb6;
+  border-bottom: 8px solid #ffffff;
+  background: #e8f6ee;
+  color: var(--brand);
+  font-weight: 950;
+}
+
+.harvest-export-year-total-row td:first-child,
+.harvest-export-year-total-row td:nth-child(2) {
+  background: #d7eddf;
+}
+
+.harvest-year-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.harvest-year-row > div {
+  display: grid;
+  gap: 5px;
+}
+
+.harvest-year-row span {
+  display: grid;
+  grid-template-columns: 44px minmax(80px, 1fr) 74px;
+  gap: 6px;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 7px;
+}
+
+.harvest-year-row b,
+.harvest-year-row em {
+  position: relative;
+  z-index: 1;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.harvest-calibre-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.harvest-calibre-chips span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #edf7f2;
+  color: var(--brand);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.harvest-analytics-table table {
+  min-width: 860px;
+}
+
+.harvest-potrero-summary-card {
+  display: grid;
+  gap: 12px;
+}
+
+.harvest-potrero-species-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.harvest-potrero-species-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.harvest-potrero-species-section > header {
+  display: flex;
+  gap: 10px;
+  align-items: start;
+  justify-content: space-between;
+  padding: 9px 11px;
+  border: 1px solid #c8dfd3;
+  border-radius: 8px;
+  background: #e6f4ec;
+}
+
+.harvest-potrero-species-section > header div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.harvest-potrero-species-section > header strong {
+  overflow: hidden;
+  color: var(--brand);
+  font-size: 0.95rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.harvest-potrero-species-section > header span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.harvest-potrero-species-section > header b {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-potrero-variety-masonry {
+  column-gap: 12px;
+  column-width: 352px;
+}
+
+.harvest-potrero-variety-card {
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  gap: 9px;
+  align-content: start;
+  align-self: start;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #cfe3d8;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfdfb, #f1f8f4);
+  break-inside: avoid;
+}
+
+.harvest-potrero-variety-card header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d9e9e0;
+}
+
+.harvest-potrero-variety-card header div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.harvest-potrero-variety-card header strong {
+  overflow: hidden;
+  color: var(--brand);
+  font-size: 0.9rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-potrero-variety-card header span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.harvest-potrero-variety-card header b {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-potrero-year-list {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+.harvest-potrero-year-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.harvest-potrero-year-row > strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-potrero-year-bars {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.harvest-potrero-year-bars span {
+  display: grid;
+  grid-template-columns: 42px minmax(74px, 1fr) 64px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.harvest-potrero-year-bars b,
+.harvest-potrero-year-bars small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-potrero-year-bars small {
+  color: var(--ink);
+  text-align: right;
+}
+
+.harvest-potrero-year-bars i {
+  display: block;
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: #e7f0eb;
+}
+
+.harvest-potrero-year-bars em {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--bar-color, var(--brand)), color-mix(in srgb, var(--bar-color, var(--brand)) 68%, #f0b429));
+}
+
+.harvest-export-summary-panel {
+  gap: 8px;
+  padding: 12px;
+}
+
+.harvest-export-summary-panel .panel-header {
+  margin-bottom: 4px;
+}
+
+.harvest-export-table-wrap th,
+.harvest-export-table-wrap td {
+  padding: 6px 7px;
+  font-size: 0.72rem;
+  line-height: 1.15;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.harvest-export-main-table {
+  min-width: 1180px !important;
+  font-size: 0.74rem;
+}
+
+.harvest-export-main-table th:nth-child(1),
+.harvest-export-main-table td:nth-child(1) {
+  width: 42px;
+  min-width: 42px;
+}
+
+.harvest-export-main-table th:nth-child(2),
+.harvest-export-main-table td:nth-child(2) {
+  width: 96px;
+  min-width: 96px;
+}
+
+.harvest-export-main-table th:nth-child(3),
+.harvest-export-main-table td:nth-child(3) {
+  width: 72px;
+  min-width: 72px;
+}
+
+.harvest-export-calibre-menu {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.harvest-export-calibre-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.harvest-export-calibre-header h2,
+.harvest-export-calibre-header p {
+  margin: 0;
+}
+
+.harvest-export-calibre-header label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-export-calibre-header select {
+  min-height: 32px;
+  border: 1px solid #c9dfd2;
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.harvest-export-calibre-header > strong {
+  align-self: end;
+  padding: 5px 8px;
+  border: 1px solid #c9dfd2;
+  border-radius: 999px;
+  background: #e7f4ed;
+  color: var(--brand);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-export-calibre-menu > summary {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.harvest-export-calibre-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.harvest-export-calibre-menu > summary h2,
+.harvest-export-calibre-menu > summary p {
+  margin: 0;
+}
+
+.harvest-export-calibre-menu > summary strong {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid #c9dfd2;
+  border-radius: 999px;
+  background: #e7f4ed;
+  color: var(--brand);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.harvest-export-calibre-table {
+  width: max-content;
+  min-width: 100% !important;
+  font-size: 0.7rem;
+}
+
+.harvest-calibre-species-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.harvest-calibre-year-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.harvest-calibre-year-block {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d6e8de;
+  border-radius: 9px;
+  background: #fbfefc;
+}
+
+.harvest-calibre-year-block > header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid #bdd9cb;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #dff3e8, #f5fbf7);
+  color: var(--brand);
+}
+
+.harvest-calibre-year-block > header strong,
+.harvest-calibre-year-block > header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-calibre-year-block > header strong {
+  font-size: 0.84rem;
+  font-weight: 950;
+}
+
+.harvest-calibre-year-block > header span {
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.harvest-calibre-species-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.harvest-calibre-species-block h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #cfe3d8;
+  border-radius: 8px;
+  background: #e6f4ec;
+  color: var(--brand);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-calibre-species-block h3 span,
+.harvest-calibre-species-block h3 b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-calibre-species-block h3 b {
+  color: var(--ink);
+  font-size: 0.7rem;
+}
+
+.harvest-export-calibre-table th {
+  padding: 5px 6px;
+  font-size: 0.64rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.harvest-export-calibre-table td {
+  min-width: 52px;
+  padding: 4px 6px;
+  font-size: 0.68rem;
+  line-height: 1.05;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.harvest-export-calibre-table td[data-label="Variedad"],
+.harvest-export-calibre-table td[data-label="Potrero"],
+.harvest-export-calibre-table td[data-label="Categoria"],
+.harvest-export-calibre-table td[data-label="Ano"] {
+  min-width: 58px;
+  text-align: left;
+}
+
+.harvest-export-calibre-table td[data-label="Variedad"] {
+  min-width: 82px;
+  max-width: 108px;
+}
+
+.harvest-export-calibre-table td[data-label="Potrero"] {
+  min-width: 66px;
+  max-width: 92px;
+}
+
+.harvest-export-calibre-table td[data-label="Categoria"],
+.harvest-export-calibre-table td[data-label="Ano"] {
+  min-width: 42px;
+  max-width: 58px;
+}
+
+.harvest-export-calibre-table td strong {
+  font-size: 0.68rem;
+}
+
+.harvest-export-calibre-table td small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 900;
+}
+
+@media (max-width: 640px) {
+  .harvest-export-filter-title,
+  .harvest-export-variety-year-block > header,
+  .harvest-export-year-row div {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .harvest-export-filter-title {
+    display: grid;
+  }
+
+  .harvest-export-year-row div {
+    display: grid;
+  }
+
+  .harvest-export-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-export-years-field .harvest-year-checks {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .harvest-year-vertical-bars {
+    grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+    gap: 8px;
+    min-height: 184px;
+  }
+
+  .harvest-year-vertical-bar {
+    grid-template-rows: auto 132px auto;
+  }
+
+  .harvest-year-vertical-bar > div {
+    height: 132px;
+  }
+
+  .harvest-year-vertical-bar > strong,
+  .harvest-year-vertical-bar span {
+    font-size: 0.7rem;
+  }
+
+  .harvest-variety-year-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-variety-year-bars {
+    grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+    min-height: 150px;
+  }
+
+  .harvest-variety-year-bar {
+    grid-template-rows: auto 104px auto;
+  }
+
+  .harvest-variety-year-bar > div {
+    height: 104px;
+  }
+
+  .harvest-variety-year-group header {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .harvest-variety-year-totals span,
+  .harvest-variety-year-totals em,
+  .harvest-variety-year-group header em {
+    white-space: normal;
+  }
+
+  .harvest-potrero-variety-masonry {
+    column-width: auto;
+    columns: 1;
+  }
+
+  .harvest-potrero-year-row {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-potrero-year-bars span {
+    grid-template-columns: 38px minmax(70px, 1fr) 58px;
+  }
+
+  .harvest-export-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-export-calibre-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .harvest-export-calibre-header > strong {
+    justify-self: start;
+  }
 }
 
 .map-panel {
