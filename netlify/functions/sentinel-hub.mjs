@@ -259,12 +259,22 @@ function evaluatePixel(sample) {
 
 async function statusResponse() {
   const aoi = await aoiMeta();
+  let active = false;
+  let message = configured() ? "Credenciales Sentinel Hub activas" : "Faltan credenciales Sentinel Hub en Netlify";
+  if (configured()) {
+    try {
+      await accessToken();
+      active = true;
+    } catch (error) {
+      message = error.message || "No se pudo validar credenciales Sentinel Hub";
+    }
+  }
   return json(200, {
-    configured: configured(),
+    configured: active,
     provider: "Copernicus Data Space - Sentinel Hub Process API",
     aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
     cache: { memoryMax: cacheMax, ttlMs: cacheTtlMs },
-    message: configured() ? "Credenciales Sentinel Hub activas" : "Faltan credenciales Sentinel Hub en Netlify"
+    message
   });
 }
 

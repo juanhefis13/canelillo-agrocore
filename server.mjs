@@ -478,14 +478,24 @@ async function handleSentinelHub(req, res, url) {
   }
   if (url.pathname === "/api/sentinel-hub/status") {
     const aoi = await satelliteAoiMeta();
+    let active = false;
+    let message = sentinelConfigured()
+      ? "Credenciales Sentinel Hub activas"
+      : "Faltan SENTINEL_HUB_CLIENT_ID y SENTINEL_HUB_CLIENT_SECRET en el servidor";
+    if (sentinelConfigured()) {
+      try {
+        await sentinelAccessToken();
+        active = true;
+      } catch (error) {
+        message = error.message || "No se pudo validar credenciales Sentinel Hub";
+      }
+    }
     sendJson(res, 200, {
-      configured: sentinelConfigured(),
+      configured: active,
       provider: "Copernicus Data Space - Sentinel Hub Process API",
       aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
       cache: { memoryMax: satelliteTileCacheMax, ttlMs: satelliteTileCacheTtlMs },
-      message: sentinelConfigured()
-        ? "Credenciales Sentinel Hub activas"
-        : "Faltan SENTINEL_HUB_CLIENT_ID y SENTINEL_HUB_CLIENT_SECRET en el servidor"
+      message
     });
     return true;
   }

@@ -4238,7 +4238,13 @@ function irrigationPlanetMosaicQueryKey() {
 
 function irrigationSatelliteProcessingWarning() {
   if (irrigationSatelliteProcessingStatus.checking) return "";
-  if (!irrigationSatelliteProcessingStatus.configured) return "";
+  if (!irrigationSatelliteProcessingStatus.configured) {
+    const message = irrigationSatelliteProcessingStatus.message || "";
+    if (/credencial|credential|token|invalid|401/i.test(message)) {
+      return "No se pudo activar la capa satelital. Revisa las credenciales del proveedor en Netlify.";
+    }
+    return "";
+  }
   if (irrigationSatelliteProcessingStatus.providerType !== "planet") return "";
   const definition = irrigationSatelliteIndexDefinition();
   if (!definition.planetProc) {
