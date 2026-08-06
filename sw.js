@@ -1,5 +1,5 @@
-const CACHE = "canelillo-agrocore-v197-export-variety-contrast";
-const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
+const CACHE = "canelillo-agrocore-v212-satellite-clean-panel";
+const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

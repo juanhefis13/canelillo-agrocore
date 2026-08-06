@@ -35,6 +35,23 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
+function potreroLabel(value = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "-";
+  if (/^(todos|todas|sin potrero)$/i.test(text)) return text;
+  if (/^p\s*\d+$/i.test(text)) return `P${text.replace(/^p\s*/i, "")}`;
+  return /^\d+$/.test(text) ? `P${text}` : text;
+}
+
+function potreroListLabel(value = "") {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(potreroLabel)
+    .join(", ") || "-";
+}
+
 const seedState = {
   settings: {
     farmName: "Agricola El Canelillo",
@@ -202,6 +219,178 @@ let irrigationBandejaScrollTop = 0;
 let irrigationBandejaFocusPending = true;
 let irrigationBalancePotreroFilter = "Todos";
 let irrigationBalanceSelectedPotreros = new Set();
+const IRRIGATION_SATELLITE_STAC_URL = "https://earth-search.aws.element84.com/v1/search";
+const IRRIGATION_SATELLITE_COLLECTION = "sentinel-2-l2a";
+const IRRIGATION_SATELLITE_DEFAULT_BBOX = [-71.29, -32.83, -71.24, -32.79];
+const IRRIGATION_SATELLITE_PROXY_LOCAL = "/api/sentinel-hub";
+const IRRIGATION_SATELLITE_PROXY_SUPABASE = `${SUPABASE_URL}/functions/v1/sentinel-hub`;
+const IRRIGATION_PLANET_PROXY_LOCAL = "/api/planet";
+const IRRIGATION_PLANET_PROXY_SUPABASE = `${SUPABASE_URL}/functions/v1/planet`;
+const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
+const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
+  NDVI: {
+    name: "NDVI",
+    formula: "(B08 - B04) / (B08 + B04)",
+    use: "Vigor vegetal y cobertura activa.",
+    bands: ["nir", "red"],
+    planetProc: "ndvi",
+    legend: [
+      ["#9b1c1c", "Muy bajo", "< 0,20"],
+      ["#e8892f", "Bajo", "0,20 - 0,35"],
+      ["#f4d35e", "Medio", "0,35 - 0,50"],
+      ["#86c779", "Bueno", "0,50 - 0,70"],
+      ["#1f7a4d", "Alto", "> 0,70"]
+    ]
+  },
+  NDMI: {
+    name: "NDMI",
+    formula: "(B08 - B11) / (B08 + B11)",
+    use: "Humedad de vegetacion y estres hidrico.",
+    bands: ["nir", "swir16"],
+    legend: [
+      ["#8b1e1e", "Muy seco", "< -0,10"],
+      ["#df7e31", "Seco", "-0,10 - 0,10"],
+      ["#f2d45c", "Intermedio", "0,10 - 0,25"],
+      ["#6fbf7a", "Humedo", "0,25 - 0,45"],
+      ["#206aa5", "Muy humedo", "> 0,45"]
+    ]
+  },
+  NDRE: {
+    name: "NDRE",
+    formula: "(B08 - B05) / (B08 + B05)",
+    use: "Clorofila en canopia mas cerrada.",
+    bands: ["nir", "rededge1"],
+    legend: [
+      ["#9b1c1c", "Bajo", "< 0,12"],
+      ["#e8892f", "Vigilar", "0,12 - 0,22"],
+      ["#f4d35e", "Medio", "0,22 - 0,32"],
+      ["#86c779", "Bueno", "0,32 - 0,45"],
+      ["#1f7a4d", "Alto", "> 0,45"]
+    ]
+  },
+  GNDVI: {
+    name: "GNDVI",
+    formula: "(B08 - B03) / (B08 + B03)",
+    use: "Clorofila y respuesta nitrogenada.",
+    bands: ["nir", "green"],
+    legend: [
+      ["#9b1c1c", "Muy bajo", "< 0,25"],
+      ["#e8892f", "Bajo", "0,25 - 0,40"],
+      ["#f4d35e", "Medio", "0,40 - 0,55"],
+      ["#86c779", "Bueno", "0,55 - 0,72"],
+      ["#1f7a4d", "Alto", "> 0,72"]
+    ]
+  },
+  SAVI: {
+    name: "SAVI",
+    formula: "1.5 * (B08 - B04) / (B08 + B04 + 0.5)",
+    use: "Vigor con suelo expuesto.",
+    bands: ["nir", "red"],
+    legend: [
+      ["#9b1c1c", "Muy bajo", "< 0,18"],
+      ["#e8892f", "Bajo", "0,18 - 0,32"],
+      ["#f4d35e", "Medio", "0,32 - 0,48"],
+      ["#86c779", "Bueno", "0,48 - 0,65"],
+      ["#1f7a4d", "Alto", "> 0,65"]
+    ]
+  },
+  NDWI: {
+    name: "NDWI",
+    formula: "(Green - NIR) / (Green + NIR)",
+    use: "Agua superficial y zonas con exceso de humedad.",
+    bands: ["green", "nir"],
+    planetProc: "ndwi",
+    legend: [
+      ["#8b1e1e", "Muy seco", "< -0,20"],
+      ["#df7e31", "Seco", "-0,20 - 0,00"],
+      ["#f2d45c", "Intermedio", "0,00 - 0,20"],
+      ["#58a6d6", "Humedo", "0,20 - 0,40"],
+      ["#1459a8", "Agua", "> 0,40"]
+    ]
+  },
+  MSAVI2: {
+    name: "MSAVI2",
+    formula: "(2*NIR+1-sqrt((2*NIR+1)^2-8*(NIR-Red))) / 2",
+    use: "Vigor ajustado para suelo expuesto.",
+    bands: ["nir", "red"],
+    planetProc: "msavi2",
+    legend: [
+      ["#9b1c1c", "Muy bajo", "< 0,15"],
+      ["#e8892f", "Bajo", "0,15 - 0,30"],
+      ["#f4d35e", "Medio", "0,30 - 0,45"],
+      ["#86c779", "Bueno", "0,45 - 0,62"],
+      ["#1f7a4d", "Alto", "> 0,62"]
+    ]
+  },
+  VARI: {
+    name: "VARI",
+    formula: "(Green - Red) / (Green + Red - Blue)",
+    use: "Verdor visible usando bandas RGB.",
+    bands: ["green", "red", "blue"],
+    planetProc: "vari",
+    legend: [
+      ["#9b1c1c", "Bajo", "< -0,05"],
+      ["#e8892f", "Vigilar", "-0,05 - 0,05"],
+      ["#f4d35e", "Medio", "0,05 - 0,15"],
+      ["#86c779", "Bueno", "0,15 - 0,30"],
+      ["#1f7a4d", "Alto", "> 0,30"]
+    ]
+  },
+  MTVI2: {
+    name: "MTVI2",
+    formula: "Indice triangular modificado",
+    use: "Clorofila y vigor en canopia.",
+    bands: ["nir", "red", "green"],
+    planetProc: "mtvi2",
+    legend: [
+      ["#9b1c1c", "Muy bajo", "< 0,20"],
+      ["#e8892f", "Bajo", "0,20 - 0,35"],
+      ["#f4d35e", "Medio", "0,35 - 0,50"],
+      ["#86c779", "Bueno", "0,50 - 0,68"],
+      ["#1f7a4d", "Alto", "> 0,68"]
+    ]
+  },
+  TGI: {
+    name: "TGI",
+    formula: "Triangular Greenness Index",
+    use: "Verdor y clorofila con bandas visibles.",
+    bands: ["red", "green", "blue"],
+    planetProc: "tgi",
+    legend: [
+      ["#9b1c1c", "Bajo", "< 0,10"],
+      ["#e8892f", "Vigilar", "0,10 - 0,25"],
+      ["#f4d35e", "Medio", "0,25 - 0,45"],
+      ["#86c779", "Bueno", "0,45 - 0,65"],
+      ["#1f7a4d", "Alto", "> 0,65"]
+    ]
+  }
+});
+let irrigationSatelliteDateFrom = "";
+let irrigationSatelliteDateTo = "";
+let irrigationSatelliteCloudMax = 35;
+let irrigationSatelliteLimit = 10;
+let irrigationSatelliteIndex = "NDVI";
+let irrigationSatelliteLayerOpacity = 68;
+let irrigationSatelliteScenes = [];
+let irrigationSatelliteLoading = false;
+let irrigationSatelliteError = "";
+let irrigationSatelliteLastQueryKey = "";
+let irrigationSatelliteQueryMeta = null;
+let irrigationSatelliteMap = null;
+let irrigationSatelliteMapElement = null;
+let irrigationSatelliteOverlays = [];
+let irrigationSatelliteInfoWindow = null;
+let irrigationSatelliteTileOverlay = null;
+let irrigationSatelliteProxyBase = "";
+let irrigationSatelliteProcessingStatus = { checked: false, checking: false, configured: false, providerType: "", message: "Sin revisar" };
+let irrigationPlanetMosaics = [];
+let irrigationPlanetMosaic = "";
+let irrigationPlanetMosaicsLoading = false;
+let irrigationPlanetMosaicsError = "";
+let irrigationPlanetMosaicsLastQueryKey = "";
+let irrigationSatelliteAoi = null;
+let irrigationSatelliteAoiLoading = null;
 let calicataYear = String(new Date().getFullYear());
 let calicataMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let calicataSpeciesFilter = "Todas";
@@ -311,6 +500,7 @@ let weatherStationCloudAvailable = true;
 let weatherStationImportPreview = null;
 let irrigationEvaporationLoadedMonths = new Set();
 let irrigationEvaporationLoadingMonths = new Set();
+let irrigationCloudLoadedMonths = new Set();
 let supabaseSession = loadSession();
 let passwordRecoverySession = null;
 let currentProfile = null;
@@ -581,6 +771,7 @@ function markCloudModulesLoaded(modules = []) {
 function invalidateCloudModules(modules = []) {
   modules.forEach((module) => {
     cloudLoadedModules.delete(module);
+    if (module === "irrigation") irrigationCloudLoadedMonths.clear();
     delete cloudModuleCacheMeta[module];
   });
   saveCloudModuleCacheMeta();
@@ -589,6 +780,7 @@ function invalidateCloudModules(modules = []) {
 function resetCloudModuleCache() {
   cloudLoadedModules = new Set();
   cloudLoadingModules = new Map();
+  irrigationCloudLoadedMonths = new Set();
   cloudModuleCacheMeta = {};
   try {
     localStorage.removeItem(CLOUD_MODULE_CACHE_META_KEY);
@@ -600,7 +792,9 @@ function resetCloudModuleCache() {
 function cloudModulesForView(view) {
   if (view === "dashboard") return ["weather"];
   if (view === "irrigation") {
-    const modules = ["fields", "irrigation"];
+    const modules = ["fields"];
+    if (["gantt", "bandejas", "balance"].includes(irrigationTab)) modules.push("irrigation");
+    if (irrigationTab === "gantt") modules.push("calicatas");
     if (irrigationTab === "bandejas" || irrigationTab === "balance") modules.push("weather");
     return modules;
   }
@@ -632,14 +826,19 @@ function shouldLoadCloudModule(module, force = false) {
 async function ensureCloudDataForView(view, options = {}) {
   if (!supabaseSession) return;
   const force = Boolean(options.force);
-  const modules = [...new Set(cloudModulesForView(view))].filter((module) => shouldLoadCloudModule(module, force));
+  const irrigationMonthPrefix = view === "irrigation" && irrigationTab === "gantt" ? `${irrigationYear}-${irrigationMonth}` : "";
+  const modules = [...new Set(cloudModulesForView(view))].filter((module) => {
+    if (force) return true;
+    if (module === "irrigation" && irrigationMonthPrefix) return !irrigationCloudLoadedMonths.has(irrigationMonthPrefix);
+    return shouldLoadCloudModule(module, force);
+  });
   if (!modules.length) return;
-  const key = modules.sort().join("|");
+  const key = `${modules.slice().sort().join("|")}${irrigationMonthPrefix ? `@${irrigationMonthPrefix}` : ""}`;
   if (cloudLoadingModules.has(key)) return cloudLoadingModules.get(key);
   const task = (async () => {
     const storageStatus = document.getElementById("storageStatus");
     if (storageStatus) storageStatus.textContent = `Cargando ${modules.join(", ")} desde Supabase...`;
-    await loadCloudData({ modules, render: false, force });
+    await loadCloudData({ modules, render: false, force, irrigationMonthPrefix });
     if (currentView === view) render();
   })().finally(() => cloudLoadingModules.delete(key));
   cloudLoadingModules.set(key, task);
@@ -1477,6 +1676,8 @@ function loadJsonMap(key) {
   }
 }
 
+const irrigationLocalSaveTimers = { real: null, program: null };
+
 function saveIrrigationHours() {
   localStorage.setItem(IRRIGATION_DRAFT_KEY, JSON.stringify(irrigationHours));
 }
@@ -1484,6 +1685,31 @@ function saveIrrigationHours() {
 function saveIrrigationProgramHours() {
   localStorage.setItem(IRRIGATION_PROGRAM_KEY, JSON.stringify(irrigationProgramHours));
 }
+
+function scheduleIrrigationLocalSave(kind) {
+  const key = kind === "program" ? "program" : "real";
+  clearTimeout(irrigationLocalSaveTimers[key]);
+  irrigationLocalSaveTimers[key] = setTimeout(() => {
+    irrigationLocalSaveTimers[key] = null;
+    if (key === "program") saveIrrigationProgramHours();
+    else saveIrrigationHours();
+  }, 450);
+}
+
+function flushIrrigationLocalSaves() {
+  if (irrigationLocalSaveTimers.real) {
+    clearTimeout(irrigationLocalSaveTimers.real);
+    irrigationLocalSaveTimers.real = null;
+    saveIrrigationHours();
+  }
+  if (irrigationLocalSaveTimers.program) {
+    clearTimeout(irrigationLocalSaveTimers.program);
+    irrigationLocalSaveTimers.program = null;
+    saveIrrigationProgramHours();
+  }
+}
+
+window.addEventListener("beforeunload", flushIrrigationLocalSaves);
 
 function saveIrrigationAudit() {
   localStorage.setItem(IRRIGATION_AUDIT_KEY, JSON.stringify(irrigationAudit));
@@ -1500,6 +1726,31 @@ function saveIrrigationObservations() {
 
 function irrigationKey(blockId, date) {
   return `${blockId}__${date}`;
+}
+
+function irrigationKeyDate(key) {
+  return String(key || "").split("__").pop() || "";
+}
+
+function irrigationKeyMatchesMonth(key, monthPrefix = "") {
+  return Boolean(monthPrefix && irrigationKeyDate(key).startsWith(monthPrefix));
+}
+
+function irrigationMonthDateRange(monthPrefix = "") {
+  const match = String(monthPrefix || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  const start = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+  const next = new Date(Date.UTC(year, month, 1));
+  const end = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  return { start, end };
+}
+
+function irrigationMonthFilterQuery(monthPrefix = "") {
+  const range = irrigationMonthDateRange(monthPrefix);
+  return range ? `&fecha=gte.${range.start}&fecha=lt.${range.end}` : "";
 }
 
 function pruneEmptyIrrigationAudits() {
@@ -1541,7 +1792,7 @@ function irrigationAuditTitle(kind, block, date, value) {
   const key = irrigationKey(block.id, date);
   const audit = kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
   const observation = irrigationCellObservation(kind, block.id, date);
-  const base = `${kind === "program" ? "Programa" : "Riego real"} ${block.potrero} bloque ${block.block} - ${date}`;
+  const base = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} - ${date}`;
   const hours = value === "" || value === null || value === undefined ? "Sin horas" : `${value} hrs`;
   const lines = [base, hours];
   if (observation?.text) {
@@ -1581,12 +1832,13 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
-  const label = `${kind === "program" ? "Programa" : "Riego real"} ${block.potrero} bloque ${block.block} dia ${dayIndex + 1}`;
+  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
   return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${observationClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" title="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
-function applyIrrigationObservationRecords(rows = []) {
+function applyIrrigationObservationRecords(rows = [], options = {}) {
+  const monthPrefix = options.monthPrefix || "";
   const pendingReal = Object.fromEntries(Object.entries(irrigationObservations).filter(([, item]) => item?.pending));
   const pendingProgram = Object.fromEntries(Object.entries(irrigationProgramObservations).filter(([, item]) => item?.pending));
   const real = {};
@@ -1606,8 +1858,14 @@ function applyIrrigationObservationRecords(rows = []) {
       pending: false
     };
   });
-  irrigationObservations = { ...real, ...pendingReal };
-  irrigationProgramObservations = { ...program, ...pendingProgram };
+  const previousReal = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationObservations).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  const previousProgram = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationProgramObservations).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  irrigationObservations = { ...previousReal, ...real, ...pendingReal };
+  irrigationProgramObservations = { ...previousProgram, ...program, ...pendingProgram };
   saveIrrigationObservations();
 }
 
@@ -1714,11 +1972,12 @@ async function upsertSupabaseRowWithOptionalColumns(path, payload, optionalColum
   }
 }
 
-function applyIrrigationRecords(rows = []) {
+function applyIrrigationRecords(rows = [], options = {}) {
+  const monthPrefix = options.monthPrefix || "";
   const pendingKeys = new Set(irrigationSaveTimers.keys());
   const pendingHours = Object.fromEntries(Object.entries(irrigationHours).filter(([key]) => pendingKeys.has(key)));
   const pendingAudit = Object.fromEntries(Object.entries(irrigationAudit).filter(([key]) => pendingKeys.has(key)));
-  state.irrigationRecords = rows.map((item) => ({
+  const records = rows.map((item) => ({
     id: item.id,
     blockId: item.campo_id,
     date: String(item.fecha || "").slice(0, 10),
@@ -1727,22 +1986,32 @@ function applyIrrigationRecords(rows = []) {
     modifiedByName: item.modificado_por_nombre || item.creado_por_nombre || "",
     modifiedAt: item.modificado_en || item.actualizado_en || item.updated_at || ""
   })).filter((item) => item.blockId && item.date);
+  state.irrigationRecords = monthPrefix
+    ? [...(state.irrigationRecords || []).filter((item) => !String(item.date || "").startsWith(monthPrefix)), ...records]
+    : records;
   const cloudHours = {};
   const cloudAudit = {};
-  state.irrigationRecords.forEach((item) => {
+  records.forEach((item) => {
     const key = irrigationKey(item.blockId, item.date);
     if (item.hours > 0) cloudHours[key] = item.hours;
     if (item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
       cloudAudit[key] = { userName: item.modifiedByName, updatedAt: item.modifiedAt };
     }
   });
-  irrigationHours = { ...cloudHours, ...pendingHours };
-  irrigationAudit = { ...cloudAudit, ...pendingAudit };
+  const previousHours = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationHours).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  const previousAudit = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationAudit).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  irrigationHours = { ...previousHours, ...cloudHours, ...pendingHours };
+  irrigationAudit = { ...previousAudit, ...cloudAudit, ...pendingAudit };
   saveIrrigationHours();
   saveIrrigationAudit();
 }
 
-function applyIrrigationProgramRecords(rows = []) {
+function applyIrrigationProgramRecords(rows = [], options = {}) {
+  const monthPrefix = options.monthPrefix || "";
   const pendingKeys = new Set(irrigationProgramSaveTimers.keys());
   const pendingHours = Object.fromEntries(Object.entries(irrigationProgramHours).filter(([key]) => pendingKeys.has(key)));
   const pendingAudit = Object.fromEntries(Object.entries(irrigationProgramAudit).filter(([key]) => pendingKeys.has(key)));
@@ -1759,8 +2028,14 @@ function applyIrrigationProgramRecords(rows = []) {
       };
     }
   });
-  irrigationProgramHours = { ...cloudHours, ...pendingHours };
-  irrigationProgramAudit = { ...cloudAudit, ...pendingAudit };
+  const previousHours = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationProgramHours).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  const previousAudit = monthPrefix
+    ? Object.fromEntries(Object.entries(irrigationProgramAudit).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  irrigationProgramHours = { ...previousHours, ...cloudHours, ...pendingHours };
+  irrigationProgramAudit = { ...previousAudit, ...cloudAudit, ...pendingAudit };
   saveIrrigationProgramHours();
   saveIrrigationProgramAudit();
 }
@@ -2133,7 +2408,7 @@ function openIrrigationObservationDialog() {
       <div class="dialog-header">
         <div>
           <h3>Observacion:</h3>
-          <p>${context.kind === "program" ? "Programa" : "Riego real"} · Potrero ${escapeHtml(block.potrero)} · Bloque ${escapeHtml(block.block)} · ${escapeHtml(context.date)}</p>
+          <p>${context.kind === "program" ? "Programa" : "Riego real"} · Potrero ${escapeHtml(potreroLabel(block.potrero))} · Bloque ${escapeHtml(block.block)} · ${escapeHtml(context.date)}</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
@@ -2277,6 +2552,85 @@ function calicataTextCell(calicatas, field) {
   return values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0];
 }
 
+const EMPTY_CALICATA_SUMMARY = Object.freeze({
+  count: 0,
+  depth20: null,
+  depth40: null,
+  depth60: null,
+  depth80: null,
+  general: null
+});
+
+const IRRIGATION_CALICATA_DETAIL_ROWS = [
+  ["20 cm", "depth20", "depth"],
+  ["40 cm", "depth40", "depth"],
+  ["60 cm", "depth60", "depth"],
+  ["80 cm", "depth80", "depth"],
+  ["Trab.", "workerName", "text"],
+  ["Obs.", "observation", "text"]
+];
+
+function irrigationCalicataDayKey(blockKey, date) {
+  return `${blockKey}__${date}`;
+}
+
+function buildIrrigationGanttCalicataIndex(blocks, monthPrefix) {
+  const visibleKeys = new Set(blocks.map((block) => calicataBlockKey(block.potrero, block.block)));
+  const byBlock = new Map();
+  const byDay = new Map();
+  (state.calicatas || []).forEach((item) => {
+    const blockKey = calicataBlockKey(item.potrero, item.block);
+    if (!visibleKeys.has(blockKey)) return;
+    if (!byBlock.has(blockKey)) byBlock.set(blockKey, []);
+    byBlock.get(blockKey).push(item);
+
+    const date = calicataDate(item);
+    if (!date || !date.startsWith(monthPrefix)) return;
+    const dayKey = irrigationCalicataDayKey(blockKey, date);
+    if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+    byDay.get(dayKey).push(item);
+  });
+  const summaryByBlock = new Map([...byBlock.entries()].map(([key, rows]) => [key, calicataSummary(rows)]));
+  const summaryByDay = new Map([...byDay.entries()].map(([key, rows]) => [key, calicataSummary(rows)]));
+  return { byBlock, byDay, summaryByBlock, summaryByDay };
+}
+
+function renderIrrigationProgramCalicataDetailRows(calicataKey, monthDates, dayClassMap) {
+  return IRRIGATION_CALICATA_DETAIL_ROWS.map(([label]) => `
+    <div class="irrigation-row calicata-detail-row irrigation-program-spacer-row" data-calicata-detail="${htmlAttr(calicataKey)}">
+      <div class="irrigation-block-label calicata-label">
+        <strong>${label}</strong>
+      </div>
+      <div class="irrigation-days calicata-detail-days">
+        ${monthDates.map((date) => `<span class="calicata-detail-cell ${dayClassMap.get(date) || ""}"></span>`).join("")}
+      </div>
+      <div class="irrigation-total calicata-label"></div>
+      <div class="irrigation-reposition calicata-label"></div>
+    </div>
+  `).join("");
+}
+
+function renderIrrigationRealCalicataDetailRows(calicataKey, monthDates, dayClassMap, calicataIndex) {
+  return IRRIGATION_CALICATA_DETAIL_ROWS.map(([label, field, type]) => `
+    <div class="irrigation-row calicata-detail-row" data-calicata-detail="${htmlAttr(calicataKey)}">
+      <div class="irrigation-block-label calicata-label">
+        <strong>${label}</strong>
+      </div>
+      <div class="irrigation-days calicata-detail-days">
+        ${monthDates.map((date) => {
+          const dayCalicatas = calicataIndex.byDay.get(irrigationCalicataDayKey(calicataKey, date)) || [];
+          const value = type === "depth" ? calicataDepthCell(dayCalicatas, field) : calicataTextCell(dayCalicatas, field);
+          return `<span class="calicata-detail-cell ${dayClassMap.get(date) || ""} ${value ? "has-calicata" : ""}" title="${htmlAttr(value || "")}">${escapeHtml(value)}</span>`;
+        }).join("")}
+      </div>
+      <div class="irrigation-total calicata-label"></div>
+      <div class="irrigation-reposition calicata-label"></div>
+      <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
+      <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
+    </div>
+  `).join("");
+}
+
 function calicataMonthMatches(item, monthPrefix) {
   return !monthPrefix || calicataDate(item).slice(0, 7) === monthPrefix;
 }
@@ -2285,7 +2639,7 @@ function irrigationCalicataOptions(blocks) {
   const seen = new Map();
   blocks.forEach((block) => {
     const key = calicataBlockKey(block.potrero, block.block);
-    if (!seen.has(key)) seen.set(key, { key, label: `${block.potrero || "-"} / bloque ${block.block || "-"}` });
+    if (!seen.has(key)) seen.set(key, { key, label: `${potreroLabel(block.potrero)} / bloque ${block.block || "-"}` });
   });
   return [{ key: "Todos", label: "Todos" }, ...[...seen.values()].sort((a, b) => comparePotrero(a.label, b.label))];
 }
@@ -2951,7 +3305,7 @@ async function applyAutomaticIrrigationProgramAnnual() {
         });
         if (plan.error || plan.warning) {
           const monthLabel = monthOptions().find((item) => item.value === month)?.label || month;
-          warnings.push(`${block.potrero || "-"} bloque ${block.block || "-"} - ${monthLabel}: ${plan.error || plan.warning}`);
+          warnings.push(`${potreroLabel(block.potrero)} bloque ${block.block || "-"} - ${monthLabel}: ${plan.error || plan.warning}`);
         }
         if (plan.error) continue;
         plannedCells += plan.days.length;
@@ -2990,7 +3344,7 @@ function irrigationProgramVarietyOptions(blocks) {
 function renderProgramDialogBlockOptions(blocks, selectedPotrero) {
   const filtered = blocks.filter((block) => block.potrero === selectedPotrero);
   return filtered.map((block) => `
-    <label class="program-block-chip" title="${htmlAttr(`${block.potrero} bloque ${block.block}`)}">
+    <label class="program-block-chip" title="${htmlAttr(`${potreroLabel(block.potrero)} bloque ${block.block}`)}">
       <input type="checkbox" data-program-auto-block="${htmlAttr(block.id)}" checked>
       <span>${escapeHtml(block.block || "-")}</span>
       <small>${number(block.hectares)} ha</small>
@@ -3018,7 +3372,7 @@ function renderAnnualProgramBlockRows(blocks) {
     <label class="program-annual-block-row">
       <input type="checkbox" data-program-annual-block="${htmlAttr(block.id)}" checked>
       <span class="program-annual-block-main">
-        <strong>${escapeHtml(block.potrero || "-")} / Bloque ${escapeHtml(block.block || "-")}</strong>
+        <strong>${escapeHtml(potreroLabel(block.potrero))} / Bloque ${escapeHtml(block.block || "-")}</strong>
         <small>${escapeHtml(block.crop || "-")} · ${escapeHtml(block.variety || "Sin variedad")} · ${number(block.hectares)} ha · ${escapeHtml(irrigationBaseHoursLabel(block))}</small>
       </span>
       <span class="program-annual-block-meta">Precip. ${number(block.precipitation || 0, 1)}</span>
@@ -3068,7 +3422,7 @@ function updateAnnualProgramDialogPreview() {
   const rows = blocks.slice(0, 4).map((block) => {
     const targetRepos = Number(document.querySelector(`[data-program-annual-repos="${CSS.escape(block.id)}"]`)?.value);
     const blockHours = irrigationBaseHours(block, hours);
-    if (!Number.isFinite(targetRepos) || targetRepos <= 0) return `<span class="is-warning">${escapeHtml(block.potrero || "-")} bloque ${escapeHtml(block.block || "-")}: falta reposicion.</span>`;
+    if (!Number.isFinite(targetRepos) || targetRepos <= 0) return `<span class="is-warning">${escapeHtml(potreroLabel(block.potrero))} bloque ${escapeHtml(block.block || "-")}: falta reposicion.</span>`;
     const plan = automaticIrrigationBlockPlan({
       block,
       daysInMonth,
@@ -3079,8 +3433,8 @@ function updateAnnualProgramDialogPreview() {
       skipDays,
       startDay: Math.min(startDay, daysInMonth)
     });
-    if (plan.error) return `<span class="is-warning">${escapeHtml(block.potrero || "-")} bloque ${escapeHtml(block.block || "-")}: ${escapeHtml(plan.error)}</span>`;
-    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>${escapeHtml(block.potrero || "-")} / ${escapeHtml(block.block || "-")}</strong> · ${number(blockHours, 1)} h/riego · ${year} · ${months.length} meses · muestra ${sampleMonth}: dias ${plan.days.join(", ")} · ${number(plan.achievedRepos, 1)}%</span>`;
+    if (plan.error) return `<span class="is-warning">${escapeHtml(potreroLabel(block.potrero))} bloque ${escapeHtml(block.block || "-")}: ${escapeHtml(plan.error)}</span>`;
+    return `<span class="${plan.warning ? "is-warning" : ""}"><strong>${escapeHtml(potreroLabel(block.potrero))} / ${escapeHtml(block.block || "-")}</strong> · ${number(blockHours, 1)} h/riego · ${year} · ${months.length} meses · muestra ${sampleMonth}: dias ${plan.days.join(", ")} · ${number(plan.achievedRepos, 1)}%</span>`;
   });
   const extra = blocks.length > 4 ? `<span>+${blocks.length - 4} bloques mas.</span>` : "";
   preview.innerHTML = `${rows.join("")}${extra}`;
@@ -3114,7 +3468,7 @@ function openIrrigationProgramDialog() {
       <div class="irrigation-program-tool-controls">
         <label>Potrero
           <select id="programAutoPotrero">
-            ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === selectedPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}
+            ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === selectedPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}
           </select>
         </label>
         <label>Fecha de inicio
@@ -3277,7 +3631,7 @@ function openIrrigationBaseHoursDialog() {
         ${blocks.map((block) => `
           <label class="irrigation-base-hours-row">
             <span>
-              <strong>Potrero ${escapeHtml(block.potrero || "-")} / Bloque ${escapeHtml(block.block || "-")}</strong>
+              <strong>Potrero ${escapeHtml(potreroLabel(block.potrero))} / Bloque ${escapeHtml(block.block || "-")}</strong>
               <small>${escapeHtml(block.crop || "-")} · ${escapeHtml(block.variety || "Sin variedad")} · ${number(block.hectares)} ha · ${irrigationBaseHoursLabel(block)}</small>
             </span>
             <input type="number" min="0" step="0.5" inputmode="decimal" value="${Number(block.baseHours) > 0 ? htmlAttr(String(Number(block.baseHours))) : ""}" placeholder="Ej. 3" data-base-hours-block="${htmlAttr(block.id)}">
@@ -3585,12 +3939,12 @@ function irrigationBalancePotreroChart(rows, selectedPotreros) {
         const realHeight = Math.max(3, row.realVolume / max * 100);
         const active = selectedPotreros.has(row.potrero);
         return `
-          <button class="irrigation-balance-potrero-bar ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${row.potrero}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
+          <button class="irrigation-balance-potrero-bar ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${potreroLabel(row.potrero)}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
             <div>
               <i class="program" style="height:${programHeight}%"><em>${number(row.programVolume, 0)}</em></i>
               <i class="real" style="height:${realHeight}%"><em>${number(row.realVolume, 0)}</em></i>
             </div>
-            <strong>${escapeHtml(row.potrero)}</strong>
+            <strong>${escapeHtml(potreroLabel(row.potrero))}</strong>
             <span>${irrigationDifferenceLabel(row.differencePercent)}</span>
           </button>
         `;
@@ -3614,7 +3968,7 @@ function irrigationBalanceBlockChart(rows) {
         return `
           <div class="irrigation-block-chart-row">
             <div>
-              <strong>${escapeHtml(row.block.potrero || "-")} / Bloque ${escapeHtml(row.block.block || "-")}</strong>
+              <strong>${escapeHtml(potreroLabel(row.block.potrero))} / Bloque ${escapeHtml(row.block.block || "-")}</strong>
               <span>Real ${irrigationVolumeLabel(row.realVolume)} · Prog ${irrigationVolumeLabel(row.programVolume)}</span>
             </div>
             <div class="irrigation-block-chart-bars">
@@ -3638,9 +3992,9 @@ function irrigationBalanceAnnualPotreroChart(rows, selectedPotreros) {
         const programWidth = Math.max(2, row.programVolume / max * 100);
         const realWidth = Math.max(2, row.realVolume / max * 100);
         return `
-          <button class="irrigation-annual-potrero-row ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${row.potrero}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
+          <button class="irrigation-annual-potrero-row ${active ? "active" : ""}" type="button" data-action="select-irrigation-balance-potrero" data-potrero="${htmlAttr(row.potrero)}" title="${htmlAttr(`${potreroLabel(row.potrero)}: real ${irrigationVolumeLabel(row.realVolume)} / programa ${irrigationVolumeLabel(row.programVolume)}. Ctrl+clic permite seleccionar varios.`)}">
             <div class="irrigation-annual-potrero-name">
-              <strong>${escapeHtml(row.potrero)}</strong>
+              <strong>${escapeHtml(potreroLabel(row.potrero))}</strong>
               <span>${row.blocks} bloque${row.blocks === 1 ? "" : "s"} - ${irrigationDifferenceLabel(row.differencePercent)}</span>
             </div>
             <div class="irrigation-annual-bars">
@@ -3685,7 +4039,7 @@ function irrigationBalanceVolumeMatrix(rows, monthPrefix, daysInMonth) {
       ${sorted.map((row) => `
         <div class="irrigation-balance-row">
           <div class="irrigation-balance-block-label">
-            <strong>${escapeHtml(row.block.potrero || "-")} / ${escapeHtml(row.block.block || "-")}</strong>
+            <strong>${escapeHtml(potreroLabel(row.block.potrero))} / ${escapeHtml(row.block.block || "-")}</strong>
             <span>${irrigationBandejaLabel(row.block.flow)} caudal</span>
           </div>
           <div class="irrigation-balance-days">
@@ -3750,7 +4104,7 @@ function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, mon
         </div>
         <label>Potrero detalle
           <select id="irrigationBalancePotreroFilter">
-            ${potreroOptions.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationBalancePotreroFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+            ${potreroOptions.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationBalancePotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}
           </select>
         </label>
       </div>
@@ -3800,6 +4154,777 @@ function renderIrrigationBalancePanel({ blockRows, monthPrefix, daysInMonth, mon
   `;
 }
 
+function irrigationSatelliteDateValue(date) {
+  const safeDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  return [
+    safeDate.getFullYear(),
+    String(safeDate.getMonth() + 1).padStart(2, "0"),
+    String(safeDate.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function ensureIrrigationSatelliteRange(monthPrefix) {
+  if (irrigationSatelliteDateFrom && irrigationSatelliteDateTo) return;
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 60);
+  irrigationSatelliteDateFrom = irrigationSatelliteDateValue(start);
+  irrigationSatelliteDateTo = irrigationSatelliteDateValue(end);
+}
+
+function irrigationSatelliteQueryKey(blocks) {
+  const blockKey = blocks
+    .map((block) => fieldIdentityKey(block.potrero, block.block))
+    .sort()
+    .join("|");
+  return [
+    irrigationSatelliteDateFrom,
+    irrigationSatelliteDateTo,
+    irrigationSatelliteCloudMax,
+    irrigationSatelliteLimit,
+    blockKey
+  ].join("::");
+}
+
+function irrigationSatelliteTileQueryKey() {
+  return [
+    irrigationSatelliteProcessingStatus.providerType,
+    irrigationPlanetMosaic,
+    irrigationSatelliteIndex,
+    irrigationSatelliteDateFrom,
+    irrigationSatelliteDateTo,
+    irrigationSatelliteCloudMax
+  ].join("::");
+}
+
+function irrigationSatelliteIndexDefinition(index = irrigationSatelliteIndex) {
+  return IRRIGATION_SATELLITE_INDEX_DEFINITIONS[index] || IRRIGATION_SATELLITE_INDEX_DEFINITIONS.NDVI;
+}
+
+function irrigationSatelliteMapTypeOptions() {
+  return Object.values(IRRIGATION_SATELLITE_INDEX_DEFINITIONS)
+    .map((item) => `<option value="${htmlAttr(item.name)}" ${item.name === irrigationSatelliteIndex ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.use}`)}</option>`)
+    .join("");
+}
+
+function irrigationSatelliteProviderLabel() {
+  const providerType = irrigationSatelliteProcessingStatus.providerType;
+  if (providerType === "planet") return "Planet";
+  if (providerType === "sentinel") return "Sentinel Hub";
+  return "Sin proveedor";
+}
+
+function irrigationSatelliteProviderSummary() {
+  const providerType = irrigationSatelliteProcessingStatus.providerType;
+  if (providerType === "planet") return "Mosaics Surface Reflectance";
+  if (providerType === "sentinel") return "Sentinel-2 L2A Process API";
+  return "Configurar credenciales";
+}
+
+function irrigationPlanetMosaicLabel(mosaic) {
+  const name = String(mosaic?.name || mosaic?.id || "");
+  const label = String(mosaic?.title || name);
+  const date = String(mosaic?.lastAcquired || mosaic?.firstAcquired || mosaic?.intervalEnd || "").slice(0, 10);
+  return date ? `${label} - ${date}` : label;
+}
+
+function irrigationPlanetMosaicQueryKey() {
+  return [
+    irrigationSatelliteDateFrom,
+    irrigationSatelliteDateTo
+  ].join("::");
+}
+
+function irrigationSatelliteProcessingWarning() {
+  if (irrigationSatelliteProcessingStatus.checking) return "";
+  if (!irrigationSatelliteProcessingStatus.configured) {
+    return `Configura PLANET_API_KEY o Sentinel Hub en el servidor para ver ${escapeHtml(irrigationSatelliteIndex)} coloreado sobre el mapa.`;
+  }
+  if (irrigationSatelliteProcessingStatus.providerType !== "planet") return "";
+  const definition = irrigationSatelliteIndexDefinition();
+  if (!definition.planetProc) {
+    return `${escapeHtml(irrigationSatelliteIndex)} no esta disponible en Planet Mosaics. Usa NDVI, NDWI, MSAVI2, VARI, MTVI2 o TGI.`;
+  }
+  if (irrigationPlanetMosaicsLoading) return "";
+  if (irrigationPlanetMosaicsError) return escapeHtml(irrigationPlanetMosaicsError);
+  if (!irrigationPlanetMosaic) {
+    return "Planet respondio, pero no hay mosaicos Surface Reflectance disponibles para este rango o para esta cuenta.";
+  }
+  return "";
+}
+
+function irrigationSatelliteRingsBbox(rings) {
+  const points = rings.flat();
+  if (!points.length) return null;
+  const lngs = points.map((point) => Number(point[0])).filter(Number.isFinite);
+  const lats = points.map((point) => Number(point[1])).filter(Number.isFinite);
+  if (!lngs.length || !lats.length) return null;
+  const minLng = Math.min(...lngs);
+  const minLat = Math.min(...lats);
+  const maxLng = Math.max(...lngs);
+  const maxLat = Math.max(...lats);
+  return {
+    bbox: [minLng, minLat, maxLng, maxLat],
+    center: { lng: (minLng + maxLng) / 2, lat: (minLat + maxLat) / 2 }
+  };
+}
+
+function bboxesIntersect(a, b) {
+  if (!a || !b) return true;
+  return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+}
+
+async function loadIrrigationSatelliteAoi() {
+  if (irrigationSatelliteAoi) return irrigationSatelliteAoi;
+  if (irrigationSatelliteAoiLoading) return irrigationSatelliteAoiLoading;
+  irrigationSatelliteAoiLoading = fetch(IRRIGATION_SATELLITE_AOI_URL, { cache: "force-cache" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((geojson) => {
+      const rings = geoFeaturesToRings(geojson?.features || []);
+      const points = rings.flatMap((item) => item.rings.flat());
+      const bounds = points.length ? geoBounds(points) : null;
+      irrigationSatelliteAoi = geojson && bounds ? {
+        geojson,
+        rings,
+        bbox: [bounds.minX, bounds.minY, bounds.maxX, bounds.maxY]
+      } : null;
+      return irrigationSatelliteAoi;
+    })
+    .catch(() => null)
+    .finally(() => { irrigationSatelliteAoiLoading = null; });
+  return irrigationSatelliteAoiLoading;
+}
+
+function tileToLonLatBbox(x, y, z) {
+  const scale = 2 ** z;
+  const lonLeft = x / scale * 360 - 180;
+  const lonRight = (x + 1) / scale * 360 - 180;
+  const latTop = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / scale))) * 180 / Math.PI;
+  const latBottom = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / scale))) * 180 / Math.PI;
+  return [lonLeft, latBottom, lonRight, latTop];
+}
+
+function irrigationSatelliteTileOutsideAoi(x, y, z) {
+  return Boolean(irrigationSatelliteAoi?.bbox && !bboxesIntersect(tileToLonLatBbox(x, y, z), irrigationSatelliteAoi.bbox));
+}
+
+function irrigationSatelliteGeoMeta(blocks, layers) {
+  const visibleKeys = new Set(blocks.map((block) => fieldIdentityKey(block.potrero, block.block)));
+  const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
+  const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
+  const matchedBlocks = blockRings.filter((item) => {
+    const field = geoJsonFeatureField(item.feature);
+    return visibleKeys.has(fieldIdentityKey(field.potrero, field.block));
+  });
+  const matchedPotreros = potreroRings.filter((item) => {
+    const potrero = potreroFeatureName(item.feature);
+    return blocks.some((block) => normalizePotreroOrderName(block.potrero) === normalizePotreroOrderName(potrero));
+  });
+  const sourceRings = matchedBlocks.length ? matchedBlocks : matchedPotreros.length ? matchedPotreros : blockRings.length ? blockRings : potreroRings;
+  const bbox = irrigationSatelliteRingsBbox(sourceRings.flatMap((item) => item.rings));
+  if (bbox) {
+    return {
+      ...bbox,
+      source: matchedBlocks.length ? `${matchedBlocks.length} bloques del GeoJSON` : matchedPotreros.length ? `${matchedPotreros.length} potreros del GeoJSON` : "GeoJSON completo",
+      blocks: blocks.length
+    };
+  }
+  const [minLng, minLat, maxLng, maxLat] = IRRIGATION_SATELLITE_DEFAULT_BBOX;
+  return {
+    bbox: IRRIGATION_SATELLITE_DEFAULT_BBOX,
+    center: { lng: (minLng + maxLng) / 2, lat: (minLat + maxLat) / 2 },
+    source: "Area Canelillo aproximada",
+    blocks: blocks.length
+  };
+}
+
+function irrigationSatelliteSceneDate(scene) {
+  return String(scene?.properties?.datetime || scene?.properties?.created || "").slice(0, 10);
+}
+
+function irrigationSatelliteDateLabel(value) {
+  const date = String(value || "").slice(0, 10);
+  const [year, month, day] = date.split("-");
+  if (!year || !month || !day) return "-";
+  const monthLabel = monthOptions().find((item) => item.value === month)?.label || month;
+  return `${Number(day)} ${monthLabel.slice(0, 3)} ${year}`;
+}
+
+function irrigationSatelliteCloud(scene) {
+  const cloud = Number(scene?.properties?.["eo:cloud_cover"]);
+  return Number.isFinite(cloud) ? cloud : null;
+}
+
+function irrigationSatelliteAsset(scene, key) {
+  return scene?.assets?.[key]?.href || "";
+}
+
+function irrigationSatelliteAssetLinks(scene) {
+  const links = [
+    ["B04 rojo", "red"],
+    ["B08 NIR", "nir"],
+    ["B05 red edge", "rededge1"],
+    ["B06 red edge", "rededge2"],
+    ["B07 red edge", "rededge3"],
+    ["B11 SWIR", "swir16"],
+    ["B12 SWIR", "swir22"]
+  ];
+  return links
+    .filter(([, key]) => irrigationSatelliteAsset(scene, key))
+    .map(([label, key]) => `<a href="${htmlAttr(irrigationSatelliteAsset(scene, key))}" target="_blank" rel="noreferrer">${label}</a>`)
+    .join("");
+}
+
+function irrigationSatelliteQuality(cloud) {
+  if (cloud === null) return { label: "Sin nubosidad", className: "unknown", color: "#6b7280" };
+  if (cloud <= 10) return { label: "Muy buena", className: "good", color: "#1f7a4d" };
+  if (cloud <= 25) return { label: "Usable", className: "medium", color: "#d99a1c" };
+  return { label: "Revisar nubes", className: "high", color: "#c44536" };
+}
+
+function irrigationSatelliteCopernicusUrl(meta, scene) {
+  const date = irrigationSatelliteSceneDate(scene) || irrigationSatelliteDateTo;
+  const params = new URLSearchParams({
+    lat: String((meta?.center?.lat ?? -32.81).toFixed(5)),
+    lng: String((meta?.center?.lng ?? -71.26).toFixed(5)),
+    zoom: "14",
+    fromTime: `${date}T00:00:00.000Z`,
+    toTime: `${date}T23:59:59.999Z`
+  });
+  return `https://browser.dataspace.copernicus.eu/?${params.toString()}`;
+}
+
+function irrigationSatelliteIndexCards(scene = null) {
+  const providerType = irrigationSatelliteProcessingStatus.providerType;
+  return Object.values(IRRIGATION_SATELLITE_INDEX_DEFINITIONS).map((item) => {
+    const supportedByProvider = providerType !== "planet" || Boolean(item.planetProc);
+    const ready = providerType === "planet"
+      ? supportedByProvider && Boolean(irrigationPlanetMosaic)
+      : scene && item.bands.every((band) => irrigationSatelliteAsset(scene, band));
+    const status = providerType === "planet" && !supportedByProvider
+      ? "Requiere Sentinel"
+      : ready ? "Listo para mapa" : scene ? "Faltan bandas" : "Esperando imagen";
+    return `
+    <button class="satellite-index-card ${ready ? "is-ready" : ""} ${supportedByProvider ? "" : "is-provider-disabled"} ${item.name === irrigationSatelliteIndex ? "is-selected" : ""}" type="button" data-action="select-satellite-index" data-index="${htmlAttr(item.name)}">
+      <div class="satellite-index-card-head">
+        <strong>${item.name}</strong>
+        <span>${status}</span>
+      </div>
+      <code>${escapeHtml(item.formula)}</code>
+      <span>${escapeHtml(item.use)}</span>
+    </button>`;
+  }).join("");
+}
+
+function irrigationSatelliteIndexLegend(index = irrigationSatelliteIndex) {
+  const definition = irrigationSatelliteIndexDefinition(index);
+  return `
+    <div class="satellite-decision-legend">
+      <strong>${escapeHtml(definition.name)} - niveles de decision</strong>
+      <div>
+        ${definition.legend.map(([color, label, range]) => `
+          <span><i style="background:${htmlAttr(color)}"></i><b>${escapeHtml(label)}</b><em>${escapeHtml(range)}</em></span>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function irrigationSatelliteSceneCard(scene) {
+  const cloud = irrigationSatelliteCloud(scene);
+  const quality = irrigationSatelliteQuality(cloud);
+  const date = irrigationSatelliteSceneDate(scene);
+  const thumbnail = irrigationSatelliteAsset(scene, "thumbnail") || irrigationSatelliteAsset(scene, "overview");
+  const selected = scene.id === irrigationSatelliteScenes[0]?.id;
+  const vegetation = Number(scene.properties?.["s2:vegetation_percentage"]);
+  const water = Number(scene.properties?.["s2:water_percentage"]);
+  return `
+    <article class="satellite-scene-card ${selected ? "selected" : ""}">
+      ${thumbnail ? `<img src="${htmlAttr(thumbnail)}" alt="Vista previa satelital ${htmlAttr(date)}" loading="lazy">` : `<div class="satellite-scene-thumb">Sin vista previa</div>`}
+      <div class="satellite-scene-body">
+        <div class="satellite-scene-title">
+          <strong>${escapeHtml(irrigationSatelliteDateLabel(date))}</strong>
+          <span class="satellite-quality ${quality.className}">${quality.label}</span>
+        </div>
+        <div class="satellite-scene-meta">
+          <span>Nubes ${cloud === null ? "-" : `${number(cloud, 1)}%`}</span>
+          ${Number.isFinite(vegetation) ? `<span>Vegetacion tile ${number(vegetation, 1)}%</span>` : ""}
+          ${Number.isFinite(water) ? `<span>Agua tile ${number(water, 1)}%</span>` : ""}
+          <span>${escapeHtml(scene.properties?.platform || scene.collection || "Sentinel-2")}</span>
+          <span>Tile ${escapeHtml(scene.properties?.["mgrs:utm_zone"] ? `${scene.properties["mgrs:utm_zone"]}${scene.properties["mgrs:latitude_band"] || ""}${scene.properties["mgrs:grid_square"] || ""}` : scene.id || "-")}</span>
+        </div>
+        <div class="satellite-band-links">${irrigationSatelliteAssetLinks(scene) || "<span>Bandas no disponibles</span>"}</div>
+        <div class="satellite-scene-actions">
+          <a class="secondary-button" href="${htmlAttr(irrigationSatelliteCopernicusUrl(irrigationSatelliteQueryMeta, scene))}" target="_blank" rel="noreferrer">Abrir mapa</a>
+          <a class="ghost-button" href="${htmlAttr(scene.links?.find((link) => link.rel === "self")?.href || "#")}" target="_blank" rel="noreferrer">STAC</a>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabel, year }) {
+  ensureIrrigationSatelliteRange(monthPrefix);
+  const providerLabel = irrigationSatelliteProviderLabel();
+  const providerSummary = irrigationSatelliteProviderSummary();
+  const planetActive = irrigationSatelliteProcessingStatus.providerType === "planet";
+  const activeDefinition = irrigationSatelliteIndexDefinition();
+  const processingWarning = irrigationSatelliteProcessingWarning();
+  return `
+    <div class="irrigation-subpanel satellite-panel">
+      <div class="satellite-toolbar">
+        <div>
+          <strong>Indices satelitales</strong>
+          <span>${escapeHtml(providerLabel)} - ${escapeHtml(providerSummary)} - ${irrigationSatelliteDateFrom} a ${irrigationSatelliteDateTo}</span>
+        </div>
+        <div class="satellite-controls">
+          <label>Desde
+            <input id="irrigationSatelliteDateFrom" type="date" value="${htmlAttr(irrigationSatelliteDateFrom)}">
+          </label>
+          <label>Hasta
+            <input id="irrigationSatelliteDateTo" type="date" value="${htmlAttr(irrigationSatelliteDateTo)}">
+          </label>
+          <label>Nubes max.
+            <input id="irrigationSatelliteCloudMax" type="number" min="0" max="100" step="1" value="${htmlAttr(irrigationSatelliteCloudMax)}">
+          </label>
+          <label class="satellite-map-type-control">Tipo de mapa
+            <select id="irrigationSatelliteIndex">
+              ${irrigationSatelliteMapTypeOptions()}
+            </select>
+          </label>
+          ${planetActive ? `
+          <label class="satellite-mosaic-control">Mosaico
+            <select id="irrigationPlanetMosaic" ${irrigationPlanetMosaicsLoading ? "disabled" : ""}>
+              ${irrigationPlanetMosaics.length
+                ? irrigationPlanetMosaics.map((item) => `<option value="${htmlAttr(item.name)}" ${item.name === irrigationPlanetMosaic ? "selected" : ""}>${escapeHtml(irrigationPlanetMosaicLabel(item))}</option>`).join("")
+                : `<option value="">${irrigationPlanetMosaicsLoading ? "Cargando..." : "Sin mosaicos"}</option>`}
+            </select>
+          </label>` : ""}
+          <label>Opacidad
+            <input id="irrigationSatelliteOpacity" type="range" min="20" max="95" step="5" value="${htmlAttr(irrigationSatelliteLayerOpacity)}">
+          </label>
+          <button class="primary-button" type="button" id="irrigationSatelliteSearch">Buscar</button>
+        </div>
+        <div class="satellite-use-chip">
+          <strong>${escapeHtml(activeDefinition.name)}</strong>
+          <span>${escapeHtml(activeDefinition.use)}</span>
+          <code>${escapeHtml(activeDefinition.formula)}</code>
+        </div>
+      </div>
+
+      <div class="satellite-layout satellite-layout-map-only">
+        <section class="panel satellite-map-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Area satelital</h2>
+              <p>${escapeHtml(activeDefinition.name)} procesado sobre los poligonos filtrados.</p>
+            </div>
+          </div>
+          <div class="satellite-map-wrap">
+            <div id="irrigationSatelliteMap" class="geo-map harvest-map satellite-map"><span>Cargando mapa satelital...</span></div>
+            <div class="satellite-map-legend">
+              <span><i class="good"></i> Bloque filtrado</span>
+              <span><i class="medium"></i> Potrero</span>
+              <span><i class="high"></i> Revisar capa</span>
+            </div>
+            ${irrigationSatelliteIndexLegend(irrigationSatelliteIndex)}
+            ${processingWarning ? `
+              <div class="satellite-processing-warning">
+                <strong>Capa procesada no disponible</strong>
+                <span>${processingWarning}</span>
+              </div>` : ""}
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+async function loadIrrigationSatelliteScenes(blocks, force = false) {
+  ensureIrrigationSatelliteRange(`${irrigationYear}-${irrigationMonth}`);
+  const queryKey = irrigationSatelliteQueryKey(blocks);
+  if (!force && irrigationSatelliteLoading) return;
+  if (!force && irrigationSatelliteLastQueryKey === queryKey) return;
+  const requestId = Date.now();
+  loadIrrigationSatelliteScenes.lastRequestId = requestId;
+  irrigationSatelliteLoading = true;
+  irrigationSatelliteError = "";
+  if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+  try {
+    geoJsonCache ||= await loadGeoJson();
+    irrigationSatelliteQueryMeta = irrigationSatelliteGeoMeta(blocks, geoJsonCache);
+    const from = irrigationSatelliteDateFrom || `${irrigationYear}-${irrigationMonth}-01`;
+    const to = irrigationSatelliteDateTo || from;
+    const cloudMax = Math.min(100, Math.max(0, Number(irrigationSatelliteCloudMax) || 35));
+    const limit = Math.min(30, Math.max(1, Number(irrigationSatelliteLimit) || 10));
+    const response = await fetch(IRRIGATION_SATELLITE_STAC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        collections: [IRRIGATION_SATELLITE_COLLECTION],
+        bbox: irrigationSatelliteQueryMeta.bbox.map((value) => Number(value.toFixed(6))),
+        datetime: `${from}T00:00:00Z/${to}T23:59:59Z`,
+        limit,
+        query: {
+          "eo:cloud_cover": { lt: cloudMax }
+        }
+      })
+    });
+    if (!response.ok) throw new Error(`Earth Search respondio ${response.status}`);
+    const payload = await response.json();
+    if (loadIrrigationSatelliteScenes.lastRequestId !== requestId) return;
+    irrigationSatelliteScenes = (payload.features || [])
+      .sort((a, b) => String(b.properties?.datetime || "").localeCompare(String(a.properties?.datetime || "")));
+    irrigationSatelliteLastQueryKey = queryKey;
+  } catch (error) {
+    if (loadIrrigationSatelliteScenes.lastRequestId !== requestId) return;
+    irrigationSatelliteScenes = [];
+    irrigationSatelliteLastQueryKey = queryKey;
+    irrigationSatelliteError = error.message || "Consulta satelital no disponible";
+  } finally {
+    if (loadIrrigationSatelliteScenes.lastRequestId === requestId) {
+      irrigationSatelliteLoading = false;
+      if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+    }
+  }
+}
+
+async function loadIrrigationPlanetMosaics(force = false) {
+  if (irrigationSatelliteProcessingStatus.providerType !== "planet" || !irrigationSatelliteProxyBase) return;
+  const queryKey = irrigationPlanetMosaicQueryKey();
+  if (!force && irrigationPlanetMosaicsLoading) return;
+  if (!force && irrigationPlanetMosaicsLastQueryKey === queryKey) return;
+  const requestId = Date.now();
+  loadIrrigationPlanetMosaics.lastRequestId = requestId;
+  irrigationPlanetMosaicsLoading = true;
+  irrigationPlanetMosaicsError = "";
+  if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+  try {
+    const params = new URLSearchParams({
+      from: irrigationSatelliteDateFrom,
+      to: irrigationSatelliteDateTo
+    });
+    const response = await fetch(`${irrigationSatelliteProxyBase}/mosaics?${params.toString()}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || `Planet respondio ${response.status}`);
+    if (loadIrrigationPlanetMosaics.lastRequestId !== requestId) return;
+    irrigationPlanetMosaics = Array.isArray(payload.mosaics) ? payload.mosaics : [];
+    irrigationPlanetMosaicsError = !irrigationPlanetMosaics.length && payload.message ? String(payload.message) : "";
+    if (!irrigationPlanetMosaics.some((item) => item.name === irrigationPlanetMosaic)) {
+      irrigationPlanetMosaic = irrigationPlanetMosaics[0]?.name || "";
+    }
+    irrigationPlanetMosaicsLastQueryKey = queryKey;
+  } catch (error) {
+    if (loadIrrigationPlanetMosaics.lastRequestId !== requestId) return;
+    irrigationPlanetMosaics = [];
+    irrigationPlanetMosaic = "";
+    irrigationPlanetMosaicsLastQueryKey = queryKey;
+    irrigationPlanetMosaicsError = error.message || "No se pudo cargar mosaicos Planet";
+  } finally {
+    if (loadIrrigationPlanetMosaics.lastRequestId === requestId) {
+      irrigationPlanetMosaicsLoading = false;
+      if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+    }
+  }
+}
+
+async function checkIrrigationSatelliteProcessing(force = false) {
+  if (irrigationSatelliteProcessingStatus.checking) return;
+  if (!force && irrigationSatelliteProcessingStatus.checked) return;
+  irrigationSatelliteProcessingStatus = { checked: false, checking: true, configured: false, providerType: "", message: "Revisando proveedores satelitales" };
+  if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+  const isLocalHost = ["127.0.0.1", "localhost"].includes(window.location.hostname);
+  const endpoints = isLocalHost
+    ? [
+        { type: "planet", base: IRRIGATION_PLANET_PROXY_LOCAL },
+        { type: "sentinel", base: IRRIGATION_SATELLITE_PROXY_LOCAL }
+      ]
+    : [
+        { type: "planet", base: IRRIGATION_PLANET_PROXY_SUPABASE },
+        { type: "sentinel", base: IRRIGATION_SATELLITE_PROXY_SUPABASE }
+      ];
+  let lastMessage = "No se encontro proxy satelital";
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(`${endpoint.base}/status`, { cache: "no-store" });
+      if (!response.ok) {
+        lastMessage = isLocalHost && response.status === 404
+          ? `Reinicia el servidor local para cargar ${endpoint.base}`
+          : `${endpoint.base} respondio ${response.status}`;
+        continue;
+      }
+      const payload = await response.json();
+      if (payload.configured) {
+        irrigationSatelliteProxyBase = endpoint.base;
+        irrigationSatelliteProcessingStatus = {
+          checked: true,
+          checking: false,
+          configured: true,
+          providerType: endpoint.type,
+          message: payload.provider || (endpoint.type === "planet" ? "Planet activo" : "Sentinel Hub activo")
+        };
+        if (endpoint.type === "planet") loadIrrigationPlanetMosaics();
+        if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+        return;
+      }
+      lastMessage = payload.message || `Faltan credenciales en ${endpoint.base}`;
+    } catch (error) {
+      lastMessage = error.message || lastMessage;
+    }
+  }
+  irrigationSatelliteProxyBase = "";
+  irrigationSatelliteProcessingStatus = {
+    checked: true,
+    checking: false,
+    configured: false,
+    providerType: "",
+    message: lastMessage
+  };
+  if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
+}
+
+function irrigationSatelliteTileUrl(coord, zoom) {
+  if (!irrigationSatelliteProcessingStatus.configured || !irrigationSatelliteProxyBase) return "";
+  const providerType = irrigationSatelliteProcessingStatus.providerType;
+  const definition = irrigationSatelliteIndexDefinition();
+  if (providerType === "planet" && (!definition.planetProc || !irrigationPlanetMosaic)) return "";
+  const scale = 2 ** zoom;
+  const x = ((coord.x % scale) + scale) % scale;
+  if (coord.y < 0 || coord.y >= scale) return "";
+  if (irrigationSatelliteTileOutsideAoi(x, coord.y, zoom)) return IRRIGATION_SATELLITE_TRANSPARENT_TILE;
+  if (providerType === "planet") {
+    const params = new URLSearchParams({
+      z: String(zoom),
+      x: String(x),
+      y: String(coord.y),
+      mosaic: irrigationPlanetMosaic,
+      proc: definition.planetProc,
+      v: irrigationSatelliteTileQueryKey()
+    });
+    return `${irrigationSatelliteProxyBase}/tile?${params.toString()}`;
+  }
+  const params = new URLSearchParams({
+    z: String(zoom),
+    x: String(x),
+    y: String(coord.y),
+    index: irrigationSatelliteIndex,
+    from: irrigationSatelliteDateFrom,
+    to: irrigationSatelliteDateTo,
+    maxCloud: String(irrigationSatelliteCloudMax),
+    v: irrigationSatelliteTileQueryKey()
+  });
+  return `${irrigationSatelliteProxyBase}/tile?${params.toString()}`;
+}
+
+function clearIrrigationSatelliteTileOverlay() {
+  if (!irrigationSatelliteMap || !irrigationSatelliteTileOverlay) return;
+  const overlays = irrigationSatelliteMap.overlayMapTypes;
+  for (let index = overlays.getLength() - 1; index >= 0; index -= 1) {
+    if (overlays.getAt(index) === irrigationSatelliteTileOverlay) overlays.removeAt(index);
+  }
+  irrigationSatelliteTileOverlay = null;
+}
+
+function applyIrrigationSatelliteTileOverlay(maps) {
+  if (!irrigationSatelliteMap || !maps) return;
+  clearIrrigationSatelliteTileOverlay();
+  if (!irrigationSatelliteProcessingStatus.configured) return;
+  if (irrigationSatelliteProcessingStatus.providerType === "planet") {
+    const definition = irrigationSatelliteIndexDefinition();
+    if (!definition.planetProc || !irrigationPlanetMosaic) return;
+  }
+  irrigationSatelliteTileOverlay = new maps.ImageMapType({
+    getTileUrl: irrigationSatelliteTileUrl,
+    tileSize: new maps.Size(256, 256),
+    minZoom: 10,
+    maxZoom: 19,
+    name: irrigationSatelliteIndex,
+    opacity: Math.max(0, Math.min(1, Number(irrigationSatelliteLayerOpacity) / 100))
+  });
+  irrigationSatelliteMap.overlayMapTypes.insertAt(0, irrigationSatelliteTileOverlay);
+}
+
+async function renderIrrigationSatelliteMap(blocks) {
+  const el = document.getElementById("irrigationSatelliteMap");
+  if (!el) return;
+  try {
+    geoJsonCache ||= await loadGeoJson();
+    const aoi = await loadIrrigationSatelliteAoi();
+    const maps = await loadGoogleMaps();
+    const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
+    const potreroRings = geoFeaturesToRings(geoJsonCache?.potreros?.features || []);
+    if (!blockRings.length && !potreroRings.length) {
+      el.innerHTML = `<span>Falta GeoJSON de potreros o bloques para dibujar el area satelital.</span>`;
+      return;
+    }
+    const visibleKeys = new Set(blocks.map((block) => fieldIdentityKey(block.potrero, block.block)));
+    const visiblePotreros = new Set(blocks.map((block) => normalizePotreroOrderName(block.potrero)));
+    const planetActive = irrigationSatelliteProcessingStatus.providerType === "planet";
+    const activeMosaic = irrigationPlanetMosaics.find((item) => item.name === irrigationPlanetMosaic);
+    const activeDefinition = irrigationSatelliteIndexDefinition();
+    const layerLabel = irrigationSatelliteProcessingStatus.configured ? "Capa activa" : "Sin capa";
+    const activeFillColor = irrigationSatelliteProcessingStatus.configured ? "#1f7a4d" : "#6b7280";
+
+    irrigationSatelliteOverlays.forEach((overlay) => overlay.setMap?.(null));
+    irrigationSatelliteOverlays = [];
+    if (irrigationSatelliteMapElement !== el) {
+      irrigationSatelliteMap = null;
+      irrigationSatelliteMapElement = el;
+    }
+    if (!irrigationSatelliteMap) {
+      irrigationSatelliteMap = new maps.Map(el, {
+        mapTypeId: "satellite",
+        disableDefaultUI: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        mapTypeControl: true,
+        gestureHandling: "greedy",
+        scrollwheel: true,
+        tilt: 0
+      });
+    }
+    maps.event.trigger(irrigationSatelliteMap, "resize");
+
+    const activeBounds = new maps.LatLngBounds();
+    const baseBounds = new maps.LatLngBounds();
+    const blockPalette = ["#d4a017", "#297f8f", "#7c5bc2"];
+    const potreroPalette = ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"];
+    if (aoi?.rings?.length) {
+      aoi.rings.forEach((item) => {
+        item.rings.forEach((ring) => {
+          const polygon = new maps.Polygon({
+            paths: ring.map(([lng, lat]) => ({ lat, lng })),
+            strokeColor: "#fbc02d",
+            strokeOpacity: 1,
+            strokeWeight: 4,
+            fillColor: "#fef3c7",
+            fillOpacity: 0.04,
+            zIndex: 12,
+            clickable: false
+          });
+          polygon.setMap(irrigationSatelliteMap);
+          irrigationSatelliteOverlays.push(polygon);
+          ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
+        });
+      });
+    }
+    blockRings.forEach((item, index) => {
+      const field = geoJsonFeatureField(item.feature);
+      const potreroMatches = visiblePotreros.has(normalizePotreroOrderName(field.potrero));
+      const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block)) || potreroMatches;
+      const fillColor = active ? activeFillColor : "#dfe8dc";
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: active ? "#ffffff" : blockPalette[index % blockPalette.length],
+          strokeOpacity: active ? 0.98 : 0.95,
+          strokeWeight: active ? 2.6 : 1.9,
+          fillColor,
+          fillOpacity: active ? 0.46 : 0.18,
+          zIndex: active ? 6 : 4
+        });
+        polygon.addListener("click", () => {
+          irrigationSatelliteInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
+          irrigationSatelliteInfoWindow.setContent(`
+            <div class="harvest-map-info satellite-map-info">
+              <div class="harvest-map-info-head">
+                <strong>${escapeHtml(potreroLabel(field.potrero))} - Bloque ${escapeHtml(field.block || "-")}</strong>
+                <span>${escapeHtml(irrigationSatelliteProviderLabel())}</span>
+              </div>
+              <div class="harvest-map-info-grid">
+                ${harvestInfoField("Mapa", activeDefinition.name)}
+                ${harvestInfoField("Uso", activeDefinition.use)}
+                ${harvestInfoField("Rango", `${irrigationSatelliteDateFrom} / ${irrigationSatelliteDateTo}`)}
+                ${harvestInfoField("Estado", planetActive && activeMosaic ? irrigationPlanetMosaicLabel(activeMosaic) : layerLabel)}
+              </div>
+            </div>
+          `);
+          irrigationSatelliteInfoWindow.setPosition(geoLatLngCenter(item.rings));
+          irrigationSatelliteInfoWindow.open({ map: irrigationSatelliteMap });
+        });
+        polygon.setMap(irrigationSatelliteMap);
+        irrigationSatelliteOverlays.push(polygon);
+        ring.forEach(([lng, lat]) => {
+          baseBounds.extend({ lat, lng });
+          if (active) activeBounds.extend({ lat, lng });
+        });
+      });
+      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
+      label.setMap(irrigationSatelliteMap);
+      irrigationSatelliteOverlays.push(label);
+    });
+
+    potreroRings.forEach((item, index) => {
+      item.rings.forEach((ring) => {
+        const polygon = new maps.Polygon({
+          paths: ring.map(([lng, lat]) => ({ lat, lng })),
+          strokeColor: potreroPalette[index % potreroPalette.length],
+          strokeOpacity: 1,
+          strokeWeight: 3,
+          fillOpacity: 0,
+          zIndex: 9
+        });
+        polygon.setMap(irrigationSatelliteMap);
+        irrigationSatelliteOverlays.push(polygon);
+        ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
+      });
+      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
+      label.setMap(irrigationSatelliteMap);
+      irrigationSatelliteOverlays.push(label);
+    });
+
+    const bounds = activeBounds.isEmpty() ? baseBounds : activeBounds;
+    applyIrrigationSatelliteTileOverlay(maps);
+    if (!bounds.isEmpty()) {
+      requestAnimationFrame(() => {
+        maps.event.trigger(irrigationSatelliteMap, "resize");
+        irrigationSatelliteMap.fitBounds(bounds, 24);
+      });
+    }
+  } catch (error) {
+    el.innerHTML = `<span>No se pudo cargar el mapa satelital.</span>`;
+  }
+}
+
+function wireIrrigationSatellitePanel(blocks, monthPrefix) {
+  ensureIrrigationSatelliteRange(monthPrefix);
+  const syncControl = (id, setter) => {
+    const control = document.getElementById(id);
+    control?.addEventListener("change", (event) => {
+      setter(event.target.value);
+      irrigationSatelliteLastQueryKey = "";
+      irrigationPlanetMosaicsLastQueryKey = "";
+      renderIrrigation();
+    });
+  };
+  syncControl("irrigationSatelliteDateFrom", (value) => { irrigationSatelliteDateFrom = value; });
+  syncControl("irrigationSatelliteDateTo", (value) => { irrigationSatelliteDateTo = value; });
+  syncControl("irrigationSatelliteCloudMax", (value) => { irrigationSatelliteCloudMax = Math.min(100, Math.max(0, Number(value) || 35)); });
+  document.getElementById("irrigationSatelliteIndex")?.addEventListener("change", (event) => {
+    const value = event.target.value || "NDVI";
+    irrigationSatelliteIndex = IRRIGATION_SATELLITE_INDEX_DEFINITIONS[value] ? value : "NDVI";
+    renderIrrigation();
+  });
+  document.getElementById("irrigationPlanetMosaic")?.addEventListener("change", (event) => {
+    irrigationPlanetMosaic = event.target.value || "";
+    renderIrrigation();
+  });
+  const opacityControl = document.getElementById("irrigationSatelliteOpacity");
+  opacityControl?.addEventListener("input", (event) => {
+    irrigationSatelliteLayerOpacity = Math.min(95, Math.max(20, Number(event.target.value) || 68));
+    if (irrigationSatelliteTileOverlay) irrigationSatelliteTileOverlay.setOpacity(irrigationSatelliteLayerOpacity / 100);
+  });
+  document.getElementById("irrigationSatelliteSearch")?.addEventListener("click", () => {
+    irrigationSatelliteLastQueryKey = "";
+    irrigationPlanetMosaicsLastQueryKey = "";
+    loadIrrigationPlanetMosaics(true);
+    renderIrrigation();
+  });
+  checkIrrigationSatelliteProcessing();
+  if (irrigationSatelliteProcessingStatus.providerType === "planet") loadIrrigationPlanetMosaics();
+  renderIrrigationSatelliteMap(blocks);
+}
+
 function renderIrrigationProgramTool(blocks, monthLabel) {
   return "";
 }
@@ -3840,7 +4965,7 @@ function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = 
           ${records.slice(0, 14).map((item) => `
             <button class="irrigation-calicata-card" type="button" data-action="focus-calicata" data-calicata-id="${htmlAttr(item.id)}">
               <span>${escapeHtml(calicataDate(item) || "Sin fecha")}</span>
-              <strong>${escapeHtml(item.potrero || "-")} · bloque ${escapeHtml(item.block || "-")}</strong>
+              <strong>${escapeHtml(potreroLabel(item.potrero))} · bloque ${escapeHtml(item.block || "-")}</strong>
               <small>${escapeHtml(item.workerName || "Sin trabajador")} · ${escapeHtml(calicataDepthList(item))}</small>
               ${item.observation ? `<em>${escapeHtml(item.observation)}</em>` : ""}
             </button>
@@ -6488,6 +7613,8 @@ function renderIrrigation() {
   const daysInMonth = new Date(Number(irrigationYear), Number(irrigationMonth), 0).getDate();
   const monthLabel = monthOptions().find((item) => item.value === irrigationMonth)?.label || irrigationMonth;
   const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+  const monthDates = irrigationMonthDates(monthPrefix, daysInMonth);
+  const dayClassMap = new Map(monthDates.map((date) => [date, irrigationDayClass(date)]));
   ensureIrrigationEvaporationData(monthPrefix, daysInMonth);
   const stationRows = irrigationStationBandejaRows(monthPrefix);
   irrigationStationFilter = "Todas";
@@ -6519,6 +7646,7 @@ function renderIrrigation() {
     return acc;
   }, {})).sort((a, b) => comparePotrero(a.potrero, b.potrero));
   const blockRowIndexMap = new Map(filteredBlocks.map((block, index) => [block.id, index]));
+  const calicataIndex = buildIrrigationGanttCalicataIndex(filteredBlocks, monthPrefix);
   const programMonthTotals = irrigationMonthTotals(irrigationProgramHours, filteredBlocks, monthPrefix, daysInMonth);
   const realMonthTotals = irrigationMonthTotals(irrigationHours, filteredBlocks, monthPrefix, daysInMonth);
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
@@ -6543,7 +7671,7 @@ function renderIrrigation() {
         <select id="irrigationVarietyFilter">${varieties.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationVarietyFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
       </label>
       <label>Potrero
-        <select id="irrigationPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+        <select id="irrigationPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}</select>
       </label>
       <label>Mes
         <select id="irrigationMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
@@ -6590,6 +7718,11 @@ function renderIrrigation() {
         daysInMonth,
         monthLabel,
         year: irrigationYear
+      }) : irrigationTab === "satellite" ? renderIrrigationSatellitePanel({
+        filteredBlocks,
+        monthPrefix,
+        monthLabel,
+        year: irrigationYear
       }) : `
       ${renderIrrigationProgramTool(filteredBlocks, monthLabel)}
       <div class="irrigation-compare-wrap">
@@ -6616,7 +7749,7 @@ function renderIrrigation() {
           </div>
           ${blockGroups.map((group) => `
             <div class="irrigation-potrero-group irrigation-potrero-group-compact">
-              <strong>Potrero ${group.potrero}</strong>
+              <strong>Potrero ${escapeHtml(potreroLabel(group.potrero))}</strong>
               <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
             </div>
             ${group.blocks.map((block) => {
@@ -6661,29 +7794,13 @@ function renderIrrigation() {
                   <div class="irrigation-days calicata-days">
                     ${Array.from({ length: daysInMonth }, (_, index) => {
                       const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-                      return `<span class="calicata-day-cell ${irrigationDayClass(date)}"></span>`;
+                      return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""}"></span>`;
                     }).join("")}
                   </div>
                   <div class="irrigation-total calicata-label"></div>
                   <div class="irrigation-reposition calicata-label"></div>
                 </div>
-                ${[
-                  ["20 cm"], ["40 cm"], ["60 cm"], ["80 cm"], ["Trab."], ["Obs."]
-                ].map(([label]) => `
-                  <div class="irrigation-row calicata-detail-row irrigation-program-spacer-row ${expanded ? "" : "is-hidden"}" data-calicata-detail="${htmlAttr(calicataKey)}">
-                    <div class="irrigation-block-label calicata-label">
-                      <strong>${label}</strong>
-                    </div>
-                    <div class="irrigation-days calicata-detail-days">
-                      ${Array.from({ length: daysInMonth }, (_, index) => {
-                        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-                        return `<span class="calicata-detail-cell ${irrigationDayClass(date)}"></span>`;
-                      }).join("")}
-                    </div>
-                    <div class="irrigation-total calicata-label"></div>
-                    <div class="irrigation-reposition calicata-label"></div>
-                  </div>
-                `).join("")}
+                ${expanded ? renderIrrigationProgramCalicataDetailRows(calicataKey, monthDates, dayClassMap) : ""}
               `;
             }).join("")}
           `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
@@ -6713,7 +7830,7 @@ function renderIrrigation() {
         </div>
         ${blockGroups.map((group) => `
           <div class="irrigation-potrero-group irrigation-potrero-group-compact">
-            <strong>Potrero ${group.potrero}</strong>
+            <strong>Potrero ${escapeHtml(potreroLabel(group.potrero))}</strong>
             <span>${group.blocks.length} bloque${group.blocks.length === 1 ? "" : "s"}</span>
           </div>
           ${group.blocks.map((block) => {
@@ -6723,9 +7840,9 @@ function renderIrrigation() {
           const reposition = irrigationReposicion(blockTotal, block.precipitation, monthEvaporationTotal);
           const hoursDiff = irrigationDifferencePercent(blockTotal, programTotal);
           const repositionDiff = irrigationDifferencePercent(reposition, programReposition);
-          const calicatas = calicatasForBlock(block);
-          const calicata = calicataSummary(calicatas);
           const calicataKey = calicataBlockKey(block.potrero, block.block);
+          const calicatas = calicataIndex.byBlock.get(calicataKey) || [];
+          const calicata = calicataIndex.summaryByBlock.get(calicataKey) || EMPTY_CALICATA_SUMMARY;
           const expanded = expandedCalicataKeys.has(calicataKey);
           const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
           const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
@@ -6765,12 +7882,13 @@ function renderIrrigation() {
               <div class="irrigation-days calicata-days">
                 ${Array.from({ length: daysInMonth }, (_, index) => {
                   const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-                  const dayCalicatas = calicatas.filter((item) => calicataDate(item) === date);
-                  if (!dayCalicatas.length) return `<span class="calicata-day-cell ${irrigationDayClass(date)}"></span>`;
-                  const daySummary = calicataSummary(dayCalicatas);
+                  const dayKey = irrigationCalicataDayKey(calicataKey, date);
+                  const dayCalicatas = calicataIndex.byDay.get(dayKey) || [];
+                  if (!dayCalicatas.length) return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""}"></span>`;
+                  const daySummary = calicataIndex.summaryByDay.get(dayKey) || EMPTY_CALICATA_SUMMARY;
                   const label = daySummary.general === null ? dayCalicatas.length : number(daySummary.general);
                   const style = daySummary.general === null ? "" : ` style="${htmlAttr(calicataColorStyle(daySummary.general))}"`;
-                  return `<span class="calicata-day-cell ${irrigationDayClass(date)} has-calicata"${style} title="${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</span>`;
+                  return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""} has-calicata"${style} title="${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</span>`;
                 }).join("")}
               </div>
               <button class="icon-button calicata-toggle" type="button" data-action="toggle-calicatas" data-key="${htmlAttr(calicataKey)}" aria-expanded="${expanded}" title="${expanded ? "Ocultar calicatas" : "Ver calicatas"}">${expanded ? "^" : "v"}</button>
@@ -6778,32 +7896,7 @@ function renderIrrigation() {
               <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
               <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
             </div>
-            ${[
-                ["20 cm", "depth20", "depth"],
-                ["40 cm", "depth40", "depth"],
-                ["60 cm", "depth60", "depth"],
-                ["80 cm", "depth80", "depth"],
-                ["Trab.", "workerName", "text"],
-                ["Obs.", "observation", "text"]
-              ].map(([label, field, type]) => `
-                <div class="irrigation-row calicata-detail-row ${expanded ? "" : "is-hidden"}" data-calicata-detail="${htmlAttr(calicataKey)}">
-                  <div class="irrigation-block-label calicata-label">
-                    <strong>${label}</strong>
-                  </div>
-                  <div class="irrigation-days calicata-detail-days">
-                    ${Array.from({ length: daysInMonth }, (_, index) => {
-                      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-                      const dayCalicatas = calicatas.filter((item) => calicataDate(item) === date);
-                      const value = type === "depth" ? calicataDepthCell(dayCalicatas, field) : calicataTextCell(dayCalicatas, field);
-                      return `<span class="calicata-detail-cell ${irrigationDayClass(date)} ${value ? "has-calicata" : ""}" title="${htmlAttr(value || "")}">${escapeHtml(value)}</span>`;
-                    }).join("")}
-                  </div>
-                  <div class="irrigation-total calicata-label"></div>
-                  <div class="irrigation-reposition calicata-label"></div>
-                  <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
-                  <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
-                </div>
-              `).join("")}
+            ${expanded ? renderIrrigationRealCalicataDetailRows(calicataKey, monthDates, dayClassMap, calicataIndex) : ""}
           `;
           }).join("")}
         `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
@@ -6840,11 +7933,21 @@ function renderIrrigation() {
   });
   document.getElementById("irrigationMonthFilter")?.addEventListener("change", (event) => {
     irrigationMonth = event.target.value;
+    if (irrigationTab === "satellite") {
+      irrigationSatelliteDateFrom = "";
+      irrigationSatelliteDateTo = "";
+      irrigationSatelliteLastQueryKey = "";
+    }
     renderIrrigation();
   });
   document.getElementById("irrigationYearFilter")?.addEventListener("change", (event) => {
     irrigationYear = String(event.target.value || new Date().getFullYear());
     if (irrigationTab === "bandejas") irrigationBandejaFocusPending = true;
+    if (irrigationTab === "satellite") {
+      irrigationSatelliteDateFrom = "";
+      irrigationSatelliteDateTo = "";
+      irrigationSatelliteLastQueryKey = "";
+    }
     renderIrrigation();
   });
   const blocksById = new Map(filteredBlocks.map((block) => [block.id, block]));
@@ -6921,7 +8024,7 @@ function renderIrrigation() {
       hydrateIrrigationInputTitle(target, context, block);
       target.classList.toggle("has-hours", Boolean(irrigationProgramHours[key]));
       target.classList.toggle("has-audit", Boolean(irrigationProgramAudit[key]));
-      saveIrrigationProgramHours();
+      scheduleIrrigationLocalSave("program");
       const programTotal = Array.from({ length: daysInMonth }, (_, index) => {
         const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
         return Number(irrigationProgramHours[irrigationKey(context.blockId, date)]) || 0;
@@ -6946,7 +8049,7 @@ function renderIrrigation() {
     hydrateIrrigationInputTitle(target, context, block);
     target.classList.toggle("has-hours", Boolean(irrigationHours[key]));
     target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
-    saveIrrigationHours();
+    scheduleIrrigationLocalSave("real");
     scheduleIrrigationCellSave(context.blockId, context.date, irrigationCellValue(target));
     const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
       const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
@@ -6960,6 +8063,7 @@ function renderIrrigation() {
     updateIrrigationComparisonCells(context.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
   };
   if (irrigationTab === "bandejas") wireIrrigationBandejaMatrix();
+  if (irrigationTab === "satellite") wireIrrigationSatellitePanel(filteredBlocks, monthPrefix);
   syncIrrigationGanttScroll();
 }
 
@@ -6986,7 +8090,7 @@ function renderCalicatas() {
             <select id="calicataSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === calicataSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
           </label>
           <label>Potrero
-            <select id="calicataPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === calicataPotreroFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+            <select id="calicataPotreroFilter">${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === calicataPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}</select>
           </label>
           <label>Mes
             <select id="calicataMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === calicataMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
@@ -7491,7 +8595,7 @@ function renderFertilizerCasetaGroup(caseta, rows) {
       <div class="panel-header fertilizer-caseta-header">
         <div>
           <h2>${escapeHtml(caseta)}</h2>
-          <p>${potreros.map(escapeHtml).join(" · ")}</p>
+          <p>${potreros.map((potrero) => escapeHtml(potreroLabel(potrero))).join(" · ")}</p>
         </div>
         <div class="fertilizer-caseta-total">
           <strong>${number(currentLiters, 0)} L</strong>
@@ -7518,7 +8622,7 @@ function renderFertilizerDetailTable(rows) {
               <td><strong>${escapeHtml(row.caseta)}</strong></td>
               <td>${escapeHtml(row.numeroEstanque)}</td>
               <td class="fertilizer-table-fip">${escapeHtml(row.fip)}</td>
-              <td>${row.potreros.map((potrero) => `<span class="fertilizer-potrero-chip">${escapeHtml(potrero)}</span>`).join("")}</td>
+              <td>${row.potreros.map((potrero) => `<span class="fertilizer-potrero-chip">${escapeHtml(potreroLabel(potrero))}</span>`).join("")}</td>
               <td>${number(row.volumenMaximoLitros, 0)}</td>
               <td><strong>${number(row.litrosActuales, 0)}</strong></td>
               <td>${number(row.litrosPreparados, 0)}</td>
@@ -7567,7 +8671,7 @@ function renderFertilizers() {
         </div>
         <div class="fertilizer-filters">
           <label>Caseta<select data-fertilizer-filter="caseta"><option>Todas</option>${casetas.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerCasetaFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
-          <label>Potrero<select data-fertilizer-filter="potrero"><option>Todos</option>${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerPotreroFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
+          <label>Potrero<select data-fertilizer-filter="potrero"><option>Todos</option>${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}</select></label>
           <label>Estado<select data-fertilizer-filter="status">
             <option value="Todos" ${fertilizerStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
             <option value="vacio" ${fertilizerStatusFilter === "vacio" ? "selected" : ""}>Vacio</option>
@@ -8081,7 +9185,7 @@ function pestMonitoringCoverageRows(summaries, totalRecords) {
   if (!rows.length) return `<tr><td colspan="4"><div class="empty-state compact"><strong>Sin datos</strong><span>Ajusta los filtros.</span></div></td></tr>`;
   return rows.map((summary) => `
     <tr>
-      <td><button type="button" data-pest-block-key="${htmlAttr(summary.key)}">${escapeHtml(summary.potrero)} <span>B${escapeHtml(summary.block || "-")}</span></button></td>
+      <td><button type="button" data-pest-block-key="${htmlAttr(summary.key)}">${escapeHtml(potreroLabel(summary.potrero))} <span>B${escapeHtml(summary.block || "-")}</span></button></td>
       <td>${summary.samples}</td>
       <td>${number(totalRecords ? summary.samples / totalRecords * 100 : 0, 1)}%</td>
       <td><strong>${number(summary.incidence, 1)}%</strong></td>
@@ -8171,7 +9275,7 @@ function renderPestMonitoring() {
         <label>Hasta<input type="date" value="${htmlAttr(pestMonitoringDateTo)}" data-pest-filter="to"></label>
         <label>Plaga<select data-pest-filter="pest">${pests.map((pest) => `<option value="${htmlAttr(pest)}" ${pest === pestMonitoringPest ? "selected" : ""}>${escapeHtml(pest)}</option>`).join("")}</select></label>
         <label>Especie<select data-pest-filter="species"><option>Todas</option>${species.map((item) => `<option value="${htmlAttr(item)}" ${item === pestMonitoringSpecies ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
-        <label>Potrero<select data-pest-filter="potrero"><option>Todos</option>${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === pestMonitoringPotrero ? "selected" : ""}>${escapeHtml(potrero)}</option>`).join("")}</select></label>
+        <label>Potrero<select data-pest-filter="potrero"><option>Todos</option>${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === pestMonitoringPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}</select></label>
         <label>Bloque<select data-pest-filter="block" id="pestMonitoringBlockFilter"><option>Todos</option></select></label>
         <button class="icon-button" type="button" data-action="clear-pest-filters" title="Limpiar filtros" aria-label="Limpiar filtros">×</button>
       </div>
@@ -8357,7 +9461,7 @@ async function renderPestMonitoringMap(records, summaries, scale) {
         const label = createMapLabelOverlay(
           maps,
           shiftLatLng(geoLatLngCenter(group.rings), index, 34),
-          name,
+          potreroLabel(name),
           "map-label-potrero-google"
         );
         label.setMap(pestMonitoringMap);
@@ -8404,7 +9508,7 @@ function showPestMonitoringBlockInfo(key, position, summaries, maps) {
   pestMonitoringInfoWindow ||= new maps.InfoWindow({ maxWidth: 280 });
   pestMonitoringInfoWindow.setContent(`
     <div class="pest-map-info">
-      <strong>${escapeHtml(summary.potrero)} / Bloque ${escapeHtml(summary.block || "-")}</strong>
+      <strong>${escapeHtml(potreroLabel(summary.potrero))} / Bloque ${escapeHtml(summary.block || "-")}</strong>
       <div><span>Monitoreos</span><b>${summary.samples}</b></div>
       <div><span>Positivos</span><b>${summary.positives}</b></div>
       <div><span>Incidencia</span><b>${number(summary.incidence, 1)}%</b></div>
@@ -8602,8 +9706,8 @@ function harvestOptionValues(rows, getValue, allLabel = "Todos") {
   return [allLabel, ...values];
 }
 
-function harvestSelectOptions(values, selected) {
-  return values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("");
+function harvestSelectOptions(values, selected, formatter = (value) => value) {
+  return values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(formatter(value))}</option>`).join("");
 }
 
 function harvestExportFilteredRows() {
@@ -8663,7 +9767,7 @@ function harvestAnalyticsBars(title, rows, options = {}) {
           const width = Math.max(3, harvestNumericValue(row.value) / max * 100);
           const active = options.activeValue && row.label === options.activeValue ? " active" : "";
           const body = `
-            <span title="${htmlAttr(row.detail || row.label)}">${escapeHtml(row.label)}</span>
+            <span title="${htmlAttr(row.detail || row.label)}">${escapeHtml(options.labelFormatter ? options.labelFormatter(row.label) : row.label)}</span>
             <div><i style="width:${width}%"></i></div>
             <strong>${number(row.value, decimals)}${unit}</strong>`;
           if (!options.action) return `<div class="harvest-analytics-bar${active}">${body}</div>`;
@@ -8722,7 +9826,7 @@ function harvestExportCalibreByVariety(rows) {
           <tbody>${tableRows.map((row) => `
             <tr>
               <td data-label="Variedad"><strong>${escapeHtml(row.variety)}</strong></td>
-              <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+              <td data-label="Potrero">${escapeHtml(potreroLabel(row.potrero))}</td>
               <td data-label="Total calibre kg">${number(row.total, 0)} kg</td>
               <td data-label="Principales calibres">
                 <div class="harvest-calibre-chips">
@@ -8775,11 +9879,11 @@ function renderHarvestExport() {
         <label>Año<select data-harvest-export-filter="year">${harvestSelectOptions(years, harvestExportYearFilter)}</select></label>
         <label>Especie<select data-harvest-export-filter="species">${harvestSelectOptions(species, harvestExportSpeciesFilter)}</select></label>
         <label>Variedad<select data-harvest-export-filter="variety">${harvestSelectOptions(varieties, harvestExportVarietyFilter)}</select></label>
-        <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter)}</select></label>
+        <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter, potreroLabel)}</select></label>
         <button class="secondary-button" type="button" data-action="clear-harvest-export-filters">Limpiar</button>
       </div>
       <div class="harvest-analytics-grid">
-        ${harvestAnalyticsBars("Recepcionados por potrero", byPotrero, { unit: " kg", decimals: 0 })}
+        ${harvestAnalyticsBars("Recepcionados por potrero", byPotrero, { unit: " kg", decimals: 0, labelFormatter: potreroLabel })}
         ${harvestAnalyticsBars("Exportacion por variedad", byVariety, { unit: " kg", decimals: 0 })}
         ${harvestExportCalibreDistribution(rows)}
         ${harvestExportCalibreByVariety(rows)}
@@ -8800,7 +9904,7 @@ function renderHarvestExportTable(rows) {
           <tbody>${grouped.map((row) => `
             <tr>
               <td data-label="Año">${escapeHtml(row.year)}</td>
-              <td data-label="Potrero"><strong>${escapeHtml(row.potrero)}</strong></td>
+              <td data-label="Potrero"><strong>${escapeHtml(potreroLabel(row.potrero))}</strong></td>
               <td data-label="Especie">${escapeHtml(row.species)}</td>
               <td data-label="Variedad">${escapeHtml(row.variety)}</td>
               <td data-label="Enviados">${number(row.sentKg, 0)} kg</td>
@@ -8955,7 +10059,7 @@ function harvestExportComparisonRows(rows) {
   const years = [...harvestExportSelectedYears].sort((a, b) => Number(a) - Number(b));
   const groups = new Map();
   rows.forEach((row) => {
-    const label = `${row.variety || "Sin variedad"} / ${row.potrero || "Sin potrero"}`;
+    const label = `${row.variety || "Sin variedad"} / ${potreroLabel(row.potrero || "Sin potrero")}`;
     const key = `${row.species || "Sin especie"}|${label}`;
     if (!groups.has(key)) groups.set(key, { label, species: row.species || "Sin especie", values: new Map(), total: 0 });
     const value = harvestNumericValue(row.exportedKg);
@@ -9232,7 +10336,7 @@ function renderHarvestExportTableByYear(rows) {
               return `${header}<tr>
                 <td data-label="Ano">${escapeHtml(row.year)}</td>
                 <td data-label="VARIEDAD"><strong>${escapeHtml(row.variety)}</strong></td>
-                <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+                <td data-label="Potrero">${escapeHtml(potreroLabel(row.potrero))}</td>
                 <td data-label="Nro Bins.">${number(row.bins, 1)}</td>
                 <td data-label="Enviados Kg.">${number(row.sentKg, 0)}</td>
                 <td data-label="Kg Recepcionados.">${number(row.receivedKg, 0)}</td>
@@ -9306,7 +10410,7 @@ function renderHarvestExportTable(rows) {
             return `${header}<tr>
               <td data-label="Ano">${escapeHtml(row.year)}</td>
               <td data-label="VARIEDAD"><strong>${escapeHtml(row.variety)}</strong></td>
-              <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+              <td data-label="Potrero">${escapeHtml(potreroLabel(row.potrero))}</td>
               <td data-label="Nro Bins.">${number(row.bins, 1)}</td>
               <td data-label="Enviados Kg.">${number(row.sentKg, 0)}</td>
               <td data-label="Kg Recepcionados.">${number(row.receivedKg, 0)}</td>
@@ -9419,7 +10523,7 @@ function renderHarvestExportCalibreTable(rows, options = {}) {
                       <thead><tr><th>Var.</th><th>Pot.</th><th>Cat.</th>${calibres.map((calibre) => `<th>${escapeHtml(calibre)}</th>`).join("")}<th>${escapeHtml(totalLabel)}</th><th>%</th></tr></thead>
                       <tbody>${speciesRows.map((row) => `<tr>
                         <td data-label="Variedad"><strong>${escapeHtml(row.variety)}</strong></td>
-                        <td data-label="Potrero">${escapeHtml(row.potrero)}</td>
+                        <td data-label="Potrero">${escapeHtml(potreroLabel(row.potrero))}</td>
                         <td data-label="Categoria">${escapeHtml(row.category)}</td>
                         ${calibres.map((calibre) => {
                           const value = row.calibres.get(calibre) || 0;
@@ -9494,7 +10598,7 @@ function renderHarvestExport() {
         <div class="harvest-export-filter-grid">
           <label>Especie<select data-harvest-export-filter="species">${harvestSelectOptions(species, harvestExportSpeciesFilter)}</select></label>
           <label>Variedad<select data-harvest-export-filter="variety">${harvestSelectOptions(varieties, harvestExportVarietyFilter)}</select></label>
-          <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter)}</select></label>
+          <label>Potrero<select data-harvest-export-filter="potrero">${harvestSelectOptions(potreros, harvestExportPotreroFilter, potreroLabel)}</select></label>
           <div class="harvest-export-years-field">
             <span>A&ntilde;os</span>
             <div class="harvest-year-checks" aria-label="Anos exportacion">
@@ -9815,7 +10919,14 @@ function harvestDaysBetween(startDate, endDate) {
   const start = new Date(`${startDate}T00:00:00`);
   const end = new Date(`${endDate}T00:00:00`);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null;
-  return Math.round((end.getTime() - start.getTime()) / 86400000);
+  const diff = Math.round((end.getTime() - start.getTime()) / 86400000);
+  return diff >= 0 ? diff + 1 : null;
+}
+
+function harvestDurationLabel(startDate, endDate) {
+  const days = harvestDaysBetween(startDate, endDate);
+  if (!days) return "-";
+  return `${days} ${days === 1 ? "dia" : "dias"}`;
 }
 
 function harvestStartDiffClass(days) {
@@ -9880,10 +10991,16 @@ function renderHarvestStartDatesPanel(rows, allRows, years) {
               ${visibleYears.map((year) => {
                 const row = entry.years.get(String(year)) || { year, species: entry.species, variety: entry.variety, detectedStart: "" };
                 const displayDate = row.detectedStart || "";
-                return `<div class="harvest-start-cell ${displayDate ? "is-detected" : "is-empty"}" title="${htmlAttr(`${entry.species} ${entry.variety} ${year}`)}">
+                const endDate = row.detectedEnd || "";
+                const durationLabel = harvestDurationLabel(displayDate, endDate);
+                const cellTitle = displayDate
+                  ? `${entry.species} ${entry.variety} ${year} | Inicio: ${printDate(displayDate)} | Termino: ${printDate(endDate)} | Duracion: ${durationLabel}`
+                  : `${entry.species} ${entry.variety} ${year}`;
+                return `<div class="harvest-start-cell ${displayDate ? "is-detected" : "is-empty"}" title="${htmlAttr(cellTitle)}">
                   <b>${escapeHtml(year)}</b>
-                  <strong>${displayDate ? `Fecha: ${printDate(displayDate)}` : "-"}</strong>
-                  <small>${displayDate ? `${number(row.kg, 0)} kg - ${number(row.bins, 1)} bins` : "Sin registro"}</small>
+                  <strong>${displayDate ? `Fecha de inicio: ${printDate(displayDate)}` : "-"}</strong>
+                  <em>${displayDate ? `Duracion: ${durationLabel}` : ""}</em>
+                  <small>${displayDate ? `Termino: ${printDate(endDate)} - ${number(row.kg, 0)} kg` : "Sin registro"}</small>
                 </div>`;
               }).join("")}
             </div>`).join("") || `<div class="empty">Sin datos para el filtro seleccionado.</div>`}
@@ -9922,7 +11039,7 @@ function renderHarvestAnalysis() {
       <div class="program-filters harvest-analytics-filters harvest-analysis-filters">
         <label>Especie<select data-harvest-analysis-filter="species">${harvestSelectOptions(species, harvestAnalysisSpeciesFilter)}</select></label>
         <label>Variedad<select data-harvest-analysis-filter="variety">${harvestSelectOptions(varieties, harvestAnalysisVarietyFilter)}</select></label>
-        <label>Potrero<select data-harvest-analysis-filter="potrero">${harvestSelectOptions(potreros, harvestAnalysisPotreroFilter)}</select></label>
+        <label>Potrero<select data-harvest-analysis-filter="potrero">${harvestSelectOptions(potreros, harvestAnalysisPotreroFilter, potreroLabel)}</select></label>
         <label>Medida<select data-harvest-analysis-filter="metric">
           <option value="kg" ${harvestAnalysisMetric === "kg" ? "selected" : ""}>Kg totales</option>
           <option value="bins" ${harvestAnalysisMetric === "bins" ? "selected" : ""}>Bins</option>
@@ -9986,12 +11103,12 @@ function renderHarvestPotreroBlockSummary(rows) {
               <div class="harvest-potrero-year-list">
                 ${potreros.map((potrero) => `
                   <div class="harvest-potrero-year-row">
-                    <strong title="${htmlAttr(potrero.potrero)}">${escapeHtml(potrero.potrero)}</strong>
+                    <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${escapeHtml(potreroLabel(potrero.potrero))}</strong>
                     <div class="harvest-potrero-year-bars">
                       ${years.map((year, index) => {
                         const value = harvestNumericValue(potrero.years.get(year));
                         const width = value > 0 ? Math.max(3, value / max * 100) : 0;
-                        return `<span title="${htmlAttr(`${speciesEntry.species} - ${entry.variety} - ${potrero.potrero} - ${year}: ${number(value, decimals)}${unit}`)}">
+                        return `<span title="${htmlAttr(`${speciesEntry.species} - ${entry.variety} - ${potreroLabel(potrero.potrero)} - ${year}: ${number(value, decimals)}${unit}`)}">
                           <b>${escapeHtml(year)}</b>
                           <i><em style="width:${width}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></em></i>
                           <small>${number(value, decimals)}</small>
@@ -10242,7 +11359,7 @@ function renderManager() {
           <div class="manager-order-identity">
             <span class="manager-order-number"><small>Orden</small><strong>#${escapeHtml(order.number)}</strong></span>
             <div>
-              <h3>${escapeHtml(order.potrero)} <span>Bloques ${escapeHtml(order.blocks?.join(", ") || "-")}</span></h3>
+              <h3>${escapeHtml(potreroListLabel(order.potrero))} <span>Bloques ${escapeHtml(order.blocks?.join(", ") || "-")}</span></h3>
               <p>${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")}</p>
             </div>
           </div>
@@ -10298,12 +11415,12 @@ function renderManager() {
         <div class="gantt-head">
           <div class="gantt-heading">
             <h3>CARTA GANTT APLICACIONES</h3>
-            <span class="gantt-filter-summary">${escapeHtml(managerPotreroFilter)} · ${managerGanttMode === "month" ? monthOptions().find((item) => item.value === managerMonth)?.label : "Año completo"} ${managerYear} · ${escapeHtml(managerStatusFilter === "all" ? "Todos los estados" : statusLabel(managerStatusFilter).replace(/^[^\p{L}\p{N}]+/u, ""))}</span>
+            <span class="gantt-filter-summary">${escapeHtml(potreroLabel(managerPotreroFilter))} · ${managerGanttMode === "month" ? monthOptions().find((item) => item.value === managerMonth)?.label : "Año completo"} ${managerYear} · ${escapeHtml(managerStatusFilter === "all" ? "Todos los estados" : statusLabel(managerStatusFilter).replace(/^[^\p{L}\p{N}]+/u, ""))}</span>
           </div>
           <button class="icon-button gantt-filter-toggle" type="button" data-action="toggle-manager-gantt-filters" aria-expanded="${managerGanttFiltersOpen ? "true" : "false"}" title="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}" aria-label="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}"><span aria-hidden="true">${managerGanttFiltersOpen ? "&gt;" : "&lt;"}</span></button>
           <div class="gantt-controls" ${managerGanttFiltersOpen ? "" : "hidden"}>
             <label>Potrero
-              <select id="managerPotreroFilter">${managerPotreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === managerPotreroFilter ? "selected" : ""}>${potrero}</option>`).join("")}</select>
+              <select id="managerPotreroFilter">${managerPotreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === managerPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}</select>
             </label>
             <fieldset class="gantt-species-filter">
               <legend>Especie</legend>
@@ -10391,7 +11508,7 @@ function managerGantt(orders) {
       ${groups.map((group) => {
         return `
           <div class="gantt-row">
-            <span><strong>${group.potrero}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
+            <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
             <div class="gantt-month-grid gantt-track">
               ${months.map((_, index) => {
                 const month = String(index + 1).padStart(2, "0");
@@ -10419,7 +11536,7 @@ function managerMonthGantt(orders) {
       ${groups.map((group) => {
         return `
           <div class="gantt-row gantt-month-detail ${group.orders.some((order) => selectedGanttOrderId === order.id) ? "selected" : ""}">
-            <span><strong>${group.potrero}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
+            <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
             <div class="gantt-day-grid gantt-day-track" style="--days:${daysInMonth};--rows:${Math.max(1, group.orders.filter((order) => orderOverlapsMonth(order, managerYear, managerMonth)).length)}">
               ${group.orders
                 .filter((order) => orderOverlapsMonth(order, managerYear, managerMonth))
@@ -10577,7 +11694,7 @@ function ganttDetail() {
     <div class="gantt-detail">
       <div>
         <span class="overline">Detalle del dia ${orderStartDate(order) || "-"} - ${ganttState(order).label}</span>
-        <h3>Orden #${order.number} - ${order.potrero}</h3>
+        <h3>Orden #${order.number} - ${escapeHtml(potreroListLabel(order.potrero))}</h3>
         <p>${programLabel(order)} - ${order.objective || "Sin objetivo"}</p>
       </div>
       <div class="gantt-detail-grid">
@@ -10754,6 +11871,8 @@ async function loadCloudData(options = {}) {
   const loadCalicatas = wantsModule("calicatas");
   const loadWeather = wantsModule("weather");
   const loadHarvest = wantsModule("harvest");
+  const irrigationMonthPrefix = options.irrigationMonthPrefix || "";
+  const irrigationDateQuery = loadIrrigation ? irrigationMonthFilterQuery(irrigationMonthPrefix) : "";
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
@@ -10779,10 +11898,10 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar calicatas", error);
       return [];
     }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("riego", "select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at&order=fecha.asc,campo_id.asc")
+    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
-        return sbSelectAll("riego", "select=id,campo_id,fecha,horas_riego,volumen&order=fecha.asc,campo_id.asc");
+        return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
       })
       .then((rows) => {
         irrigationCloudAvailable = true;
@@ -10793,10 +11912,10 @@ async function loadCloudData(options = {}) {
         irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
         return null;
       }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en&order=fecha.asc,campo_id.asc")
+    loadIrrigation ? sbSelectAll("programa_riego", `select=id,campo_id,fecha,horas_programadas,volumen_programado,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
       .catch((error) => {
         if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en"])) throw error;
-        return sbSelectAll("programa_riego", "select=id,campo_id,fecha,horas_programadas,volumen_programado&order=fecha.asc,campo_id.asc");
+        return sbSelectAll("programa_riego", `select=id,campo_id,fecha,horas_programadas,volumen_programado${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
       })
       .then((rows) => {
         irrigationProgramCloudAvailable = true;
@@ -10807,7 +11926,7 @@ async function loadCloudData(options = {}) {
         irrigationProgramCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
         return null;
       }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("observaciones_riego", "select=id,tipo,campo_id,fecha,observacion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en&order=fecha.asc")
+    loadIrrigation ? sbSelectAll("observaciones_riego", `select=id,tipo,campo_id,fecha,observacion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en${irrigationDateQuery}&order=fecha.asc`)
       .catch((error) => {
         console.warn("No se pudieron cargar observaciones de riego", error);
         const message = String(error?.message || "").toLowerCase();
@@ -10963,9 +12082,9 @@ async function loadCloudData(options = {}) {
       observation: item.observacion || ""
     }));
   }
-  if (Array.isArray(irrigationRows)) applyIrrigationRecords(irrigationRows);
-  if (Array.isArray(irrigationProgramRows)) applyIrrigationProgramRecords(irrigationProgramRows);
-  if (Array.isArray(irrigationObservationRows)) applyIrrigationObservationRecords(irrigationObservationRows);
+  if (Array.isArray(irrigationRows)) applyIrrigationRecords(irrigationRows, { monthPrefix: irrigationMonthPrefix });
+  if (Array.isArray(irrigationProgramRows)) applyIrrigationProgramRecords(irrigationProgramRows, { monthPrefix: irrigationMonthPrefix });
+  if (Array.isArray(irrigationObservationRows)) applyIrrigationObservationRecords(irrigationObservationRows, { monthPrefix: irrigationMonthPrefix });
   if (Array.isArray(evaporationRows)) state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
   if (Array.isArray(weatherDailyRows)) {
     const frostWindowsByDate = weatherStationFrostWindowsByDate(weatherFrostRows || []);
@@ -11285,6 +12404,7 @@ async function loadCloudData(options = {}) {
   if (loadIrrigation) loadedModules.push("irrigation");
   if (loadCalicatas) loadedModules.push("calicatas");
   if (loadHarvest) loadedModules.push("harvest");
+  if (loadIrrigation && irrigationMonthPrefix) irrigationCloudLoadedMonths.add(irrigationMonthPrefix);
   markCloudModulesLoaded(loadedModules);
   if (!isRealtimeLoad) {
     if (loadPlanning) await reconcileCloudOrderStatuses();
@@ -11917,7 +13037,7 @@ function warehouseCard(order) {
       <div class="order-card-head">
         <div>
           <span class="overline">Orden #${order.number}</span>
-          <h3>${order.potrero} - ${order.crop}</h3>
+          <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
         </div>
         <div class="order-status-stack">
           ${newOrderMark(order)}
@@ -12026,7 +13146,7 @@ function warehouseAlerts() {
       return `
         <div class="alert-row">
           <div>
-            <strong>Orden #${order.number} - ${order.potrero}</strong>
+            <strong>Orden #${order.number} - ${escapeHtml(potreroListLabel(order.potrero))}</strong>
             <span>${number(remaining, 0)} L pendientes / ${number(pct, 0)}% completado</span>
           </div>
           <span class="badge ${statusClass(effectiveOrderStatus(order))}">${statusLabel(effectiveOrderStatus(order))}</span>
@@ -12082,7 +13202,7 @@ function applicationAlertRow(alert) {
     <div class="alert-row">
       <div>
         <strong>${alert.label} - Orden #${alert.order.number}</strong>
-        <span>${alert.order.potrero} / bloques ${alert.order.blocks?.join(", ") || "-"} - ${alert.detail}</span>
+        <span>${escapeHtml(potreroListLabel(alert.order.potrero))} / bloques ${escapeHtml(alert.order.blocks?.join(", ") || "-")} - ${escapeHtml(alert.detail)}</span>
       </div>
       <span class="badge danger">Revisar</span>
     </div>
@@ -12438,7 +13558,7 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
         polygon.setMap(harvestMap);
         harvestMapBaseOverlays.push(polygon);
       });
-      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
       label.setMap(harvestMap);
       harvestMapBaseOverlays.push(label);
     });
@@ -12475,9 +13595,9 @@ function renderHarvestBinDetail(record, marker, maps) {
       <div class="harvest-map-info-grid">
         ${harvestInfoField("Escaneo", harvestRecordDate(record) || "Sin fecha")}
         ${harvestInfoField("SDP", record.sdp || "Sin SDP")}
-        ${harvestInfoField("Potrero SDP", record.sdpField || "Sin potrero SDP")}
+        ${harvestInfoField("Potrero SDP", potreroLabel(record.sdpField || "Sin potrero SDP"))}
         ${harvestInfoField("Bloque SDP", record.sdpBlock || "Sin bloque SDP")}
-        ${harvestInfoField("Potrero real", record.realField || "Sin potrero real")}
+        ${harvestInfoField("Potrero real", potreroLabel(record.realField || "Sin potrero real"))}
         ${harvestInfoField("Bloque real", record.realBlock || "Sin bloque real")}
         ${harvestInfoField("Contratista", record.contractor || "Sin contratista")}
         ${harvestInfoField("Cuadrilla", record.crew || "Sin cuadrilla")}
@@ -12577,7 +13697,7 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
         irrigationCalicataOverlays.push(polygon);
       });
       if (irrigationCalicataShowPotreroLabels) {
-        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroFeatureName(item.feature), "map-label-potrero-google");
+        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
         label.setMap(irrigationCalicataMap);
         irrigationCalicataOverlays.push(label);
       }
@@ -12590,7 +13710,7 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
         position,
         map: irrigationCalicataMap,
         icon,
-        title: `Calicata ${item.potrero || "-"} bloque ${item.block || "-"} · promedio ${averageValue === null ? "-" : number(averageValue)}`
+        title: `Calicata ${potreroLabel(item.potrero)} bloque ${item.block || "-"} · promedio ${averageValue === null ? "-" : number(averageValue)}`
       });
       marker.addListener("click", () => showIrrigationCalicataInfo(item, marker, maps));
       irrigationCalicataMarkers.set(String(item.id), { marker, item });
@@ -12623,7 +13743,7 @@ function showIrrigationCalicataInfo(item, marker, maps) {
   irrigationCalicataInfoWindow.setContent(`
     <div class="harvest-map-info irrigation-calicata-info">
       <div class="harvest-map-info-head">
-        <strong>${escapeHtml(item.potrero || "-")} · Bloque ${escapeHtml(item.block || "-")}</strong>
+        <strong>${escapeHtml(potreroLabel(item.potrero))} · Bloque ${escapeHtml(item.block || "-")}</strong>
         <span>${escapeHtml(calicataDate(item) || "Sin fecha")}</span>
       </div>
       ${item.photoUrl ? `<img class="irrigation-calicata-photo" src="${htmlAttr(item.photoUrl)}" alt="Foto calicata" loading="lazy">` : ""}
@@ -12708,7 +13828,7 @@ function geoJsonToSvg(layers) {
     const center = project(geoCenter(item.rings));
     const closeBlock = blockCenters.some((point) => Math.abs(point[0] - center[0]) < 28 && Math.abs(point[1] - center[1]) < 22);
     const y = center[1] - (closeBlock ? 22 : 8);
-    return `<text class="map-label map-label-potrero" x="${center[0].toFixed(1)}" y="${y.toFixed(1)}">${potreroFeatureName(item.feature)}</text>`;
+    return `<text class="map-label map-label-potrero" x="${center[0].toFixed(1)}" y="${y.toFixed(1)}">${escapeHtml(potreroLabel(potreroFeatureName(item.feature)))}</text>`;
   }).join("");
 
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mapa de potreros y bloques">${blocks}${potreros}${blockLabels}${potreroLabels}</svg>`;
@@ -12915,7 +14035,7 @@ function orderCard(order) {
       <div class="order-card-head">
         <div>
           <span class="overline">Orden #${order.number}</span>
-          <h3>${order.potrero} - ${order.crop}</h3>
+          <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
         </div>
         <span class="badge ${statusClass(status)}">${statusLabel(status)}</span>
       </div>
@@ -12967,7 +14087,7 @@ function executionCard(order) {
       <div>
         <span class="overline">Orden #${order.number} - ${getOperator(order.operatorId)}</span>
         ${newOrderMark(order)}
-        <h3>${order.potrero} ${order.blocks?.length ? `bloques ${order.blocks.join(", ")}` : ""}</h3>
+        <h3>${escapeHtml(potreroListLabel(order.potrero))} ${order.blocks?.length ? `bloques ${escapeHtml(order.blocks.join(", "))}` : ""}</h3>
         <p>${order.objective || "Aplicacion programada"} - ${number(order.hectares)} ha</p>
         <div class="tech-strip compact">
           <span>${order.machineCode || getEquipment(order.sprayerId)}</span>
@@ -13210,7 +14330,7 @@ function reportProductHaByPotrero(orders) {
     });
   });
   return Object.values(grouped)
-    .map((row) => ({ ...row, productHa: row.hectares ? row.product / row.hectares : 0 }))
+    .map((row) => ({ ...row, label: potreroListLabel(row.label), productHa: row.hectares ? row.product / row.hectares : 0 }))
     .filter((row) => row.productHa > 0)
     .sort((a, b) => b.productHa - a.productHa);
 }
@@ -13274,7 +14394,7 @@ function reportByKey(orders, keyFn) {
 
 function reportByField(orders) {
   return Object.values(orders.reduce((acc, order) => {
-    const key = `${order.potrero} / ${order.blocks?.join(", ") || "-"}`;
+    const key = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
     acc[key] ||= { label: key, hectares: 0, plannedWater: 0, dispatchedWater: 0, cost: 0 };
     acc[key].hectares += Number(order.hectares) || 0;
     acc[key].plannedWater += plannedLiters(order);
@@ -13294,7 +14414,7 @@ function reportWaterByProgram(orders) {
       grouped[key] ||= { label: `Programa ${key}`, hectares: 0, water: 0, children: {} };
       grouped[key].hectares += Number(order.hectares) || 0;
       grouped[key].water += dispatchedLiters(order);
-      const fieldKey = `${order.potrero} / ${order.blocks?.join(", ") || "-"}`;
+      const fieldKey = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
       grouped[key].children[fieldKey] ||= { label: fieldKey, hectares: 0, water: 0 };
       grouped[key].children[fieldKey].hectares += Number(order.hectares) || 0;
       grouped[key].children[fieldKey].water += dispatchedLiters(order);
@@ -13414,7 +14534,7 @@ function renderMasters() {
         <div class="table-wrap">
           <table>
             <thead><tr><th>Potrero</th><th>Bloque</th><th>Especie</th><th>Variedad</th><th>Has</th></tr></thead>
-            <tbody>${state.blocks.map((block) => `<tr><td>${block.potrero}</td><td>${block.block}</td><td>${block.crop}</td><td>${block.variety}</td><td>${number(block.hectares)}</td></tr>`).join("")}</tbody>
+            <tbody>${state.blocks.map((block) => `<tr><td>${escapeHtml(potreroLabel(block.potrero))}</td><td>${escapeHtml(block.block)}</td><td>${escapeHtml(block.crop)}</td><td>${escapeHtml(block.variety)}</td><td>${number(block.hectares)}</td></tr>`).join("")}</tbody>
           </table>
         </div>
       </section>
@@ -13483,7 +14603,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
         <label id="potreroSelectLabel">Potrero base
           <select name="potrero" id="potreroSelect" required>
             <option value="">Seleccionar</option>
-            ${potreros.map((potrero) => `<option value="${potrero}" ${potrero === initialPotrero ? "selected" : ""}>${potrero}</option>`).join("")}
+            ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === initialPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}
           </select>
         </label>
         <div class="block-picker full">
@@ -13650,7 +14770,7 @@ function parseOrderBlockKey(key, fallbackPotrero = "") {
 
 function blockLabelFromKey(key, fallbackPotrero = "") {
   const parsed = parseOrderBlockKey(key, fallbackPotrero);
-  return parsed.potrero ? `${parsed.potrero} / Bloque ${parsed.block}` : `Bloque ${parsed.block}`;
+  return parsed.potrero ? `${potreroLabel(parsed.potrero)} / Bloque ${parsed.block}` : `Bloque ${parsed.block}`;
 }
 
 function selectedBlocksByPotrero(selectedBlocks = [], fallbackPotrero = "") {
@@ -13669,7 +14789,7 @@ function selectedBlocksHtml(selected = [], fallbackPotrero = "") {
   const groups = selectedBlocksByPotrero(selected, fallbackPotrero);
   return Object.entries(groups).map(([potrero, blocks]) => `
     <div class="selected-block-group">
-      <strong>${potrero}</strong>
+      <strong>${escapeHtml(potreroLabel(potrero))}</strong>
       <div>
         ${blocks.map((item) => `<button type="button" class="block-chip" data-action="remove-order-block" data-block="${htmlAttr(item.key)}">Bloque ${item.block}<span>x</span></button>`).join("")}
       </div>
@@ -13691,7 +14811,7 @@ function renderOrderBlockPicker(selectedBlocks = []) {
   form.blocks.value = selected.join(", ");
   const select = document.getElementById("blockSelect");
   select.innerHTML = pickerAvailable.length
-    ? `<option value="__all__">Agregar todos los bloques de ${potrero}</option><option value="">Seleccionar bloque</option>${pickerAvailable
+    ? `<option value="__all__">Agregar todos los bloques de ${escapeHtml(potreroLabel(potrero))}</option><option value="">Seleccionar bloque</option>${pickerAvailable
       .filter((block) => !selected.includes(orderBlockKey(block, isMultiPotrero)))
       .map((block) => `<option value="${orderBlockKey(block, isMultiPotrero)}">Bloque ${block.block} - ${number(block.hectares)} ha</option>`)
       .join("")}`
@@ -14124,7 +15244,7 @@ function openDispatchInfoDialog(orderId) {
       <div class="modal-head">
         <div>
           <h2>Información de salida - Orden #${order.number}</h2>
-          <p>${order.potrero || "-"} · ${programLabel(order)} · ${order.objective || "Sin objetivo"}</p>
+          <p>${escapeHtml(potreroListLabel(order.potrero))} · ${escapeHtml(programLabel(order))} · ${escapeHtml(order.objective || "Sin objetivo")}</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
@@ -14242,7 +15362,7 @@ function openEditDispatchDialog(orderId, dispatchId) {
         <label>Fecha<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
         <label>Hora salida<input name="time" type="time" value="${dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue()}" required></label>
         <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
-        <label class="locked-field">Potrero<input value="${order.potrero}" disabled><small>No editable por bodega</small></label>
+        <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
@@ -14446,7 +15566,7 @@ async function openDispatchDialog(orderId, type = "salida") {
         <label>Fecha<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
         <label>Hora salida<input name="time" type="time" value="${currentTimeValue()}" required></label>
         <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
-        <label class="locked-field">Potrero<input value="${order.potrero}" disabled><small>No editable por bodega</small></label>
+        <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
@@ -14948,7 +16068,7 @@ async function downloadApplicationOrderPdf(orderId) {
 
     const fieldWidths = [70, 125, 100, 90, 150, 65, 85, 120];
     const fieldValues = [
-      ["Fecha", printDate(orderStartDate(order))], ["Para", emittedBy], ["Potrero / Cuartel", order.potrero || "-"], ["Bloque(s)", blocks],
+      ["Fecha", printDate(orderStartDate(order))], ["Para", emittedBy], ["Potrero / Cuartel", potreroListLabel(order.potrero)], ["Bloque(s)", blocks],
       ["Especie / Variedad", [order.crop, order.variety].filter(Boolean).join(" / ") || "-"], ["Hectareas", `${number(order.hectares)} ha`],
       ["Total litros", `${number(plannedLiters(order), 0)} L`], ["Programa N°", program?.code || programNumbersLabel(order)]
     ];
@@ -15037,8 +16157,8 @@ async function downloadApplicationOrderPdf(orderId) {
       const dispatch = order.dispatches?.[index];
       const tank = order.tanks?.[index];
       const appliedDate = tank?.appliedAt ? String(tank.appliedAt).slice(0, 10) : "";
-      return [dispatch ? String(index + 1) : "", dispatch ? printDate(dispatch.date) : "", dispatch ? dispatchDisplayTime(dispatch) : "", dispatch ? `${order.potrero || "-"} / ${blocks}` : "", dispatch ? `${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
-        appliedDate ? printDate(appliedDate) : "", tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "", tank ? `${order.potrero || "-"} / ${blocks}` : "", tank ? number(tank.liters || 0, 0) : "", dispatch?.operatorId ? getOperator(dispatch.operatorId) : "", [tank?.tractorCode || dispatch?.tractorCode, tank?.machineCode || dispatch?.machineCode].filter(Boolean).join(" / ")];
+      return [dispatch ? String(index + 1) : "", dispatch ? printDate(dispatch.date) : "", dispatch ? dispatchDisplayTime(dispatch) : "", dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
+        appliedDate ? printDate(appliedDate) : "", tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "", tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", tank ? number(tank.liters || 0, 0) : "", dispatch?.operatorId ? getOperator(dispatch.operatorId) : "", [tank?.tractorCode || dispatch?.tractorCode, tank?.machineCode || dispatch?.machineCode].filter(Boolean).join(" / ")];
     });
     const operationRowHeight = operationCount > 6 ? Math.max(8, Math.min(11, 65 / operationCount)) : 12;
     top = pdfDrawTable(page, top, [28, 55, 42, 130, 55, 55, 48, 130, 55, 110, 97], ["Folio", "Fecha bodega", "Hora", "Potrero / Bloque", "Litros entregados", "Fecha terreno", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Maquinas"], operationRows, {
@@ -15691,18 +16811,16 @@ document.addEventListener("click", async (event) => {
   if (action === "toggle-calicatas") {
     event.preventDefault();
     const key = actionTarget.dataset.key;
+    const scrollState = irrigationGanttScrollSnapshot();
+    const anchorState = irrigationGanttAnchorSnapshot(actionTarget);
     const expanded = !expandedCalicataKeys.has(key);
     if (expanded) expandedCalicataKeys.add(key);
     else expandedCalicataKeys.delete(key);
     actionTarget.blur?.();
-    views.irrigation?.querySelectorAll(`[data-action="toggle-calicatas"][data-key="${CSS.escape(key)}"]`).forEach((button) => {
-      button.setAttribute("aria-expanded", String(expanded));
-      button.setAttribute("title", expanded ? "Ocultar calicatas" : "Ver calicatas");
-      button.textContent = expanded ? "^" : "v";
-    });
-    views.irrigation?.querySelectorAll(`[data-calicata-detail="${CSS.escape(key)}"]`).forEach((row) => {
-      row.classList.toggle("is-hidden", !expanded);
-    });
+    renderIrrigation();
+    restoreIrrigationGanttScroll(scrollState);
+    restoreIrrigationGanttAnchor(anchorState);
+    return;
   }
   if (action === "focus-calicata") {
     focusIrrigationCalicataById(actionTarget.dataset.calicataId);
@@ -15717,6 +16835,11 @@ document.addEventListener("click", async (event) => {
       irrigationBalanceSelectedPotreros = potrero ? new Set([potrero]) : new Set();
       irrigationBalancePotreroFilter = potrero || "Todos";
     }
+    renderIrrigation();
+  }
+  if (action === "select-satellite-index") {
+    const index = actionTarget.dataset.index || "NDVI";
+    irrigationSatelliteIndex = IRRIGATION_SATELLITE_INDEX_DEFINITIONS[index] ? index : "NDVI";
     renderIrrigation();
   }
   if (action === "clear-warehouse-filter") {
