@@ -4237,9 +4237,7 @@ function irrigationPlanetMosaicQueryKey() {
 
 function irrigationSatelliteProcessingWarning() {
   if (irrigationSatelliteProcessingStatus.checking) return "";
-  if (!irrigationSatelliteProcessingStatus.configured) {
-    return `Configura PLANET_API_KEY o Sentinel Hub en el servidor para ver ${escapeHtml(irrigationSatelliteIndex)} coloreado sobre el mapa.`;
-  }
+  if (!irrigationSatelliteProcessingStatus.configured) return "";
   if (irrigationSatelliteProcessingStatus.providerType !== "planet") return "";
   const definition = irrigationSatelliteIndexDefinition();
   if (!definition.planetProc) {
