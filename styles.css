@@ -2082,7 +2082,38 @@ td span,
 }
 
 .fertilizer-section-title {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
   padding: 4px 2px 0;
+}
+
+.fertilizer-storage-toggle {
+  flex: 0 0 auto;
+}
+
+.fertilizer-warehouse-group .fertilizer-caseta-total {
+  background: rgba(235, 248, 255, 0.9);
+}
+
+.fertilizer-warehouse-card .fertilizer-tank-head strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.fertilizer-warehouse-card.status-vacio .fertilizer-progress span {
+  background: #9aa8a1;
+}
+
+.fertilizer-warehouse-card.status-bajo .fertilizer-progress span {
+  background: #d99517;
+}
+
+.fertilizer-warehouse-card.status-critico .fertilizer-progress span {
+  background: #c2410c;
 }
 
 .fertilizer-caseta-grid {

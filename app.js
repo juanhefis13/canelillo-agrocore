@@ -493,6 +493,7 @@ let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
 let fertilizerReportExporting = false;
+let fertilizerStorageView = "estanques";
 let fertilizerStockRows = [];
 let fertilizerStockLots = [];
 let fertilizerProducts = [];
@@ -8800,6 +8801,91 @@ function renderFertilizerCasetaGroup(caseta, rows) {
   `;
 }
 
+function renderFertilizerWarehouseProductCard(row) {
+  const available = Number(row.available) || 0;
+  const initial = Number(row.initial) || 0;
+  const consumed = Number(row.consumed) || 0;
+  const percent = initial > 0 ? Math.max(0, Math.min(100, available / initial * 100)) : 0;
+  const status = available < 0 ? "critico" : available <= 0 ? "vacio" : percent <= 20 ? "bajo" : "operativo";
+  const unit = row.unit || "KG";
+  return `
+    <article class="fertilizer-tank-card fertilizer-warehouse-card status-${status}">
+      <div class="fertilizer-tank-head">
+        <strong>${escapeHtml(row.product)}</strong>
+        <span class="fertilizer-fip-text">${escapeHtml(unit)}</span>
+      </div>
+      <div class="fertilizer-volume-row">
+        <span>${number(available)} ${escapeHtml(unit)}</span>
+        <small>de ${number(initial)} ${escapeHtml(unit)}</small>
+      </div>
+      <div class="fertilizer-progress" aria-label="Disponible ${number(percent, 0)}%">
+        <span style="width:${Math.max(2, percent)}%"></span>
+      </div>
+      <div class="fertilizer-tank-meta">
+        <span>Preparado ${number(consumed)} ${escapeHtml(unit)}</span>
+        <span>${row.folios.length ? `Folio ${escapeHtml(row.folios.join(", "))}` : "Sin folio"}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderFertilizerWarehouseGroup(caseta, rows) {
+  const totalAvailable = rows.reduce((sum, row) => sum + Math.max(0, Number(row.available) || 0), 0);
+  const totalInitial = rows.reduce((sum, row) => sum + Math.max(0, Number(row.initial) || 0), 0);
+  return `
+    <section class="panel fertilizer-caseta-card fertilizer-warehouse-group">
+      <div class="panel-header fertilizer-caseta-header">
+        <div>
+          <h2>${escapeHtml(caseta)}</h2>
+          <p>${rows.length} productos almacenados por lote y folio</p>
+        </div>
+        <div class="fertilizer-caseta-total">
+          <strong>${number(totalAvailable)} kg/L</strong>
+          <span>${number(totalInitial)} kg/L ingresados</span>
+        </div>
+      </div>
+      <div class="fertilizer-tank-grid">
+        ${rows.map(renderFertilizerWarehouseProductCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderFertilizerWarehouseGroups(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
+    grouped.get(row.caseta).push(row);
+  });
+  return [...grouped.entries()].map(([caseta, items]) => renderFertilizerWarehouseGroup(caseta, items)).join("")
+    || `<div class="empty-state"><strong>Sin productos en bodega para el filtro.</strong></div>`;
+}
+
+function renderFertilizerWarehouseDetailTable(rows) {
+  if (!rows.length) return `<div class="empty-state compact"><strong>Sin productos de bodega para el filtro.</strong></div>`;
+  return `
+    <div class="fertilizer-table-wrap">
+      <table class="fertilizer-table">
+        <thead><tr><th>Caseta</th><th>Producto</th><th>Unidad</th><th>Ingresado</th><th>Preparado</th><th>Disponible</th><th>Folio</th><th>Lote</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.caseta)}</td>
+              <td class="fertilizer-table-fip">${escapeHtml(row.product)}</td>
+              <td>${escapeHtml(row.unit || "KG")}</td>
+              <td>${number(row.initial)}</td>
+              <td>${number(row.consumed)}</td>
+              <td><strong>${number(row.available)}</strong></td>
+              <td>${escapeHtml(row.folios.join(", ") || "-")}</td>
+              <td>${escapeHtml(row.lots.join(", ") || "-")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderFertilizerDetailTable(rows) {
   if (!rows.length) return `<div class="empty-state compact"><strong>Sin estanques para el filtro.</strong></div>`;
   return `
@@ -8847,7 +8933,9 @@ function renderFertilizers() {
   const potreros = [...new Set(fertilizerRows.flatMap((row) => row.potreros))].sort(comparePotrero);
   if (fertilizerCasetaFilter !== "Todas" && !casetas.includes(fertilizerCasetaFilter)) fertilizerCasetaFilter = "Todas";
   if (fertilizerPotreroFilter !== "Todos" && !potreros.includes(fertilizerPotreroFilter)) fertilizerPotreroFilter = "Todos";
+  if (!["estanques", "bodega"].includes(fertilizerStorageView)) fertilizerStorageView = "estanques";
   const rows = fertilizerFilteredRows();
+  const warehouseRows = fertilizerStockPanelRows();
   const grouped = new Map();
   rows.forEach((row) => {
     if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
@@ -8886,16 +8974,22 @@ function renderFertilizers() {
       </div>
       <div class="section-title fertilizer-section-title">
         <div>
-          <h2>Estanques</h2>
-          <p>Estado actual de casetas, FIP y litros preparados disponibles.</p>
+          <h2>${fertilizerStorageView === "bodega" ? "Bodega" : "Estanques"}</h2>
+          <p>${fertilizerStorageView === "bodega" ? "Kilos y litros almacenados por caseta y producto." : "Estado actual de casetas, FIP y litros preparados disponibles."}</p>
+        </div>
+        <div class="segmented-control fertilizer-storage-toggle" role="tablist" aria-label="Vista fertilizante">
+          <button type="button" data-action="set-fertilizer-storage-view" data-view-mode="estanques" class="${fertilizerStorageView === "estanques" ? "active" : ""}">Estanques</button>
+          <button type="button" data-action="set-fertilizer-storage-view" data-view-mode="bodega" class="${fertilizerStorageView === "bodega" ? "active" : ""}">Bodega</button>
         </div>
       </div>
       <div class="fertilizer-caseta-grid">
-        ${[...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
+        ${fertilizerStorageView === "bodega"
+          ? renderFertilizerWarehouseGroups(warehouseRows)
+          : [...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
       </div>
       <section class="panel fertilizer-history-panel">
-        <div class="panel-header"><div><h2>Detalle de estanques</h2><p>Configuracion base para la app movil de terreno.</p></div></div>
-        ${renderFertilizerDetailTable(rows)}
+        <div class="panel-header"><div><h2>${fertilizerStorageView === "bodega" ? "Detalle de bodega" : "Detalle de estanques"}</h2><p>${fertilizerStorageView === "bodega" ? "Resumen por caseta y producto almacenado." : "Configuracion base para la app movil de terreno."}</p></div></div>
+        ${fertilizerStorageView === "bodega" ? renderFertilizerWarehouseDetailTable(warehouseRows) : renderFertilizerDetailTable(rows)}
       </section>
     </section>
   `;
@@ -17029,6 +17123,10 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "open-fertilizer-lot-dialog") {
     openFertilizerLotDialog();
+  }
+  if (action === "set-fertilizer-storage-view") {
+    fertilizerStorageView = actionTarget.dataset.viewMode === "bodega" ? "bodega" : "estanques";
+    renderFertilizers();
   }
   if (action === "export-fertilizer-report") {
     await exportFertilizerReportWorkbook();
