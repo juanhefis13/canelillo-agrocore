@@ -498,6 +498,8 @@ let fertilizerStockRows = [];
 let fertilizerStockLots = [];
 let fertilizerProducts = [];
 let fertilizerCasetas = [];
+let fertilizerTanks = [];
+let fertilizerFields = [];
 let fertilizerStockError = "";
 let fertilizerLotSaving = false;
 let weatherStationYear = String(new Date().getFullYear());
@@ -1571,6 +1573,12 @@ function number(value, digits = 1) {
 function currentTimeValue() {
   const now = new Date();
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function currentDateTimeLocalValue() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function extractTimeValue(value) {
@@ -8368,7 +8376,7 @@ function computeFertilizerStockRows({ lots = [], preparations = [], products = [
 
 async function loadFertilizerRowsFromSupabase() {
   fertilizerStockError = "";
-  const [rows, productsRaw, casetasRaw, tanksRaw, preparationsRaw, lotsRaw] = await Promise.all([
+  const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, lotsRaw] = await Promise.all([
     sbSelectAll(
       "v_fertilizante_estado_estanques",
       "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
@@ -8376,7 +8384,8 @@ async function loadFertilizerRowsFromSupabase() {
     ),
     sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad&activo=eq.true&order=nombre_comercial.asc", 1000).catch(() => []),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
-    sbSelectAll("fertilizante_estanques", "select=id,caseta_id&activo=eq.true", 1000).catch(() => []),
+    sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true&order=numero_estanque.asc,fip.asc", 1000).catch(() => []),
+    sbSelectAll("campos", "select=id,potrero,bloque,especie,variedad,hectareas,activo&activo=eq.true&order=potrero.asc,bloque.asc", 5000).catch(() => []),
     sbSelectAll("fertilizante_preparaciones", "select=id,estanque_id,producto_id,producto,producto_cantidad,producto_unidad,fecha&order=fecha.asc", 5000).catch(() => []),
     sbSelectAll("fertilizante_lotes", "select=id,caseta_id,producto_id,fecha,folio,lote,unidad,cantidad_total,observacion,creado_en&activo=eq.true&order=fecha.desc,creado_en.desc", 5000).catch((error) => {
       if (!isMissingSupabaseRelation(error, ["fertilizante_lotes"])) throw error;
@@ -8387,6 +8396,15 @@ async function loadFertilizerRowsFromSupabase() {
   if (!rows.length) throw new Error("Sin estanques de fertilizacion en Supabase");
   fertilizerProducts = productsRaw.map(normalizeFertilizerProduct);
   fertilizerCasetas = casetasRaw.map(normalizeFertilizerCaseta);
+  fertilizerTanks = tanksRaw;
+  fertilizerFields = fieldsRaw.map((field) => ({
+    id: field.id,
+    potrero: field.potrero || "",
+    block: field.bloque || "",
+    crop: field.especie || "",
+    variety: field.variedad || "",
+    hectares: Number(field.hectareas) || 0
+  })).sort((a, b) => comparePotrero(a.potrero, b.potrero) || String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
   fertilizerStockLots = lotsRaw;
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
@@ -8407,6 +8425,8 @@ async function loadFertilizerRowsFromLocalBackup() {
   fertilizerStockLots = [];
   fertilizerProducts = [];
   fertilizerCasetas = [];
+  fertilizerTanks = [];
+  fertilizerFields = [];
   fertilizerStockError = "Inventario por caseta disponible solo con Supabase.";
   fertilizerDataSource = "Respaldo local";
   return (collection.records || []).map(normalizeFertilizerTankRow);
@@ -8743,6 +8763,48 @@ function renderFertilizerStockPanel() {
   `;
 }
 
+function fertilizerCurrentUserPayload() {
+  return {
+    id: currentProfile?.id || supabaseSession?.user?.id || null,
+    name: currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || null
+  };
+}
+
+function fertilizerTankById(id) {
+  return (fertilizerRows || []).find((row) => row.id === id) || null;
+}
+
+function fertilizerRawTankById(id) {
+  return (fertilizerTanks || []).find((row) => row.id === id) || null;
+}
+
+function fertilizerTankOptionLabel(row) {
+  return `${row.caseta} / Estanque ${row.numeroEstanque} / ${row.fip}`;
+}
+
+function fertilizerProductById(id) {
+  return (fertilizerProducts || []).find((row) => row.id === id) || null;
+}
+
+function fertilizerAvailableProductAmount(caseta, productId) {
+  const row = (fertilizerStockRows || []).find((item) => item.caseta === caseta && item.productId === productId);
+  return Number(row?.available) || 0;
+}
+
+function resetFertilizerLoadedState() {
+  fertilizerRows = null;
+  fertilizerStockRows = [];
+  fertilizerStockLots = [];
+  fertilizerStockError = "";
+}
+
+function nextFertilizerLotNumber() {
+  const used = (fertilizerStockLots || [])
+    .map((lot) => Number(String(lot.lote || "").trim()))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return used.length ? Math.max(...used) + 1 : 1;
+}
+
 function fertilizerStatusLabel(status) {
   return {
     "sin-capacidad": "Sin capacidad",
@@ -8960,11 +9022,12 @@ function renderFertilizers() {
             <option value="lleno" ${fertilizerStatusFilter === "lleno" ? "selected" : ""}>Lleno</option>
           </select></label>
           <button class="secondary-button" type="button" data-action="reload-fertilizers">Actualizar</button>
+          <button class="primary-button" type="button" data-action="open-fertilizer-preparation-dialog">Preparar</button>
+          <button class="secondary-button" type="button" data-action="open-fertilizer-application-dialog">Aplicar</button>
           <button class="secondary-button" type="button" data-action="open-fertilizer-lot-dialog">Ingresar lote</button>
           <button class="primary-button fertilizer-export-button" type="button" data-action="export-fertilizer-report" ${fertilizerReportExporting ? "disabled" : ""}>${fertilizerReportExporting ? "Generando..." : "Descargar Excel"}</button>
         </div>
       </div>
-      ${renderFertilizerStockPanel()}
       <div class="kpi-grid fertilizer-kpis">
         ${fertilizerKpis(rows)}
       </div>
@@ -16555,6 +16618,215 @@ function openPurchaseDialog() {
   document.getElementById("savePurchase").addEventListener("click", savePurchase);
 }
 
+async function openFertilizerPreparationDialog() {
+  if (!supabaseSession?.access_token) {
+    showToast("Inicia sesion para preparar fertilizante");
+    return;
+  }
+  if (!fertilizerRows) await loadFertilizerRows();
+  const dialog = document.getElementById("purchaseDialog");
+  dialog.innerHTML = `
+    <form method="dialog" class="modal-body fertilizer-operation-form" id="fertilizerPreparationForm">
+      <div class="modal-head">
+        <div>
+          <h2>Preparar fertilizante</h2>
+          <p>Registra agua preparada y producto usado por estanque.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="form-grid">
+        <label>Fecha y hora<input name="date" type="datetime-local" value="${currentDateTimeLocalValue()}" required></label>
+        <label class="full">Estanque<select name="tankId" required>
+          <option value="">Seleccionar</option>
+          ${(fertilizerRows || []).map((row) => `<option value="${htmlAttr(row.id)}">${escapeHtml(fertilizerTankOptionLabel(row))}</option>`).join("")}
+        </select></label>
+        <label class="full">Producto<select name="productId" required>
+          <option value="">Seleccionar</option>
+          ${(fertilizerProducts || []).map((product) => `<option value="${htmlAttr(product.id)}">${escapeHtml(product.name)} (${escapeHtml(product.unit)})</option>`).join("")}
+        </select></label>
+        <label>Litros de agua<input name="waterLiters" type="number" min="0.001" step="0.001" required></label>
+        <label>Cantidad producto<input name="productQuantity" type="number" min="0.001" step="0.001" required></label>
+        <label>Unidad<input name="unit" readonly placeholder="Segun producto"></label>
+        <label class="full">Observacion<input name="note" placeholder="Preparacion, folio, responsable o detalle"></label>
+      </div>
+      <div class="calc-preview" id="fertilizerPreparationPreview"></div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="button" id="saveFertilizerPreparation">Guardar preparacion</button>
+      </div>
+    </form>
+  `;
+  dialog.showModal();
+  const form = document.getElementById("fertilizerPreparationForm");
+  const update = () => {
+    const tank = fertilizerTankById(form.tankId.value);
+    const product = fertilizerProductById(form.productId.value);
+    const water = Number(form.waterLiters.value) || 0;
+    const productQuantity = Number(form.productQuantity.value) || 0;
+    const dissolution = water > 0 ? productQuantity / water : 0;
+    const available = tank && product ? fertilizerAvailableProductAmount(tank.caseta, product.id) : 0;
+    form.unit.value = product?.unit || "";
+    document.getElementById("fertilizerPreparationPreview").innerHTML = `
+      <span>Disponible bodega: <strong>${number(available)} ${escapeHtml(product?.unit || "")}</strong></span>
+      <span>Disolucion: <strong>${number(dissolution, 4)}</strong></span>
+      <span>Quedaria: <strong>${number(available - productQuantity)} ${escapeHtml(product?.unit || "")}</strong></span>
+    `;
+  };
+  form.addEventListener("input", update);
+  form.addEventListener("change", update);
+  update();
+  document.getElementById("saveFertilizerPreparation").addEventListener("click", saveFertilizerPreparation);
+}
+
+async function saveFertilizerPreparation() {
+  const form = document.getElementById("fertilizerPreparationForm");
+  if (!form?.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(form));
+  const tank = fertilizerTankById(data.tankId);
+  const product = fertilizerProductById(data.productId);
+  const water = Number(data.waterLiters) || 0;
+  const productQuantity = Number(data.productQuantity) || 0;
+  if (!tank || !product || water <= 0 || productQuantity <= 0) {
+    showToast("Completa estanque, producto y cantidades positivas");
+    return;
+  }
+  const available = fertilizerAvailableProductAmount(tank.caseta, product.id);
+  if (available && productQuantity > available && !confirm(`La preparacion supera el disponible de bodega (${number(available)} ${product.unit}). Guardar de todas formas?`)) return;
+  const user = fertilizerCurrentUserPayload();
+  const payload = {
+    estanque_id: tank.id,
+    fecha: data.date || new Date().toISOString(),
+    producto_id: product.id,
+    producto: product.name,
+    producto_unidad: product.unit,
+    producto_cantidad: productQuantity,
+    cantidad_litros: water,
+    responsable_id: user.id,
+    responsable_nombre: user.name,
+    observacion: String(data.note || "").trim() || null,
+    creado_por: user.id,
+    creado_por_nombre: user.name
+  };
+  try {
+    await sbFetch("/rest/v1/fertilizante_preparaciones", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: JSON.stringify(payload)
+    });
+    resetFertilizerLoadedState();
+    document.getElementById("purchaseDialog")?.close();
+    await loadFertilizerRows();
+    if (currentView === "fertilizers") renderFertilizers();
+    showToast("Preparacion registrada");
+  } catch (error) {
+    showToast(`No se guardo la preparacion: ${error.message}`);
+  }
+}
+
+async function openFertilizerApplicationDialog() {
+  if (!supabaseSession?.access_token) {
+    showToast("Inicia sesion para aplicar fertilizante");
+    return;
+  }
+  if (!fertilizerRows) await loadFertilizerRows();
+  const dialog = document.getElementById("purchaseDialog");
+  dialog.innerHTML = `
+    <form method="dialog" class="modal-body fertilizer-operation-form" id="fertilizerApplicationForm">
+      <div class="modal-head">
+        <div>
+          <h2>Aplicar fertilizante</h2>
+          <p>Registra litros aplicados desde un estanque hacia un bloque.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="form-grid">
+        <label>Fecha y hora<input name="date" type="datetime-local" value="${currentDateTimeLocalValue()}" required></label>
+        <label class="full">Estanque<select name="tankId" required>
+          <option value="">Seleccionar</option>
+          ${(fertilizerRows || []).map((row) => `<option value="${htmlAttr(row.id)}">${escapeHtml(fertilizerTankOptionLabel(row))} - ${number(row.litrosActuales, 0)} L</option>`).join("")}
+        </select></label>
+        <label class="full">Potrero / Bloque<select name="fieldId" required>
+          <option value="">Seleccionar</option>
+          ${(fertilizerFields || []).map((field) => `<option value="${htmlAttr(field.id)}" data-potrero="${htmlAttr(fertilizerReportKey(field.potrero))}">${escapeHtml(potreroLabel(field.potrero))} / Bloque ${escapeHtml(field.block)} - ${escapeHtml(field.variety || field.crop || "")} - ${number(field.hectares)} ha</option>`).join("")}
+        </select></label>
+        <label>Litros aplicados<input name="liters" type="number" min="0.001" step="0.001" required></label>
+        <label class="full">Observacion<input name="note" placeholder="Turno, operador, sector o detalle"></label>
+      </div>
+      <div class="calc-preview" id="fertilizerApplicationPreview"></div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="button" id="saveFertilizerApplication">Guardar aplicacion</button>
+      </div>
+    </form>
+  `;
+  dialog.showModal();
+  const form = document.getElementById("fertilizerApplicationForm");
+  const update = () => {
+    const tank = fertilizerTankById(form.tankId.value);
+    const selectedPotreros = new Set((tank?.potreros || []).map(fertilizerReportKey));
+    let visibleCount = 0;
+    [...form.fieldId.options].forEach((option) => {
+      if (!option.value) return;
+      const visible = !selectedPotreros.size || selectedPotreros.has(option.dataset.potrero);
+      option.hidden = !visible;
+      if (visible) visibleCount += 1;
+    });
+    if (form.fieldId.selectedOptions[0]?.hidden) form.fieldId.value = "";
+    const liters = Number(form.liters.value) || 0;
+    document.getElementById("fertilizerApplicationPreview").innerHTML = `
+      <span>Disponible estanque: <strong>${number(tank?.litrosActuales || 0, 0)} L</strong></span>
+      <span>Aplicar: <strong>${number(liters, 0)} L</strong></span>
+      <span>Bloques disponibles: <strong>${number(visibleCount, 0)}</strong></span>
+    `;
+  };
+  form.addEventListener("input", update);
+  form.addEventListener("change", update);
+  update();
+  document.getElementById("saveFertilizerApplication").addEventListener("click", saveFertilizerApplication);
+}
+
+async function saveFertilizerApplication() {
+  const form = document.getElementById("fertilizerApplicationForm");
+  if (!form?.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(form));
+  const tank = fertilizerTankById(data.tankId);
+  const field = fertilizerFields.find((item) => item.id === data.fieldId);
+  const liters = Number(data.liters) || 0;
+  if (!tank || !field || liters <= 0) {
+    showToast("Completa estanque, bloque y litros positivos");
+    return;
+  }
+  if (liters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Guardar de todas formas?`)) return;
+  const user = fertilizerCurrentUserPayload();
+  const payload = {
+    estanque_id: tank.id,
+    campo_id: field.id,
+    fecha: data.date || new Date().toISOString(),
+    potrero: field.potrero,
+    bloque: field.block,
+    cantidad_litros: liters,
+    responsable_id: user.id,
+    responsable_nombre: user.name,
+    observacion: String(data.note || "").trim() || null,
+    creado_por: user.id,
+    creado_por_nombre: user.name
+  };
+  try {
+    await sbFetch("/rest/v1/fertilizante_aplicaciones", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: JSON.stringify(payload)
+    });
+    resetFertilizerLoadedState();
+    document.getElementById("purchaseDialog")?.close();
+    await loadFertilizerRows();
+    if (currentView === "fertilizers") renderFertilizers();
+    showToast("Aplicacion registrada");
+  } catch (error) {
+    showToast(`No se guardo la aplicacion: ${error.message}`);
+  }
+}
+
 function openFertilizerLotDialog() {
   if (!supabaseSession?.access_token) {
     showToast("Inicia sesion para ingresar lotes de fertilizante");
@@ -16566,6 +16838,7 @@ function openFertilizerLotDialog() {
   const dialog = document.getElementById("purchaseDialog");
   const products = fertilizerProducts.length ? fertilizerProducts : [];
   const casetas = fertilizerCasetas.length ? fertilizerCasetas : [];
+  const nextLot = nextFertilizerLotNumber();
   dialog.innerHTML = `
     <form method="dialog" class="modal-body fertilizer-lot-form" id="fertilizerLotForm">
       <div class="modal-head">
@@ -16586,10 +16859,9 @@ function openFertilizerLotDialog() {
           ${products.map((product) => `<option value="${htmlAttr(product.id)}" data-unit="${htmlAttr(product.unit)}">${escapeHtml(product.name)} (${escapeHtml(product.unit)})</option>`).join("")}
         </select></label>
         <label>Folio<input name="folio" placeholder="Folio o guia" required></label>
-        <label>Lote<input name="lot" placeholder="Lote"></label>
+        <label>Lote correlativo<input name="lot" value="${nextLot}" readonly></label>
         <label>Cantidad total<input name="quantity" type="number" step="0.001" min="0.001" required></label>
         <label>Unidad<input name="unit" value="" readonly placeholder="Segun producto"></label>
-        <label class="full">Observacion<input name="note" placeholder="Proveedor, compra, detalle operativo"></label>
       </div>
       <div class="calc-preview" id="fertilizerLotPreview"></div>
       <div class="modal-actions">
@@ -16639,7 +16911,6 @@ async function saveFertilizerLot() {
     lote: String(data.lot || "").trim() || null,
     unidad: product.unit,
     cantidad_total: quantity,
-    observacion: String(data.note || "").trim() || null,
     creado_por: currentProfile?.id || supabaseSession?.user?.id || null,
     creado_por_nombre: currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || null
   };
@@ -17123,6 +17394,12 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "open-fertilizer-lot-dialog") {
     openFertilizerLotDialog();
+  }
+  if (action === "open-fertilizer-preparation-dialog") {
+    await openFertilizerPreparationDialog();
+  }
+  if (action === "open-fertilizer-application-dialog") {
+    await openFertilizerApplicationDialog();
   }
   if (action === "set-fertilizer-storage-view") {
     fertilizerStorageView = actionTarget.dataset.viewMode === "bodega" ? "bodega" : "estanques";

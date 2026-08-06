@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v219-fertilizer-warehouse-view";
+const CACHE = "canelillo-agrocore-v220-fertilizer-web-actions";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
