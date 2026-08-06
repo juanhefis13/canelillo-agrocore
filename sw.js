@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v213-satellite-hide-technical-warning";
+const CACHE = "canelillo-agrocore-v214-netlify-sentinel-function";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {

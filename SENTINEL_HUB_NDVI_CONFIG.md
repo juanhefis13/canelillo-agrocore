@@ -67,6 +67,36 @@ La web llama a:
 
 El `client_secret` queda solo en el servidor. No debe agregarse a `app.js`.
 
+## Netlify
+
+En `netlify.app`, `server.mjs` no se ejecuta. La version web usa la Function:
+
+```text
+netlify/functions/sentinel-hub.mjs
+```
+
+Endpoints publicados:
+
+```text
+/api/sentinel-hub/status
+/api/sentinel-hub/tile
+```
+
+Configurar las variables en Netlify:
+
+```powershell
+netlify env:set SENTINEL_HUB_CLIENT_ID "tu_client_id" --secret
+netlify env:set SENTINEL_HUB_CLIENT_SECRET "tu_client_secret" --secret
+```
+
+Tambien se pueden agregar desde la web de Netlify en:
+
+```text
+Site configuration > Environment variables
+```
+
+Despues de guardar variables, hacer un nuevo deploy para que la Function las reciba.
+
 ## Cache de tiles
 
 `server.mjs` mantiene cache en memoria para tiles satelitales ya procesados. Esto evita repetir consultas a Copernicus o Planet cuando el usuario vuelve al mismo rango, indice, nivel de zoom y tile.
@@ -90,9 +120,9 @@ data/canelillo_limites.geojson
 
 Ese poligono se usa para:
 
-- Restringir el mapa al marco del campo.
 - Evitar requests desde el navegador para tiles fuera del campo.
 - Devolver tile transparente en backend si un tile no intersecta el AOI.
+- Mantener libre la movilidad del mapa; el limite solo controla el procesamiento satelital.
 
 Variable opcional para usar otro archivo:
 
