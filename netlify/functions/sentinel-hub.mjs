@@ -81,17 +81,58 @@ function coordinatesFromGeometry(geometry, output = []) {
   return output;
 }
 
+function aoiGeometryFromFeatures(features) {
+  const geometries = features.map((feature) => feature.geometry).filter(Boolean);
+  if (!geometries.length) return null;
+  if (geometries.length === 1) return geometries[0];
+  const polygonCoordinates = [];
+  geometries.forEach((geometry) => {
+    if (geometry.type === "Polygon") polygonCoordinates.push(geometry.coordinates);
+    if (geometry.type === "MultiPolygon") polygonCoordinates.push(...geometry.coordinates);
+  });
+  return polygonCoordinates.length ? { type: "MultiPolygon", coordinates: polygonCoordinates } : { type: "GeometryCollection", geometries };
+}
+
+function lonLatToMercatorCoordinate(coordinate) {
+  const lng = Number(coordinate?.[0]);
+  const lat = Math.max(-85.05112878, Math.min(85.05112878, Number(coordinate?.[1])));
+  const origin = 20037508.342789244;
+  return [
+    lng * origin / 180,
+    Math.log(Math.tan((90 + lat) * Math.PI / 360)) * origin / Math.PI
+  ];
+}
+
+function transformCoordinates(value) {
+  if (!Array.isArray(value)) return value;
+  if (Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) return lonLatToMercatorCoordinate(value);
+  return value.map(transformCoordinates);
+}
+
+function geometryToMercator(geometry) {
+  if (!geometry) return null;
+  if (geometry.type === "GeometryCollection") {
+    return { type: "GeometryCollection", geometries: (geometry.geometries || []).map(geometryToMercator).filter(Boolean) };
+  }
+  return { type: geometry.type, coordinates: transformCoordinates(geometry.coordinates) };
+}
+
 async function aoiMeta() {
   if (aoiMetaPromise) return aoiMetaPromise;
   aoiMetaPromise = (async () => {
     try {
       const payload = JSON.parse(await readFile(join(process.cwd(), "data", "canelillo_limites.geojson"), "utf8"));
       const features = payload.type === "FeatureCollection" ? payload.features || [] : payload.type === "Feature" ? [payload] : [{ geometry: payload }];
+      const geometry = aoiGeometryFromFeatures(features);
       const points = features.flatMap((feature) => coordinatesFromGeometry(feature.geometry));
       const lngs = points.map(([lng]) => lng).filter(Number.isFinite);
       const lats = points.map(([, lat]) => lat).filter(Number.isFinite);
       if (!lngs.length || !lats.length) return null;
-      return { bbox: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], points: points.length };
+      return {
+        bbox: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)],
+        geometryMercator: geometryToMercator(geometry),
+        points: points.length
+      };
     } catch {
       return null;
     }
@@ -127,6 +168,16 @@ function tileToMercatorBbox(x, y, z) {
   const maxY = origin - y * tileSize;
   const minY = maxY - tileSize;
   return [minX, minY, maxX, maxY];
+}
+
+async function tileBounds(x, y, z) {
+  const meta = await aoiMeta();
+  const bounds = {
+    bbox: tileToMercatorBbox(x, y, z),
+    properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/3857" }
+  };
+  if (meta?.geometryMercator) bounds.geometry = meta.geometryMercator;
+  return bounds;
 }
 
 function cacheKey(values) {
@@ -235,10 +286,7 @@ async function tileResponse(url) {
 
   const payload = {
     input: {
-      bounds: {
-        bbox: tileToMercatorBbox(x, y, z),
-        properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/3857" }
-      },
+      bounds: await tileBounds(x, y, z),
       data: [{
         type: "sentinel-2-l2a",
         dataFilter: {
@@ -274,4 +322,3 @@ export const config = {
   path: ["/api/sentinel-hub/status", "/api/sentinel-hub/tile"],
   method: ["GET", "OPTIONS"]
 };
-

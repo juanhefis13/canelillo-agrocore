@@ -122,6 +122,7 @@ Ese poligono se usa para:
 
 - Evitar requests desde el navegador para tiles fuera del campo.
 - Devolver tile transparente en backend si un tile no intersecta el AOI.
+- Enviar el poligono a Sentinel Hub como `geometry`, para que `dataMask` deje transparente lo que queda fuera del limite real del campo.
 - Mantener libre la movilidad del mapa; el limite solo controla el procesamiento satelital.
 
 Variable opcional para usar otro archivo:

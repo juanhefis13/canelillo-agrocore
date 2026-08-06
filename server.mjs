@@ -139,18 +139,56 @@ function coordinatesFromGeoJsonGeometry(geometry, output = []) {
   return output;
 }
 
+function aoiGeometryFromFeatures(features) {
+  const geometries = features.map((feature) => feature.geometry).filter(Boolean);
+  if (!geometries.length) return null;
+  if (geometries.length === 1) return geometries[0];
+  const polygonCoordinates = [];
+  geometries.forEach((geometry) => {
+    if (geometry.type === "Polygon") polygonCoordinates.push(geometry.coordinates);
+    if (geometry.type === "MultiPolygon") polygonCoordinates.push(...geometry.coordinates);
+  });
+  return polygonCoordinates.length ? { type: "MultiPolygon", coordinates: polygonCoordinates } : { type: "GeometryCollection", geometries };
+}
+
+function lonLatToMercatorCoordinate(coordinate) {
+  const lng = Number(coordinate?.[0]);
+  const lat = Math.max(-85.05112878, Math.min(85.05112878, Number(coordinate?.[1])));
+  const origin = 20037508.342789244;
+  return [
+    lng * origin / 180,
+    Math.log(Math.tan((90 + lat) * Math.PI / 360)) * origin / Math.PI
+  ];
+}
+
+function transformGeoJsonCoordinates(value) {
+  if (!Array.isArray(value)) return value;
+  if (Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) return lonLatToMercatorCoordinate(value);
+  return value.map(transformGeoJsonCoordinates);
+}
+
+function geometryToMercator(geometry) {
+  if (!geometry) return null;
+  if (geometry.type === "GeometryCollection") {
+    return { type: "GeometryCollection", geometries: (geometry.geometries || []).map(geometryToMercator).filter(Boolean) };
+  }
+  return { type: geometry.type, coordinates: transformGeoJsonCoordinates(geometry.coordinates) };
+}
+
 async function satelliteAoiMeta() {
   if (satelliteAoiMetaPromise) return satelliteAoiMetaPromise;
   satelliteAoiMetaPromise = (async () => {
     try {
       const payload = JSON.parse(await readFile(satelliteAoiGeoJsonPath, "utf8"));
       const features = payload.type === "FeatureCollection" ? payload.features || [] : payload.type === "Feature" ? [payload] : [{ geometry: payload }];
+      const geometry = aoiGeometryFromFeatures(features);
       const points = features.flatMap((feature) => coordinatesFromGeoJsonGeometry(feature.geometry));
       const lngs = points.map(([lng]) => lng).filter(Number.isFinite);
       const lats = points.map(([, lat]) => lat).filter(Number.isFinite);
       if (!lngs.length || !lats.length) return null;
       return {
         bbox: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)],
+        geometryMercator: geometryToMercator(geometry),
         points: points.length
       };
     } catch {
@@ -377,6 +415,16 @@ function tileToMercatorBbox(x, y, z) {
   return [minX, minY, maxX, maxY];
 }
 
+async function sentinelHubTileBounds(x, y, z) {
+  const meta = await satelliteAoiMeta();
+  const bounds = {
+    bbox: tileToMercatorBbox(x, y, z),
+    properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/3857" }
+  };
+  if (meta?.geometryMercator) bounds.geometry = meta.geometryMercator;
+  return bounds;
+}
+
 function satelliteEvalscript(indexName) {
   const definition = satelliteIndexes[indexName] || satelliteIndexes.NDVI;
   return `//VERSION=3
@@ -478,13 +526,9 @@ async function handleSentinelHub(req, res, url) {
       return true;
     }
     const token = await sentinelAccessToken();
-    const bbox = tileToMercatorBbox(x, y, z);
     const payload = {
       input: {
-        bounds: {
-          bbox,
-          properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/3857" }
-        },
+        bounds: await sentinelHubTileBounds(x, y, z),
         data: [{
           type: "sentinel-2-l2a",
           dataFilter: {

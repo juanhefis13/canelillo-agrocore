@@ -4188,6 +4188,7 @@ function irrigationSatelliteQueryKey(blocks) {
 
 function irrigationSatelliteTileQueryKey() {
   return [
+    "aoi-mask-v2",
     irrigationSatelliteProcessingStatus.providerType,
     irrigationPlanetMosaic,
     irrigationSatelliteIndex,
