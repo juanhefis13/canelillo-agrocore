@@ -493,6 +493,12 @@ let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
 let fertilizerReportExporting = false;
+let fertilizerStockRows = [];
+let fertilizerStockLots = [];
+let fertilizerProducts = [];
+let fertilizerCasetas = [];
+let fertilizerStockError = "";
+let fertilizerLotSaving = false;
 let weatherStationYear = String(new Date().getFullYear());
 let weatherStationMonth = "Todos";
 let weatherStationView = "heladas";
@@ -998,6 +1004,14 @@ async function sbFetch(path, options = {}, retryAuth = true) {
 function isMissingSupabaseColumn(error, columns) {
   const message = String(error?.message || "").toLowerCase();
   return columns.some((column) => message.includes(String(column).toLowerCase()));
+}
+
+function isMissingSupabaseRelation(error, relations = []) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("does not exist")
+    || message.includes("could not find the table")
+    || message.includes("relation")
+    || relations.some((relation) => message.includes(String(relation).toLowerCase()));
 }
 
 function normalizeRole(role) {
@@ -8269,13 +8283,117 @@ function normalizeFertilizerTankRow(row) {
   };
 }
 
-async function loadFertilizerRowsFromSupabase() {
-  const rows = await sbSelectAll(
-    "v_fertilizante_estado_estanques",
-    "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
-    1000
+function normalizeFertilizerProduct(row) {
+  return {
+    id: row.id,
+    name: row.nombre_comercial || row.nombre_normalizado || "Producto",
+    key: fertilizerReportKey(row.nombre_normalizado || row.nombre_comercial),
+    unit: String(row.unidad || "").toUpperCase() || "KG"
+  };
+}
+
+function normalizeFertilizerCaseta(row) {
+  return {
+    id: row.id,
+    name: row.nombre || row.nombre_normalizado || "Sin caseta",
+    key: fertilizerReportKey(row.nombre_normalizado || row.nombre)
+  };
+}
+
+function fertilizerStockKey(casetaId, productId) {
+  return `${casetaId || ""}|${productId || ""}`;
+}
+
+function computeFertilizerStockRows({ lots = [], preparations = [], products = [], casetas = [], tanks = [] } = {}) {
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsByKey = new Map(products.map((product) => [product.key, product]));
+  const casetasById = new Map(casetas.map((caseta) => [caseta.id, caseta]));
+  const tanksById = new Map(tanks.map((tank) => [tank.id, tank]));
+  const rows = new Map();
+  const ensureRow = (casetaId, productId) => {
+    const product = productsById.get(productId);
+    const caseta = casetasById.get(casetaId);
+    const key = fertilizerStockKey(casetaId, productId);
+    if (!rows.has(key)) {
+      rows.set(key, {
+        key,
+        casetaId,
+        caseta: caseta?.name || "Sin caseta",
+        productId,
+        product: product?.name || "Producto sin maestro",
+        unit: product?.unit || "KG",
+        initial: 0,
+        consumed: 0,
+        available: 0,
+        lots: [],
+        folios: []
+      });
+    }
+    return rows.get(key);
+  };
+
+  lots.forEach((lot) => {
+    const casetaId = lot.caseta_id || "";
+    const productId = lot.producto_id || "";
+    if (!casetaId || !productId) return;
+    const row = ensureRow(casetaId, productId);
+    const quantity = Number(lot.cantidad_total) || 0;
+    row.initial += quantity;
+    if (lot.lote) row.lots.push(String(lot.lote));
+    if (lot.folio) row.folios.push(String(lot.folio));
+  });
+
+  preparations.forEach((preparation) => {
+    const tank = tanksById.get(preparation.estanque_id);
+    const casetaId = tank?.caseta_id || "";
+    if (!casetaId) return;
+    let product = productsById.get(preparation.producto_id);
+    if (!product) product = productsByKey.get(fertilizerReportKey(preparation.producto || preparation.producto_nombre || preparation.nombre_producto));
+    if (!product?.id) return;
+    const row = ensureRow(casetaId, product.id);
+    row.consumed += Number(preparation.producto_cantidad) || 0;
+  });
+
+  return [...rows.values()].map((row) => ({
+    ...row,
+    available: row.initial - row.consumed,
+    lots: [...new Set(row.lots)].slice(0, 4),
+    folios: [...new Set(row.folios)].slice(0, 4)
+  })).sort((a, b) =>
+    a.caseta.localeCompare(b.caseta, "es", { numeric: true })
+    || a.product.localeCompare(b.product, "es", { numeric: true })
   );
+}
+
+async function loadFertilizerRowsFromSupabase() {
+  fertilizerStockError = "";
+  const [rows, productsRaw, casetasRaw, tanksRaw, preparationsRaw, lotsRaw] = await Promise.all([
+    sbSelectAll(
+      "v_fertilizante_estado_estanques",
+      "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
+      1000
+    ),
+    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad&activo=eq.true&order=nombre_comercial.asc", 1000).catch(() => []),
+    sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
+    sbSelectAll("fertilizante_estanques", "select=id,caseta_id&activo=eq.true", 1000).catch(() => []),
+    sbSelectAll("fertilizante_preparaciones", "select=id,estanque_id,producto_id,producto,producto_cantidad,producto_unidad,fecha&order=fecha.asc", 5000).catch(() => []),
+    sbSelectAll("fertilizante_lotes", "select=id,caseta_id,producto_id,fecha,folio,lote,unidad,cantidad_total,observacion,creado_en&activo=eq.true&order=fecha.desc,creado_en.desc", 5000).catch((error) => {
+      if (!isMissingSupabaseRelation(error, ["fertilizante_lotes"])) throw error;
+      fertilizerStockError = "Ejecuta supabase_fertilizacion_lotes.sql para activar el inventario por caseta.";
+      return [];
+    })
+  ]);
   if (!rows.length) throw new Error("Sin estanques de fertilizacion en Supabase");
+  fertilizerProducts = productsRaw.map(normalizeFertilizerProduct);
+  fertilizerCasetas = casetasRaw.map(normalizeFertilizerCaseta);
+  fertilizerStockLots = lotsRaw;
+  fertilizerStockRows = computeFertilizerStockRows({
+    lots: lotsRaw,
+    preparations: preparationsRaw,
+    products: fertilizerProducts,
+    casetas: fertilizerCasetas,
+    tanks: tanksRaw
+  });
   fertilizerDataSource = "Supabase";
   return rows.map(normalizeFertilizerTankRow);
 }
@@ -8284,6 +8402,11 @@ async function loadFertilizerRowsFromLocalBackup() {
   const response = await fetch("outputs/fertilizacion_estanques.json?v=3", { cache: "force-cache" });
   if (!response.ok) throw new Error(`No se pudo cargar fertilizacion (${response.status})`);
   const collection = await response.json();
+  fertilizerStockRows = [];
+  fertilizerStockLots = [];
+  fertilizerProducts = [];
+  fertilizerCasetas = [];
+  fertilizerStockError = "Inventario por caseta disponible solo con Supabase.";
   fertilizerDataSource = "Respaldo local";
   return (collection.records || []).map(normalizeFertilizerTankRow);
 }
@@ -8556,6 +8679,69 @@ function fertilizerKpis(rows) {
   `;
 }
 
+function fertilizerStockPanelRows() {
+  return (fertilizerStockRows || []).filter((row) => {
+    if (fertilizerCasetaFilter !== "Todas" && row.caseta !== fertilizerCasetaFilter) return false;
+    return true;
+  });
+}
+
+function renderFertilizerStockPanel() {
+  const rows = fertilizerStockPanelRows();
+  const totalInitial = rows.reduce((sum, row) => sum + Math.max(0, Number(row.initial) || 0), 0);
+  const totalConsumed = rows.reduce((sum, row) => sum + Math.max(0, Number(row.consumed) || 0), 0);
+  return `
+    <section class="panel fertilizer-stock-panel">
+      <div class="panel-header fertilizer-stock-header">
+        <div>
+          <h2>Ingresar kilos/litros totales del lote</h2>
+          <p>Stock disponible por caseta y producto. Las preparaciones descuentan automaticamente la cantidad de producto usada.</p>
+        </div>
+        <div class="fertilizer-stock-actions">
+          <div>
+            <strong>${number(totalInitial)} total</strong>
+            <span>${number(totalConsumed)} usado</span>
+          </div>
+          <button class="primary-button" type="button" data-action="open-fertilizer-lot-dialog">Ingresar lote</button>
+        </div>
+      </div>
+      ${fertilizerStockError ? `<div class="inline-warning">${escapeHtml(fertilizerStockError)}</div>` : ""}
+      <div class="fertilizer-stock-grid">
+        ${rows.map((row) => {
+          const available = Number(row.available) || 0;
+          const status = available < 0 ? "negative" : available <= 0 ? "empty" : "ok";
+          const unit = row.unit || "KG";
+          return `
+            <article class="fertilizer-stock-card status-${status}">
+              <div class="fertilizer-stock-card-head">
+                <strong>${escapeHtml(row.product)}</strong>
+                <span>${escapeHtml(row.caseta)}</span>
+              </div>
+              <div class="fertilizer-stock-available">
+                <strong>${number(available)} ${escapeHtml(unit)}</strong>
+                <span>disponibles</span>
+              </div>
+              <div class="fertilizer-stock-metrics">
+                <span>Ingresado <b>${number(row.initial)} ${escapeHtml(unit)}</b></span>
+                <span>Preparado <b>${number(row.consumed)} ${escapeHtml(unit)}</b></span>
+              </div>
+              <div class="fertilizer-stock-foot">
+                ${row.folios.length ? `<span>Folio ${escapeHtml(row.folios.join(", "))}</span>` : `<span>Sin folio</span>`}
+                ${row.lots.length ? `<span>Lote ${escapeHtml(row.lots.join(", "))}</span>` : ""}
+              </div>
+            </article>
+          `;
+        }).join("") || `
+          <div class="empty-state fertilizer-stock-empty">
+            <strong>Sin lotes ingresados</strong>
+            <p>Ingresa el primer lote para ver disponibilidad por caseta y producto.</p>
+          </div>
+        `}
+      </div>
+    </section>
+  `;
+}
+
 function fertilizerStatusLabel(status) {
   return {
     "sin-capacidad": "Sin capacidad",
@@ -8686,15 +8872,23 @@ function renderFertilizers() {
             <option value="lleno" ${fertilizerStatusFilter === "lleno" ? "selected" : ""}>Lleno</option>
           </select></label>
           <button class="secondary-button" type="button" data-action="reload-fertilizers">Actualizar</button>
+          <button class="secondary-button" type="button" data-action="open-fertilizer-lot-dialog">Ingresar lote</button>
           <button class="primary-button fertilizer-export-button" type="button" data-action="export-fertilizer-report" ${fertilizerReportExporting ? "disabled" : ""}>${fertilizerReportExporting ? "Generando..." : "Descargar Excel"}</button>
         </div>
       </div>
+      ${renderFertilizerStockPanel()}
       <div class="kpi-grid fertilizer-kpis">
         ${fertilizerKpis(rows)}
       </div>
       <div class="fertilizer-source-note">
         <span>${escapeHtml(fertilizerDataSource)}</span>
         <span>Unidad: litros</span>
+      </div>
+      <div class="section-title fertilizer-section-title">
+        <div>
+          <h2>Estanques</h2>
+          <p>Estado actual de casetas, FIP y litros preparados disponibles.</p>
+        </div>
       </div>
       <div class="fertilizer-caseta-grid">
         ${[...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
@@ -12456,6 +12650,7 @@ function cloudModulesForRealtimeTable(table = "") {
   if (table === "estacion_climatica") return ["weather"];
   if (table === "calicatas") return ["fields", "calicatas"];
   if (["registros_trazabilidad", "cosecha_analisis", "exportacion_analisis"].includes(table)) return ["harvest"];
+  if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes"].includes(table)) return ["fertilizers"];
   if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos"].includes(table)) return ["fields", "applications"];
   return cloudModulesForView(currentView);
 }
@@ -12501,6 +12696,7 @@ function startCloudSync() {
     "fertilizante_productos",
     "fertilizante_preparaciones",
     "fertilizante_aplicaciones",
+    "fertilizante_lotes",
     "registros_trazabilidad",
     "cosecha_analisis",
     "exportacion_analisis",
@@ -12538,7 +12734,10 @@ function startCloudSync() {
           }
           if (table.startsWith("fertilizante_")) {
             fertilizerRows = null;
+            fertilizerStockRows = [];
+            fertilizerStockLots = [];
             fertilizerLoadError = "";
+            fertilizerStockError = "";
             fertilizerDataSource = "";
             if (currentView === "fertilizers") renderFertilizers();
             return;
@@ -16262,6 +16461,115 @@ function openPurchaseDialog() {
   document.getElementById("savePurchase").addEventListener("click", savePurchase);
 }
 
+function openFertilizerLotDialog() {
+  if (!supabaseSession?.access_token) {
+    showToast("Inicia sesion para ingresar lotes de fertilizante");
+    return;
+  }
+  if (fertilizerStockError) {
+    showToast(fertilizerStockError);
+  }
+  const dialog = document.getElementById("purchaseDialog");
+  const products = fertilizerProducts.length ? fertilizerProducts : [];
+  const casetas = fertilizerCasetas.length ? fertilizerCasetas : [];
+  dialog.innerHTML = `
+    <form method="dialog" class="modal-body fertilizer-lot-form" id="fertilizerLotForm">
+      <div class="modal-head">
+        <div>
+          <h2>Ingresar lote de fertilizante</h2>
+          <p>Kilos o litros totales disponibles por caseta y folio.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="form-grid">
+        <label>Fecha<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+        <label>Caseta<select name="casetaId" required>
+          <option value="">Seleccionar</option>
+          ${casetas.map((caseta) => `<option value="${htmlAttr(caseta.id)}">${escapeHtml(caseta.name)}</option>`).join("")}
+        </select></label>
+        <label class="full">Producto<select name="productId" required>
+          <option value="">Seleccionar</option>
+          ${products.map((product) => `<option value="${htmlAttr(product.id)}" data-unit="${htmlAttr(product.unit)}">${escapeHtml(product.name)} (${escapeHtml(product.unit)})</option>`).join("")}
+        </select></label>
+        <label>Folio<input name="folio" placeholder="Folio o guia" required></label>
+        <label>Lote<input name="lot" placeholder="Lote"></label>
+        <label>Cantidad total<input name="quantity" type="number" step="0.001" min="0.001" required></label>
+        <label>Unidad<input name="unit" value="" readonly placeholder="Segun producto"></label>
+        <label class="full">Observacion<input name="note" placeholder="Proveedor, compra, detalle operativo"></label>
+      </div>
+      <div class="calc-preview" id="fertilizerLotPreview"></div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="button" id="saveFertilizerLot" ${fertilizerLotSaving ? "disabled" : ""}>Guardar lote</button>
+      </div>
+    </form>
+  `;
+  dialog.showModal();
+  const form = document.getElementById("fertilizerLotForm");
+  const update = () => {
+    const product = products.find((item) => item.id === form.productId.value);
+    const caseta = casetas.find((item) => item.id === form.casetaId.value);
+    const quantity = Number(form.quantity.value) || 0;
+    form.unit.value = product?.unit || "";
+    const current = fertilizerStockRows.find((row) => row.productId === product?.id && row.casetaId === caseta?.id);
+    const currentAvailable = Number(current?.available) || 0;
+    document.getElementById("fertilizerLotPreview").innerHTML = `
+      <span>Actual disponible: <strong>${number(currentAvailable)} ${escapeHtml(product?.unit || "")}</strong></span>
+      <span>Ingreso nuevo: <strong>${number(quantity)} ${escapeHtml(product?.unit || "")}</strong></span>
+      <span>Disponible estimado: <strong>${number(currentAvailable + quantity)} ${escapeHtml(product?.unit || "")}</strong></span>
+    `;
+  };
+  form.addEventListener("input", update);
+  form.addEventListener("change", update);
+  update();
+  document.getElementById("saveFertilizerLot").addEventListener("click", saveFertilizerLot);
+}
+
+async function saveFertilizerLot() {
+  const form = document.getElementById("fertilizerLotForm");
+  if (!form?.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(form));
+  const product = fertilizerProducts.find((item) => item.id === data.productId);
+  const caseta = fertilizerCasetas.find((item) => item.id === data.casetaId);
+  const quantity = Number(data.quantity) || 0;
+  if (!product || !caseta || quantity <= 0) {
+    showToast("Completa caseta, producto y cantidad positiva");
+    return;
+  }
+  fertilizerLotSaving = true;
+  const payload = {
+    caseta_id: caseta.id,
+    producto_id: product.id,
+    fecha: data.date || new Date().toISOString().slice(0, 10),
+    folio: String(data.folio || "").trim(),
+    lote: String(data.lot || "").trim() || null,
+    unidad: product.unit,
+    cantidad_total: quantity,
+    observacion: String(data.note || "").trim() || null,
+    creado_por: currentProfile?.id || supabaseSession?.user?.id || null,
+    creado_por_nombre: currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || null
+  };
+  try {
+    await sbFetch("/rest/v1/fertilizante_lotes", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: JSON.stringify(payload)
+    });
+    fertilizerRows = null;
+    fertilizerStockRows = [];
+    fertilizerStockLots = [];
+    fertilizerStockError = "";
+    document.getElementById("purchaseDialog")?.close();
+    await loadFertilizerRows();
+    if (currentView === "fertilizers") renderFertilizers();
+    showToast("Lote de fertilizante ingresado");
+  } catch (error) {
+    showToast(`No se guardo el lote: ${error.message}`);
+  } finally {
+    fertilizerLotSaving = false;
+  }
+}
+
 async function savePurchase() {
   const form = document.getElementById("purchaseForm");
   if (!form.reportValidity()) return;
@@ -16714,7 +17022,13 @@ document.addEventListener("click", async (event) => {
   if (action === "retry-fertilizers" || action === "reload-fertilizers") {
     fertilizerLoadError = "";
     fertilizerRows = null;
+    fertilizerStockRows = [];
+    fertilizerStockLots = [];
+    fertilizerStockError = "";
     renderFertilizers();
+  }
+  if (action === "open-fertilizer-lot-dialog") {
+    openFertilizerLotDialog();
   }
   if (action === "export-fertilizer-report") {
     await exportFertilizerReportWorkbook();

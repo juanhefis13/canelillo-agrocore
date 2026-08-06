@@ -1950,6 +1950,141 @@ td span,
   background: rgba(255, 255, 255, 0.8);
 }
 
+.inline-warning {
+  padding: 9px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 247, 237, 0.9);
+  color: #7c3e08;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.fertilizer-stock-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.fertilizer-stock-header {
+  align-items: start;
+  gap: 12px;
+}
+
+.fertilizer-stock-header p,
+.fertilizer-section-title p {
+  margin: 2px 0 0;
+  color: #5d766c;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.fertilizer-stock-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.fertilizer-stock-actions > div {
+  min-width: 112px;
+  text-align: right;
+}
+
+.fertilizer-stock-actions strong,
+.fertilizer-stock-actions span {
+  display: block;
+}
+
+.fertilizer-stock-actions strong {
+  color: #075c43;
+  font-size: 0.92rem;
+}
+
+.fertilizer-stock-actions span {
+  color: #61796f;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.fertilizer-stock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 9px;
+}
+
+.fertilizer-stock-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(18, 85, 64, 0.14);
+  border-radius: 10px;
+  background: #fbfefd;
+}
+
+.fertilizer-stock-card.status-empty {
+  background: #f7faf8;
+}
+
+.fertilizer-stock-card.status-negative {
+  border-color: rgba(194, 65, 12, 0.28);
+  background: #fff7ed;
+}
+
+.fertilizer-stock-card-head,
+.fertilizer-stock-metrics,
+.fertilizer-stock-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fertilizer-stock-card-head strong {
+  color: #103b2f;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  line-height: 1.15;
+}
+
+.fertilizer-stock-card-head span,
+.fertilizer-stock-foot {
+  color: #61786e;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.fertilizer-stock-available strong {
+  display: block;
+  color: #086447;
+  font-size: 1.05rem;
+}
+
+.fertilizer-stock-available span {
+  color: #687d74;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.fertilizer-stock-metrics {
+  color: #52695f;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.fertilizer-stock-metrics span,
+.fertilizer-stock-foot span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fertilizer-stock-empty {
+  grid-column: 1 / -1;
+}
+
+.fertilizer-section-title {
+  padding: 4px 2px 0;
+}
+
 .fertilizer-caseta-grid {
   display: grid;
   gap: 12px;
