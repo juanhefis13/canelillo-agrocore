@@ -8476,8 +8476,8 @@ async function loadFertilizerReportRows() {
     lines.forEach((preparation) => {
       const product = fertilizerProductForRecord(preparation, productsById, productsByKey);
       const preparationWater = Number(preparation?.cantidad_litros) || 0;
-      const dissolution = Number(product?.disolucion) || 0;
       const productApplied = Number(preparation?.producto_cantidad) || 0;
+      const dissolution = preparationWater > 0 ? productApplied / preparationWater : 0;
       const unit = String(preparation?.producto_unidad || product?.unidad || "").toUpperCase();
       const kgApplied = appliedLiters * dissolution;
       const kgHaApplied = hectares > 0 ? kgApplied / hectares : 0;
@@ -8500,7 +8500,7 @@ async function loadFertilizerReportRows() {
         "OBSERVACION PREPARACION": preparation?.observacion || ""
       };
       FERTILIZER_NUTRIENTS.forEach((nutrient) => {
-        row[`APORTE ${nutrient.toUpperCase()}`] = fertilizerReportNumber(kgApplied * (Number(product?.[nutrient]) || 0));
+        row[`APORTE ${nutrient.toUpperCase()}`] = fertilizerReportNumber(kgHaApplied * (Number(product?.[nutrient]) || 0));
       });
       rows.push(row);
     });
