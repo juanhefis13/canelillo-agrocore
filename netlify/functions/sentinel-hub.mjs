@@ -13,12 +13,41 @@ const tileCache = new Map();
 let tokenCache = { value: "", expiresAt: 0 };
 let aoiMetaPromise = null;
 
+const vegetationPalettes = {
+  standard: [[-0.1, [0.46, 0.05, 0.08]], [0.2, [0.88, 0.24, 0.12]], [0.35, [0.96, 0.70, 0.14]], [0.5, [0.64, 0.78, 0.24]], [0.7, [0.08, 0.55, 0.24]], [0.85, [0.00, 0.32, 0.14]]],
+  contrast: [[-0.1, [0.64, 0.00, 0.05]], [0.2, [0.96, 0.12, 0.05]], [0.35, [1.00, 0.55, 0.00]], [0.5, [1.00, 0.86, 0.10]], [0.62, [0.43, 0.78, 0.18]], [0.78, [0.02, 0.58, 0.20]], [0.9, [0.00, 0.26, 0.10]]],
+  alerts: [[-0.1, [0.55, 0.00, 0.05]], [0.18, [0.82, 0.00, 0.06]], [0.3, [1.00, 0.28, 0.00]], [0.42, [1.00, 0.78, 0.06]], [0.56, [0.78, 0.88, 0.10]], [0.72, [0.05, 0.62, 0.18]], [0.9, [0.00, 0.34, 0.10]]]
+};
+
+const moisturePalettes = {
+  standard: [[-0.35, [0.52, 0.08, 0.07]], [-0.1, [0.86, 0.34, 0.08]], [0.1, [0.95, 0.76, 0.18]], [0.25, [0.52, 0.75, 0.35]], [0.45, [0.10, 0.42, 0.76]], [0.65, [0.02, 0.20, 0.48]]],
+  contrast: [[-0.35, [0.68, 0.00, 0.04]], [-0.1, [0.95, 0.20, 0.00]], [0.08, [1.00, 0.70, 0.00]], [0.22, [0.72, 0.86, 0.18]], [0.42, [0.00, 0.55, 0.82]], [0.65, [0.00, 0.10, 0.55]]],
+  alerts: [[-0.35, [0.70, 0.00, 0.04]], [-0.12, [1.00, 0.22, 0.00]], [0.08, [1.00, 0.78, 0.00]], [0.25, [0.20, 0.72, 0.78]], [0.45, [0.00, 0.34, 0.82]], [0.65, [0.00, 0.08, 0.55]]]
+};
+
+const waterPalettes = {
+  standard: [[-0.8, [0.00, 0.48, 0.16]], [-0.2, [0.83, 0.78, 0.40]], [0, [1.00, 1.00, 1.00]], [0.2, [0.45, 0.74, 0.90]], [0.5, [0.00, 0.25, 0.80]], [0.8, [0.00, 0.05, 0.45]]],
+  contrast: [[-0.8, [0.42, 0.20, 0.06]], [-0.2, [0.98, 0.48, 0.00]], [0, [1.00, 0.88, 0.16]], [0.18, [0.30, 0.82, 0.88]], [0.45, [0.00, 0.34, 0.95]], [0.8, [0.00, 0.02, 0.55]]],
+  alerts: [[-0.8, [0.70, 0.00, 0.04]], [-0.2, [1.00, 0.22, 0.00]], [0, [1.00, 0.78, 0.00]], [0.2, [0.30, 0.82, 0.88]], [0.5, [0.00, 0.24, 0.90]], [0.8, [0.00, 0.02, 0.50]]]
+};
+
+const layerStyles = {
+  standard: { alpha: 0.72 },
+  contrast: { alpha: 0.88 },
+  alerts: { alpha: 0.93 }
+};
+
 const satelliteIndexes = {
-  NDVI: { expression: "safeIndex(sample.B08, sample.B04)", stops: [[-0.1, [0.45, 0.05, 0.05]], [0.2, [0.9, 0.32, 0.12]], [0.35, [0.96, 0.75, 0.20]], [0.5, [0.56, 0.78, 0.36]], [0.7, [0.14, 0.55, 0.25]], [0.85, [0.02, 0.34, 0.16]]] },
-  NDMI: { expression: "safeIndex(sample.B08, sample.B11)", stops: [[-0.35, [0.50, 0.08, 0.08]], [-0.1, [0.88, 0.32, 0.10]], [0.1, [0.95, 0.77, 0.20]], [0.25, [0.44, 0.75, 0.40]], [0.45, [0.13, 0.42, 0.72]], [0.65, [0.04, 0.23, 0.48]]] },
-  NDRE: { expression: "safeIndex(sample.B08, sample.B05)", stops: [[0.0, [0.45, 0.05, 0.05]], [0.12, [0.9, 0.32, 0.12]], [0.22, [0.96, 0.75, 0.20]], [0.32, [0.56, 0.78, 0.36]], [0.45, [0.14, 0.55, 0.25]], [0.58, [0.02, 0.34, 0.16]]] },
-  GNDVI: { expression: "safeIndex(sample.B08, sample.B03)", stops: [[-0.1, [0.45, 0.05, 0.05]], [0.25, [0.9, 0.32, 0.12]], [0.4, [0.96, 0.75, 0.20]], [0.55, [0.56, 0.78, 0.36]], [0.72, [0.14, 0.55, 0.25]], [0.85, [0.02, 0.34, 0.16]]] },
-  SAVI: { expression: "1.5 * (sample.B08 - sample.B04) / Math.max(0.0001, sample.B08 + sample.B04 + 0.5)", stops: [[-0.1, [0.45, 0.05, 0.05]], [0.18, [0.9, 0.32, 0.12]], [0.32, [0.96, 0.75, 0.20]], [0.48, [0.56, 0.78, 0.36]], [0.65, [0.14, 0.55, 0.25]], [0.8, [0.02, 0.34, 0.16]]] }
+  NDVI: { expression: "safeIndex(sample.B08, sample.B04)", palettes: vegetationPalettes },
+  NDMI: { expression: "safeIndex(sample.B08, sample.B11)", palettes: moisturePalettes },
+  NDRE: { expression: "safeIndex(sample.B08, sample.B05)", palettes: vegetationPalettes },
+  GNDVI: { expression: "safeIndex(sample.B08, sample.B03)", palettes: vegetationPalettes },
+  SAVI: { expression: "1.5 * (sample.B08 - sample.B04) / Math.max(0.0001, sample.B08 + sample.B04 + 0.5)", palettes: vegetationPalettes },
+  NDWI: { expression: "safeIndex(sample.B03, sample.B08)", palettes: waterPalettes },
+  MSAVI2: { expression: "(2 * sample.B08 + 1 - Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - 8 * (sample.B08 - sample.B04)))) / 2", palettes: vegetationPalettes },
+  VARI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 - sample.B02)", palettes: vegetationPalettes },
+  MTVI2: { expression: "(1.5 * (1.2 * (sample.B08 - sample.B03) - 2.5 * (sample.B04 - sample.B03))) / Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - (6 * sample.B08 - 5 * Math.sqrt(Math.max(0, sample.B04))) - 0.5))", palettes: vegetationPalettes },
+  TGI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 + sample.B02)", palettes: vegetationPalettes }
 };
 
 function env(name) {
@@ -216,12 +245,14 @@ async function accessToken() {
   return tokenCache.value;
 }
 
-function evalscript(indexName) {
-  const definition = satelliteIndexes[indexName] || satelliteIndexes.NDVI;
+function evalscript(indexName, styleName = "contrast") {
+  const definition = satelliteIndexes[indexName];
+  const style = layerStyles[styleName] || layerStyles.contrast;
+  const stops = definition.palettes?.[styleName] || definition.palettes?.contrast || definition.palettes?.standard || vegetationPalettes.contrast;
   return `//VERSION=3
 function setup() {
   return {
-    input: ["B03", "B04", "B05", "B08", "B11", "SCL", "dataMask"],
+    input: ["B02", "B03", "B04", "B05", "B08", "B11", "SCL", "dataMask"],
     output: { bands: 4, sampleType: "AUTO" }
   };
 }
@@ -232,7 +263,8 @@ function safeIndex(a, b) {
 function maskedScl(value) {
   return value === 0 || value === 1 || value === 3 || value === 8 || value === 9 || value === 10 || value === 11;
 }
-var stops = ${JSON.stringify(definition.stops)};
+var stops = ${JSON.stringify(stops)};
+var alpha = ${Number(style.alpha).toFixed(2)};
 function ramp(value) {
   if (value <= stops[0][0]) return stops[0][1];
   for (var i = 1; i < stops.length; i++) {
@@ -253,7 +285,7 @@ function evaluatePixel(sample) {
   if (sample.dataMask === 0 || maskedScl(sample.SCL)) return [0, 0, 0, 0];
   var value = ${definition.expression};
   var color = ramp(value);
-  return [color[0], color[1], color[2], 0.72];
+  return [color[0], color[1], color[2], alpha];
 }`;
 }
 
@@ -272,6 +304,9 @@ async function statusResponse() {
   return json(200, {
     configured: active,
     provider: "Copernicus Data Space - Sentinel Hub Process API",
+    build: "sentinel-palettes-v2-netlify",
+    supportedIndexes: Object.keys(satelliteIndexes),
+    supportedStyles: Object.keys(layerStyles),
     aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
     cache: { memoryMax: cacheMax, ttlMs: cacheTtlMs },
     message
@@ -284,13 +319,17 @@ async function tileResponse(url) {
   const x = Number(url.searchParams.get("x"));
   const y = Number(url.searchParams.get("y"));
   const indexName = String(url.searchParams.get("index") || "NDVI").toUpperCase();
+  const styleName = String(url.searchParams.get("style") || "contrast").toLowerCase();
+  const smooth = url.searchParams.get("smooth") !== "0";
   const from = String(url.searchParams.get("from") || "").slice(0, 10);
   const to = String(url.searchParams.get("to") || "").slice(0, 10);
   const maxCloud = Math.min(100, Math.max(0, Number(url.searchParams.get("maxCloud")) || 35));
   if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y) || z < 0 || z > 22) return text(400, "Tile invalido");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return text(400, "Rango de fecha invalido");
+  if (!satelliteIndexes[indexName]) return text(400, `Indice Sentinel no soportado: ${indexName}`);
   if (await outsideAoi(x, y, z)) return image(transparentPng, "AOI-SKIP");
-  const key = cacheKey({ z, x, y, indexName, from, to, maxCloud });
+  const outputSize = smooth ? 512 : 256;
+  const key = cacheKey({ z, x, y, indexName, styleName, smooth, outputSize, from, to, maxCloud });
   const cached = getCached(key);
   if (cached) return image(cached, "HIT");
 
@@ -306,8 +345,8 @@ async function tileResponse(url) {
         }
       }]
     },
-    output: { width: 256, height: 256, responses: [{ identifier: "default", format: { type: "image/png" } }] },
-    evalscript: evalscript(indexName)
+    output: { width: outputSize, height: outputSize, responses: [{ identifier: "default", format: { type: "image/png" } }] },
+    evalscript: evalscript(indexName, styleName)
   };
   const response = await fetch(processUrl, {
     method: "POST",

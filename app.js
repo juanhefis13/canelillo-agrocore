@@ -228,6 +228,25 @@ const IRRIGATION_PLANET_PROXY_LOCAL = "/api/planet";
 const IRRIGATION_PLANET_PROXY_SUPABASE = "/api/planet";
 const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
 const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
+  standard: {
+    name: "Agricola",
+    use: "Rojo a verde tradicional para decision agricola."
+  },
+  contrast: {
+    name: "Alto contraste",
+    use: "Colores mas saturados para revisar diferencias al hacer zoom."
+  },
+  alerts: {
+    name: "Criticos",
+    use: "Resalta zonas rojas, amarillas y verdes con mayor fuerza."
+  }
+});
+const IRRIGATION_SATELLITE_LAYER_STRENGTHS = Object.freeze({
+  normal: { name: "Normal", layers: 1, factor: 1 },
+  reinforced: { name: "Reforzada", layers: 2, factor: 0.85 },
+  intense: { name: "Muy reforzada", layers: 3, factor: 0.78 }
+});
 const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   NDVI: {
     name: "NDVI",
@@ -371,7 +390,14 @@ let irrigationSatelliteDateTo = "";
 let irrigationSatelliteCloudMax = 35;
 let irrigationSatelliteLimit = 10;
 let irrigationSatelliteIndex = "NDVI";
-let irrigationSatelliteLayerOpacity = 68;
+let irrigationSatelliteLayerOpacity = 82;
+let irrigationSatelliteLayerStyle = "contrast";
+let irrigationSatelliteLayerStrength = "reinforced";
+let irrigationSatellitePaintedLayer = true;
+let irrigationSatelliteShowIndexLayer = true;
+let irrigationSatelliteShowBlocks = true;
+let irrigationSatelliteShowPotreros = true;
+let irrigationSatelliteShowLabels = true;
 let irrigationSatelliteScenes = [];
 let irrigationSatelliteLoading = false;
 let irrigationSatelliteError = "";
@@ -381,9 +407,10 @@ let irrigationSatelliteMap = null;
 let irrigationSatelliteMapElement = null;
 let irrigationSatelliteOverlays = [];
 let irrigationSatelliteInfoWindow = null;
-let irrigationSatelliteTileOverlay = null;
+let irrigationSatelliteTileOverlays = [];
+let irrigationSatelliteTileRevision = 1;
 let irrigationSatelliteProxyBase = "";
-let irrigationSatelliteProcessingStatus = { checked: false, checking: false, configured: false, providerType: "", message: "Sin revisar" };
+let irrigationSatelliteProcessingStatus = { checked: false, checking: false, configured: false, providerType: "", message: "Sin revisar", build: "", supportedIndexes: [] };
 let irrigationPlanetMosaics = [];
 let irrigationPlanetMosaic = "";
 let irrigationPlanetMosaicsLoading = false;
@@ -4215,6 +4242,10 @@ function irrigationSatelliteTileQueryKey() {
     irrigationSatelliteProcessingStatus.providerType,
     irrigationPlanetMosaic,
     irrigationSatelliteIndex,
+    irrigationSatelliteLayerStyle,
+    irrigationSatelliteLayerStrength,
+    irrigationSatellitePaintedLayer ? "painted" : "raw",
+    irrigationSatelliteTileRevision,
     irrigationSatelliteDateFrom,
     irrigationSatelliteDateTo,
     irrigationSatelliteCloudMax
@@ -4228,6 +4259,18 @@ function irrigationSatelliteIndexDefinition(index = irrigationSatelliteIndex) {
 function irrigationSatelliteMapTypeOptions() {
   return Object.values(IRRIGATION_SATELLITE_INDEX_DEFINITIONS)
     .map((item) => `<option value="${htmlAttr(item.name)}" ${item.name === irrigationSatelliteIndex ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.use}`)}</option>`)
+    .join("");
+}
+
+function irrigationSatelliteLayerStyleOptions() {
+  return Object.entries(IRRIGATION_SATELLITE_LAYER_STYLES)
+    .map(([key, item]) => `<option value="${htmlAttr(key)}" ${key === irrigationSatelliteLayerStyle ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.use}`)}</option>`)
+    .join("");
+}
+
+function irrigationSatelliteLayerStrengthOptions() {
+  return Object.entries(IRRIGATION_SATELLITE_LAYER_STRENGTHS)
+    .map(([key, item]) => `<option value="${htmlAttr(key)}" ${key === irrigationSatelliteLayerStrength ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.layers} capa${item.layers === 1 ? "" : "s"}`)}</option>`)
     .join("");
 }
 
@@ -4267,6 +4310,15 @@ function irrigationSatelliteProcessingWarning() {
       return "No se pudo activar la capa satelital. Revisa las credenciales del proveedor en Netlify.";
     }
     return "";
+  }
+  if (irrigationSatelliteProcessingStatus.providerType === "sentinel") {
+    const supportedIndexes = irrigationSatelliteProcessingStatus.supportedIndexes || [];
+    if (supportedIndexes.length && !supportedIndexes.includes(irrigationSatelliteIndex)) {
+      return `El proxy Sentinel activo no soporta ${escapeHtml(irrigationSatelliteIndex)}. Reinicia el servidor local o despliega la funcion actualizada.`;
+    }
+    if (!supportedIndexes.length && irrigationSatelliteIndex !== "NDVI") {
+      return "El proxy Sentinel activo no informa version ni indices soportados. Puede estar usando una version antigua y devolver NDVI aunque selecciones otro mapa.";
+    }
   }
   if (irrigationSatelliteProcessingStatus.providerType !== "planet") return "";
   const definition = irrigationSatelliteIndexDefinition();
@@ -4446,9 +4498,10 @@ function irrigationSatelliteIndexCards(scene = null) {
 
 function irrigationSatelliteIndexLegend(index = irrigationSatelliteIndex) {
   const definition = irrigationSatelliteIndexDefinition(index);
+  const style = IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle] || IRRIGATION_SATELLITE_LAYER_STYLES.contrast;
   return `
     <div class="satellite-decision-legend">
-      <strong>${escapeHtml(definition.name)} - niveles de decision</strong>
+      <strong>${escapeHtml(definition.name)} - ${escapeHtml(style.name)}</strong>
       <div>
         ${definition.legend.map(([color, label, range]) => `
           <span><i style="background:${htmlAttr(color)}"></i><b>${escapeHtml(label)}</b><em>${escapeHtml(range)}</em></span>
@@ -4520,6 +4573,11 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
               ${irrigationSatelliteMapTypeOptions()}
             </select>
           </label>
+          <label class="satellite-layer-style-control">Color capa
+            <select id="irrigationSatelliteLayerStyle">
+              ${irrigationSatelliteLayerStyleOptions()}
+            </select>
+          </label>
           ${planetActive ? `
           <label class="satellite-mosaic-control">Mosaico
             <select id="irrigationPlanetMosaic" ${irrigationPlanetMosaicsLoading ? "disabled" : ""}>
@@ -4531,7 +4589,19 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
           <label>Opacidad
             <input id="irrigationSatelliteOpacity" type="range" min="20" max="95" step="5" value="${htmlAttr(irrigationSatelliteLayerOpacity)}">
           </label>
+          <label>Refuerzo
+            <select id="irrigationSatelliteLayerStrength">
+              ${irrigationSatelliteLayerStrengthOptions()}
+            </select>
+          </label>
           <button class="primary-button" type="button" id="irrigationSatelliteSearch">Buscar</button>
+          <div class="satellite-layer-toggles" aria-label="Capas satelitales">
+            <label><input id="irrigationSatelliteShowIndexLayer" type="checkbox" ${irrigationSatelliteShowIndexLayer ? "checked" : ""}>Indice</label>
+            <label><input id="irrigationSatellitePaintedLayer" type="checkbox" ${irrigationSatellitePaintedLayer ? "checked" : ""}>Pintado</label>
+            <label><input id="irrigationSatelliteShowBlocks" type="checkbox" ${irrigationSatelliteShowBlocks ? "checked" : ""}>Bloques</label>
+            <label><input id="irrigationSatelliteShowPotreros" type="checkbox" ${irrigationSatelliteShowPotreros ? "checked" : ""}>Potreros</label>
+            <label><input id="irrigationSatelliteShowLabels" type="checkbox" ${irrigationSatelliteShowLabels ? "checked" : ""}>Etiquetas</label>
+          </div>
         </div>
         <div class="satellite-use-chip">
           <strong>${escapeHtml(activeDefinition.name)}</strong>
@@ -4549,7 +4619,7 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
             </div>
           </div>
           <div class="satellite-map-wrap">
-            <div id="irrigationSatelliteMap" class="geo-map harvest-map satellite-map"><span>Cargando mapa satelital...</span></div>
+            <div id="irrigationSatelliteMap" class="geo-map harvest-map satellite-map ${irrigationSatellitePaintedLayer ? "satellite-map-painted" : ""}"><span>Cargando mapa satelital...</span></div>
             <div class="satellite-map-legend">
               <span><i class="good"></i> Bloque filtrado</span>
               <span><i class="medium"></i> Potrero</span>
@@ -4659,7 +4729,7 @@ async function loadIrrigationPlanetMosaics(force = false) {
 async function checkIrrigationSatelliteProcessing(force = false) {
   if (irrigationSatelliteProcessingStatus.checking) return;
   if (!force && irrigationSatelliteProcessingStatus.checked) return;
-  irrigationSatelliteProcessingStatus = { checked: false, checking: true, configured: false, providerType: "", message: "Revisando proveedores satelitales" };
+  irrigationSatelliteProcessingStatus = { checked: false, checking: true, configured: false, providerType: "", message: "Revisando proveedores satelitales", build: "", supportedIndexes: [] };
   if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
   const isLocalHost = ["127.0.0.1", "localhost"].includes(window.location.hostname);
   const endpoints = isLocalHost
@@ -4689,7 +4759,9 @@ async function checkIrrigationSatelliteProcessing(force = false) {
           checking: false,
           configured: true,
           providerType: endpoint.type,
-          message: payload.provider || (endpoint.type === "planet" ? "Planet activo" : "Sentinel Hub activo")
+          message: payload.provider || (endpoint.type === "planet" ? "Planet activo" : "Sentinel Hub activo"),
+          build: payload.build || "",
+          supportedIndexes: Array.isArray(payload.supportedIndexes) ? payload.supportedIndexes : []
         };
         if (endpoint.type === "planet") loadIrrigationPlanetMosaics();
         if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
@@ -4706,7 +4778,9 @@ async function checkIrrigationSatelliteProcessing(force = false) {
     checking: false,
     configured: false,
     providerType: "",
-    message: lastMessage
+    message: lastMessage,
+    build: "",
+    supportedIndexes: []
   };
   if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
 }
@@ -4736,40 +4810,60 @@ function irrigationSatelliteTileUrl(coord, zoom) {
     x: String(x),
     y: String(coord.y),
     index: irrigationSatelliteIndex,
+    style: irrigationSatelliteLayerStyle,
+    smooth: irrigationSatellitePaintedLayer ? "1" : "0",
     from: irrigationSatelliteDateFrom,
     to: irrigationSatelliteDateTo,
     maxCloud: String(irrigationSatelliteCloudMax),
+    rev: String(irrigationSatelliteTileRevision),
     v: irrigationSatelliteTileQueryKey()
   });
   return `${irrigationSatelliteProxyBase}/tile?${params.toString()}`;
 }
 
+function invalidateIrrigationSatelliteTiles() {
+  irrigationSatelliteTileRevision += 1;
+  clearIrrigationSatelliteTileOverlay();
+}
+
 function clearIrrigationSatelliteTileOverlay() {
-  if (!irrigationSatelliteMap || !irrigationSatelliteTileOverlay) return;
+  if (!irrigationSatelliteMap || !irrigationSatelliteTileOverlays.length) return;
   const overlays = irrigationSatelliteMap.overlayMapTypes;
   for (let index = overlays.getLength() - 1; index >= 0; index -= 1) {
-    if (overlays.getAt(index) === irrigationSatelliteTileOverlay) overlays.removeAt(index);
+    if (irrigationSatelliteTileOverlays.includes(overlays.getAt(index))) overlays.removeAt(index);
   }
-  irrigationSatelliteTileOverlay = null;
+  irrigationSatelliteTileOverlays = [];
+}
+
+function irrigationSatelliteOverlayOpacity() {
+  const strength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength] || IRRIGATION_SATELLITE_LAYER_STRENGTHS.reinforced;
+  const baseOpacity = Math.max(0, Math.min(1, Number(irrigationSatelliteLayerOpacity) / 100));
+  if (strength.layers <= 1) return baseOpacity;
+  return Math.max(0.18, Math.min(0.78, baseOpacity * strength.factor));
 }
 
 function applyIrrigationSatelliteTileOverlay(maps) {
   if (!irrigationSatelliteMap || !maps) return;
   clearIrrigationSatelliteTileOverlay();
+  if (!irrigationSatelliteShowIndexLayer) return;
   if (!irrigationSatelliteProcessingStatus.configured) return;
   if (irrigationSatelliteProcessingStatus.providerType === "planet") {
     const definition = irrigationSatelliteIndexDefinition();
     if (!definition.planetProc || !irrigationPlanetMosaic) return;
   }
-  irrigationSatelliteTileOverlay = new maps.ImageMapType({
+  const strength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength] || IRRIGATION_SATELLITE_LAYER_STRENGTHS.reinforced;
+  const opacity = irrigationSatelliteOverlayOpacity();
+  irrigationSatelliteTileOverlays = Array.from({ length: strength.layers }, (_, index) => new maps.ImageMapType({
     getTileUrl: irrigationSatelliteTileUrl,
     tileSize: new maps.Size(256, 256),
     minZoom: 10,
     maxZoom: 19,
-    name: irrigationSatelliteIndex,
-    opacity: Math.max(0, Math.min(1, Number(irrigationSatelliteLayerOpacity) / 100))
+    name: `${irrigationSatelliteIndex} ${strength.name} ${index + 1}`,
+    opacity
+  }));
+  irrigationSatelliteTileOverlays.forEach((overlay) => {
+    irrigationSatelliteMap.overlayMapTypes.insertAt(0, overlay);
   });
-  irrigationSatelliteMap.overlayMapTypes.insertAt(0, irrigationSatelliteTileOverlay);
 }
 
 async function renderIrrigationSatelliteMap(blocks) {
@@ -4792,6 +4886,7 @@ async function renderIrrigationSatelliteMap(blocks) {
     const activeDefinition = irrigationSatelliteIndexDefinition();
     const layerLabel = irrigationSatelliteProcessingStatus.configured ? "Capa activa" : "Sin capa";
     const activeFillColor = irrigationSatelliteProcessingStatus.configured ? "#1f7a4d" : "#6b7280";
+    const indexLayerActive = irrigationSatelliteShowIndexLayer && irrigationSatelliteProcessingStatus.configured;
 
     irrigationSatelliteOverlays.forEach((overlay) => overlay.setMap?.(null));
     irrigationSatelliteOverlays = [];
@@ -4841,64 +4936,74 @@ async function renderIrrigationSatelliteMap(blocks) {
       const potreroMatches = visiblePotreros.has(normalizePotreroOrderName(field.potrero));
       const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block)) || potreroMatches;
       const fillColor = active ? activeFillColor : "#dfe8dc";
+      const strokeColor = active ? "#ffffff" : blockPalette[index % blockPalette.length];
       item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: active ? "#ffffff" : blockPalette[index % blockPalette.length],
-          strokeOpacity: active ? 0.98 : 0.95,
-          strokeWeight: active ? 2.6 : 1.9,
-          fillColor,
-          fillOpacity: active ? 0.46 : 0.18,
-          zIndex: active ? 6 : 4
-        });
-        polygon.addListener("click", () => {
-          irrigationSatelliteInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
-          irrigationSatelliteInfoWindow.setContent(`
-            <div class="harvest-map-info satellite-map-info">
-              <div class="harvest-map-info-head">
-                <strong>${escapeHtml(potreroLabel(field.potrero))} - Bloque ${escapeHtml(field.block || "-")}</strong>
-                <span>${escapeHtml(irrigationSatelliteProviderLabel())}</span>
+        if (irrigationSatelliteShowBlocks) {
+          const polygon = new maps.Polygon({
+            paths: ring.map(([lng, lat]) => ({ lat, lng })),
+            strokeColor,
+            strokeOpacity: active ? 1 : 0.9,
+            strokeWeight: active ? 3.2 : 2.1,
+            fillColor,
+            fillOpacity: indexLayerActive ? active ? 0.04 : 0.01 : active ? 0.34 : 0.14,
+            zIndex: active ? 8 : 5
+          });
+          polygon.addListener("click", () => {
+            irrigationSatelliteInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
+            irrigationSatelliteInfoWindow.setContent(`
+              <div class="harvest-map-info satellite-map-info">
+                <div class="harvest-map-info-head">
+                  <strong>${escapeHtml(potreroLabel(field.potrero))} - Bloque ${escapeHtml(field.block || "-")}</strong>
+                  <span>${escapeHtml(irrigationSatelliteProviderLabel())}</span>
+                </div>
+                <div class="harvest-map-info-grid">
+                  ${harvestInfoField("Mapa", activeDefinition.name)}
+                  ${harvestInfoField("Uso", activeDefinition.use)}
+                  ${harvestInfoField("Rango", `${irrigationSatelliteDateFrom} / ${irrigationSatelliteDateTo}`)}
+                  ${harvestInfoField("Capa", `${IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle]?.name || "Alto contraste"} / ${IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength]?.name || "Reforzada"}${irrigationSatellitePaintedLayer ? " / Pintado" : ""}`)}
+                  ${harvestInfoField("Estado", planetActive && activeMosaic ? irrigationPlanetMosaicLabel(activeMosaic) : layerLabel)}
+                </div>
               </div>
-              <div class="harvest-map-info-grid">
-                ${harvestInfoField("Mapa", activeDefinition.name)}
-                ${harvestInfoField("Uso", activeDefinition.use)}
-                ${harvestInfoField("Rango", `${irrigationSatelliteDateFrom} / ${irrigationSatelliteDateTo}`)}
-                ${harvestInfoField("Estado", planetActive && activeMosaic ? irrigationPlanetMosaicLabel(activeMosaic) : layerLabel)}
-              </div>
-            </div>
-          `);
-          irrigationSatelliteInfoWindow.setPosition(geoLatLngCenter(item.rings));
-          irrigationSatelliteInfoWindow.open({ map: irrigationSatelliteMap });
-        });
-        polygon.setMap(irrigationSatelliteMap);
-        irrigationSatelliteOverlays.push(polygon);
+            `);
+            irrigationSatelliteInfoWindow.setPosition(geoLatLngCenter(item.rings));
+            irrigationSatelliteInfoWindow.open({ map: irrigationSatelliteMap });
+          });
+          polygon.setMap(irrigationSatelliteMap);
+          irrigationSatelliteOverlays.push(polygon);
+        }
         ring.forEach(([lng, lat]) => {
           baseBounds.extend({ lat, lng });
           if (active) activeBounds.extend({ lat, lng });
         });
       });
-      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
-      label.setMap(irrigationSatelliteMap);
-      irrigationSatelliteOverlays.push(label);
+      if (irrigationSatelliteShowLabels) {
+        const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
+        label.setMap(irrigationSatelliteMap);
+        irrigationSatelliteOverlays.push(label);
+      }
     });
 
     potreroRings.forEach((item, index) => {
       item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: potreroPalette[index % potreroPalette.length],
-          strokeOpacity: 1,
-          strokeWeight: 3,
-          fillOpacity: 0,
-          zIndex: 9
-        });
-        polygon.setMap(irrigationSatelliteMap);
-        irrigationSatelliteOverlays.push(polygon);
+        if (irrigationSatelliteShowPotreros) {
+          const polygon = new maps.Polygon({
+            paths: ring.map(([lng, lat]) => ({ lat, lng })),
+            strokeColor: potreroPalette[index % potreroPalette.length],
+            strokeOpacity: 1,
+            strokeWeight: 3.4,
+            fillOpacity: 0,
+            zIndex: 10
+          });
+          polygon.setMap(irrigationSatelliteMap);
+          irrigationSatelliteOverlays.push(polygon);
+        }
         ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
       });
-      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
-      label.setMap(irrigationSatelliteMap);
-      irrigationSatelliteOverlays.push(label);
+      if (irrigationSatelliteShowLabels) {
+        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
+        label.setMap(irrigationSatelliteMap);
+        irrigationSatelliteOverlays.push(label);
+      }
     });
 
     const bounds = activeBounds.isEmpty() ? baseBounds : activeBounds;
@@ -4920,6 +5025,7 @@ function wireIrrigationSatellitePanel(blocks, monthPrefix) {
     const control = document.getElementById(id);
     control?.addEventListener("change", (event) => {
       setter(event.target.value);
+      invalidateIrrigationSatelliteTiles();
       irrigationSatelliteLastQueryKey = "";
       irrigationPlanetMosaicsLastQueryKey = "";
       renderIrrigation();
@@ -4931,16 +5037,42 @@ function wireIrrigationSatellitePanel(blocks, monthPrefix) {
   document.getElementById("irrigationSatelliteIndex")?.addEventListener("change", (event) => {
     const value = event.target.value || "NDVI";
     irrigationSatelliteIndex = IRRIGATION_SATELLITE_INDEX_DEFINITIONS[value] ? value : "NDVI";
+    invalidateIrrigationSatelliteTiles();
+    renderIrrigation();
+  });
+  document.getElementById("irrigationSatelliteLayerStyle")?.addEventListener("change", (event) => {
+    const value = event.target.value || "contrast";
+    irrigationSatelliteLayerStyle = IRRIGATION_SATELLITE_LAYER_STYLES[value] ? value : "contrast";
+    invalidateIrrigationSatelliteTiles();
+    renderIrrigation();
+  });
+  document.getElementById("irrigationSatelliteLayerStrength")?.addEventListener("change", (event) => {
+    const value = event.target.value || "reinforced";
+    irrigationSatelliteLayerStrength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[value] ? value : "reinforced";
     renderIrrigation();
   });
   document.getElementById("irrigationPlanetMosaic")?.addEventListener("change", (event) => {
     irrigationPlanetMosaic = event.target.value || "";
+    invalidateIrrigationSatelliteTiles();
     renderIrrigation();
   });
+  const syncLayerToggle = (id, setter) => {
+    document.getElementById(id)?.addEventListener("change", (event) => {
+      setter(Boolean(event.target.checked));
+      invalidateIrrigationSatelliteTiles();
+      renderIrrigation();
+    });
+  };
+  syncLayerToggle("irrigationSatelliteShowIndexLayer", (value) => { irrigationSatelliteShowIndexLayer = value; });
+  syncLayerToggle("irrigationSatellitePaintedLayer", (value) => { irrigationSatellitePaintedLayer = value; });
+  syncLayerToggle("irrigationSatelliteShowBlocks", (value) => { irrigationSatelliteShowBlocks = value; });
+  syncLayerToggle("irrigationSatelliteShowPotreros", (value) => { irrigationSatelliteShowPotreros = value; });
+  syncLayerToggle("irrigationSatelliteShowLabels", (value) => { irrigationSatelliteShowLabels = value; });
   const opacityControl = document.getElementById("irrigationSatelliteOpacity");
   opacityControl?.addEventListener("input", (event) => {
     irrigationSatelliteLayerOpacity = Math.min(95, Math.max(20, Number(event.target.value) || 68));
-    if (irrigationSatelliteTileOverlay) irrigationSatelliteTileOverlay.setOpacity(irrigationSatelliteLayerOpacity / 100);
+    const opacity = irrigationSatelliteOverlayOpacity();
+    irrigationSatelliteTileOverlays.forEach((overlay) => overlay.setOpacity(opacity));
   });
   document.getElementById("irrigationSatelliteSearch")?.addEventListener("click", () => {
     irrigationSatelliteLastQueryKey = "";
@@ -7679,6 +7811,7 @@ function renderIrrigation() {
   const realMonthTotals = irrigationMonthTotals(irrigationHours, filteredBlocks, monthPrefix, daysInMonth);
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
+  const showIrrigationFilterDrawer = irrigationTab !== "satellite";
   const irrigationHeaderControls = irrigationTab === "bandejas" ? `
     <div class="irrigation-bandeja-navigation">
       <button class="icon-button" type="button" data-action="shift-irrigation-bandeja-year" data-delta="-1" title="Ano anterior" aria-label="Ano anterior">&#8592;</button>
@@ -7715,7 +7848,8 @@ function renderIrrigation() {
     </div>`;
 
   views.irrigation.innerHTML = `
-    <section class="panel irrigation-panel ${irrigationTab === "gantt" ? "irrigation-panel-gantt" : ""}">
+    <section class="panel irrigation-panel ${irrigationTab === "gantt" ? "irrigation-panel-gantt" : ""} ${irrigationTab === "satellite" ? "irrigation-panel-satellite" : ""}">
+      ${showIrrigationFilterDrawer ? `
       <button
         class="irrigation-filter-toggle ${irrigationFiltersOpen ? "is-open" : ""}"
         type="button"
@@ -7738,6 +7872,7 @@ function renderIrrigation() {
         </div>
         ${irrigationHeaderControls}
       </aside>
+      ` : ""}
       ${irrigationTab === "bandejas" ? renderIrrigationBandejasPanel({
         year: irrigationYear
       }) : irrigationTab === "balance" ? renderIrrigationBalancePanel({
