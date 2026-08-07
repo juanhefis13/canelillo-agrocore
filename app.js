@@ -9023,20 +9023,25 @@ function renderFertilizerPotreroOptions(tank = null, selectedPotrero = "") {
   `).join("")}`;
 }
 
-function renderFertilizerBlockChecklist(potrero, selectedIds = []) {
+function renderFertilizerBlockChecklist(potrero, selectedIds = [], litersByField = new Map()) {
   const selected = new Set(selectedIds);
   const fields = fertilizerFieldsForPotrero(potrero);
   if (!potrero) return `<div class="fertilizer-block-empty">Selecciona un potrero para ver sus bloques.</div>`;
   if (!fields.length) return `<div class="fertilizer-block-empty">Este potrero no tiene bloques activos.</div>`;
-  return fields.map((field) => `
-    <label class="fertilizer-block-check">
-      <input type="checkbox" name="fieldIds" value="${htmlAttr(field.id)}" ${selected.has(field.id) ? "checked" : ""}>
-      <span>
-        <strong>Bloque ${escapeHtml(field.block || "-")}</strong>
-        <em>${escapeHtml(field.variety || field.crop || "Sin variedad")} · ${number(field.hectares)} ha</em>
-      </span>
-    </label>
-  `).join("");
+  return fields.map((field) => {
+    const checked = selected.has(field.id);
+    const liters = litersByField.get(field.id) || "";
+    return `
+      <label class="fertilizer-block-check">
+        <input type="checkbox" name="fieldIds" value="${htmlAttr(field.id)}" ${checked ? "checked" : ""}>
+        <span>
+          <strong>Bloque ${escapeHtml(field.block || "-")}</strong>
+          <em>${escapeHtml(field.variety || field.crop || "Sin variedad")} · ${number(field.hectares)} ha</em>
+        </span>
+        <input class="fertilizer-block-liters" type="number" min="0.001" step="0.001" inputmode="decimal" data-field-liters="${htmlAttr(field.id)}" value="${htmlAttr(liters)}" placeholder="L" ${checked ? "" : "disabled"}>
+      </label>
+    `;
+  }).join("");
 }
 
 function resetFertilizerLoadedState() {
@@ -17001,7 +17006,8 @@ async function openFertilizerApplicationDialog() {
         <label>Potrero<select name="potrero" required>
           ${renderFertilizerPotreroOptions()}
         </select></label>
-        <label>Litros aplicados por bloque<input name="liters" type="number" min="0.001" step="0.001" required></label>
+        <label>Litros para seleccionados<input name="bulkLiters" type="number" min="0.001" step="0.001" placeholder="Opcional"></label>
+        <button class="secondary-button fertilizer-apply-liters-button" type="button" data-action="fertilizer-apply-liters-to-selected">Aplicar litros a seleccionados</button>
         <div class="fertilizer-block-picker full">
           <div class="fertilizer-block-picker-head">
             <strong>Bloques</strong>
@@ -17027,8 +17033,28 @@ async function openFertilizerApplicationDialog() {
   const form = document.getElementById("fertilizerApplicationForm");
   const blocksContainer = document.getElementById("fertilizerApplicationBlocks");
   const selectedFieldIds = () => [...form.querySelectorAll('input[name="fieldIds"]:checked')].map((input) => input.value);
-  const renderBlocks = (selected = selectedFieldIds()) => {
-    blocksContainer.innerHTML = renderFertilizerBlockChecklist(form.potrero.value, selected);
+  const fieldLitersInput = (id) => [...form.querySelectorAll("[data-field-liters]")].find((input) => input.dataset.fieldLiters === id) || null;
+  const blockLitersById = () => new Map([...form.querySelectorAll("[data-field-liters]")]
+    .map((input) => [input.dataset.fieldLiters, input.value])
+    .filter(([id]) => id));
+  const selectedFieldEntries = () => selectedFieldIds()
+    .map((id) => ({
+      field: fertilizerFields.find((item) => item.id === id),
+      liters: Number(fieldLitersInput(id)?.value) || 0
+    }))
+    .filter((entry) => entry.field);
+  const syncBlockLiters = () => {
+    form.querySelectorAll('input[name="fieldIds"]').forEach((checkbox) => {
+      const input = fieldLitersInput(checkbox.value);
+      if (!input) return;
+      input.disabled = !checkbox.checked;
+      input.required = checkbox.checked;
+      if (!checkbox.checked) input.classList.remove("is-invalid");
+    });
+  };
+  const renderBlocks = (selected = selectedFieldIds(), litersByField = blockLitersById()) => {
+    blocksContainer.innerHTML = renderFertilizerBlockChecklist(form.potrero.value, selected, litersByField);
+    syncBlockLiters();
   };
   const syncPotreroOptions = (selectedPotrero = form.potrero.value) => {
     const tank = fertilizerTankById(form.tankId.value);
@@ -17040,14 +17066,16 @@ async function openFertilizerApplicationDialog() {
     form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value, currentTankId);
     if (currentTankId && !form.tankId.value) form.tankId.value = "";
     const tank = fertilizerTankById(form.tankId.value);
-    const fields = selectedFieldIds().map((id) => fertilizerFields.find((field) => field.id === id)).filter(Boolean);
-    const liters = Number(form.liters.value) || 0;
-    const hectares = fields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
+    syncBlockLiters();
+    const entries = selectedFieldEntries();
+    const hectares = entries.reduce((sum, entry) => sum + (Number(entry.field.hectares) || 0), 0);
+    const totalLiters = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry.liters) || 0), 0);
+    const missingLiters = entries.filter((entry) => entry.liters <= 0).length;
     document.getElementById("fertilizerApplicationPreview").innerHTML = `
       <span>Disponible estanque: <strong>${number(tank?.litrosActuales || 0, 0)} L</strong></span>
-      <span>Aplicar por bloque: <strong>${number(liters, 0)} L</strong></span>
-      <span>Bloques seleccionados: <strong>${number(fields.length, 0)}</strong></span>
-      <span>Total aplicacion: <strong>${number(liters * fields.length, 0)} L</strong></span>
+      <span>Bloques seleccionados: <strong>${number(entries.length, 0)}</strong></span>
+      <span>Sin litros: <strong>${number(missingLiters, 0)}</strong></span>
+      <span>Total aplicacion: <strong>${number(totalLiters, 0)} L</strong></span>
       <span>Hectareas: <strong>${number(hectares)} ha</strong></span>
     `;
   };
@@ -17079,6 +17107,23 @@ async function openFertilizerApplicationDialog() {
     form.querySelectorAll('input[name="fieldIds"]').forEach((input) => { input.checked = false; });
     update();
   });
+  form.querySelector('[data-action="fertilizer-apply-liters-to-selected"]')?.addEventListener("click", () => {
+    const liters = Number(form.bulkLiters.value) || 0;
+    if (liters <= 0) {
+      showToast("Ingresa litros para aplicar a los bloques seleccionados");
+      return;
+    }
+    const selected = selectedFieldIds();
+    if (!selected.length) {
+      showToast("Selecciona al menos un bloque");
+      return;
+    }
+    selected.forEach((id) => {
+      const input = fieldLitersInput(id);
+      if (input) input.value = String(liters);
+    });
+    update();
+  });
   update();
   document.getElementById("saveFertilizerApplication").addEventListener("click", saveFertilizerApplication);
 }
@@ -17089,18 +17134,24 @@ async function saveFertilizerApplication() {
   const data = Object.fromEntries(new FormData(form));
   const tank = fertilizerTankById(data.tankId);
   const selectedFieldIds = [...form.querySelectorAll('input[name="fieldIds"]:checked')].map((input) => input.value);
-  const fields = selectedFieldIds
-    .map((id) => fertilizerFields.find((item) => item.id === id))
-    .filter(Boolean);
-  const liters = Number(data.liters) || 0;
-  if (!tank || !fields.length || liters <= 0) {
+  const applications = selectedFieldIds
+    .map((id) => {
+      const field = fertilizerFields.find((item) => item.id === id);
+      const litersInput = [...form.querySelectorAll("[data-field-liters]")].find((input) => input.dataset.fieldLiters === id);
+      return { field, liters: Number(litersInput?.value) || 0, input: litersInput };
+    })
+    .filter((entry) => entry.field);
+  const invalid = applications.filter((entry) => entry.liters <= 0);
+  form.querySelectorAll("[data-field-liters]").forEach((input) => input.classList.remove("is-invalid"));
+  invalid.forEach((entry) => entry.input?.classList.add("is-invalid"));
+  if (!tank || !applications.length || invalid.length) {
     showToast("Completa caseta, estanque, bloques y litros positivos");
     return;
   }
-  const totalLiters = liters * fields.length;
-  if (totalLiters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion total supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Se registraran ${number(totalLiters, 0)} L en ${fields.length} bloques. Guardar de todas formas?`)) return;
+  const totalLiters = applications.reduce((sum, entry) => sum + entry.liters, 0);
+  if (totalLiters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion total supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Se registraran ${number(totalLiters, 0)} L en ${applications.length} bloques. Guardar de todas formas?`)) return;
   const user = fertilizerCurrentUserPayload();
-  const payload = fields.map((field) => ({
+  const payload = applications.map(({ field, liters }) => ({
     estanque_id: tank.id,
     campo_id: field.id,
     fecha: data.date || new Date().toISOString(),
@@ -17123,7 +17174,7 @@ async function saveFertilizerApplication() {
     document.getElementById("purchaseDialog")?.close();
     await loadFertilizerRows();
     if (currentView === "fertilizers") renderFertilizers();
-    showToast(`Aplicacion registrada en ${fields.length} bloque${fields.length === 1 ? "" : "s"}`);
+    showToast(`Aplicacion registrada en ${applications.length} bloque${applications.length === 1 ? "" : "s"}`);
   } catch (error) {
     showToast(`No se guardo la aplicacion: ${error.message}`);
   }

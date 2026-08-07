@@ -2380,7 +2380,7 @@ td span,
 
 .fertilizer-block-checklist {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 6px;
   max-height: 210px;
   overflow: auto;
@@ -2408,6 +2408,7 @@ td span,
 .fertilizer-block-check span {
   display: grid;
   min-width: 0;
+  flex: 1 1 auto;
   gap: 2px;
 }
 
@@ -2423,6 +2424,34 @@ td span,
   font-size: 0.7rem;
   font-style: normal;
   font-weight: 750;
+}
+
+.fertilizer-block-liters {
+  width: 70px;
+  min-height: 32px;
+  padding: 5px 7px;
+  border: 1px solid rgba(31, 111, 74, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #123c2f;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: right;
+}
+
+.fertilizer-block-liters:disabled {
+  opacity: 0.42;
+  background: #edf2ef;
+}
+
+.fertilizer-block-liters.is-invalid {
+  border-color: #cf3f35;
+  background: #fff1ef;
+  box-shadow: 0 0 0 2px rgba(207, 63, 53, 0.12);
+}
+
+.fertilizer-apply-liters-button {
+  align-self: end;
 }
 
 @media (max-width: 760px) {
