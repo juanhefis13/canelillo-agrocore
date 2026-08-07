@@ -252,9 +252,27 @@ const IRRIGATION_SATELLITE_LAYER_STRENGTHS = Object.freeze({
   reinforced: { name: "Reforzada", layers: 2, factor: 0.85 },
   intense: { name: "Muy reforzada", layers: 3, factor: 0.78 }
 });
+const IRRIGATION_SATELLITE_PALETTES = Object.freeze({
+  vegetation: {
+    standard: ["#750d14", "#e03d1f", "#f5b324", "#a3c73d", "#148c3d", "#005224"],
+    contrast: ["#a3000d", "#f51f0d", "#ff8c00", "#ffdb1a", "#6ec72e", "#059433", "#00421a"],
+    alerts: ["#8c000d", "#d1000f", "#ff4700", "#ffc70f", "#c7e01a", "#0d9e2e", "#00571a"]
+  },
+  moisture: {
+    standard: ["#851412", "#db5714", "#f2c22e", "#85bf59", "#1a6bc2", "#05337a"],
+    contrast: ["#ad000a", "#f23300", "#ffb300", "#b8db2e", "#008cd1", "#001a8c"],
+    alerts: ["#b3000a", "#ff3800", "#ffc700", "#33b8c7", "#0057d1", "#00148c"]
+  },
+  water: {
+    standard: ["#007a29", "#d4c766", "#ffffff", "#73bde6", "#0040cc", "#000d73"],
+    contrast: ["#6b330f", "#fa7a00", "#ffe029", "#4dd1e0", "#0057f2", "#00058c"],
+    alerts: ["#b3000a", "#ff3800", "#ffc700", "#4dd1e0", "#003de6", "#000580"]
+  }
+});
 const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   NDVI: {
     name: "NDVI",
+    palette: "vegetation",
     formula: "(B08 - B04) / (B08 + B04)",
     use: "Vigor vegetal y cobertura activa.",
     bands: ["nir", "red"],
@@ -269,6 +287,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   NDMI: {
     name: "NDMI",
+    palette: "moisture",
     formula: "(B08 - B11) / (B08 + B11)",
     use: "Humedad de vegetacion y estres hidrico.",
     bands: ["nir", "swir16"],
@@ -282,6 +301,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   NDRE: {
     name: "NDRE",
+    palette: "vegetation",
     formula: "(B08 - B05) / (B08 + B05)",
     use: "Clorofila en canopia mas cerrada.",
     bands: ["nir", "rededge1"],
@@ -295,6 +315,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   GNDVI: {
     name: "GNDVI",
+    palette: "vegetation",
     formula: "(B08 - B03) / (B08 + B03)",
     use: "Clorofila y respuesta nitrogenada.",
     bands: ["nir", "green"],
@@ -308,6 +329,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   SAVI: {
     name: "SAVI",
+    palette: "vegetation",
     formula: "1.5 * (B08 - B04) / (B08 + B04 + 0.5)",
     use: "Vigor con suelo expuesto.",
     bands: ["nir", "red"],
@@ -321,6 +343,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   NDWI: {
     name: "NDWI",
+    palette: "water",
     formula: "(Green - NIR) / (Green + NIR)",
     use: "Agua superficial y zonas con exceso de humedad.",
     bands: ["green", "nir"],
@@ -335,6 +358,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   MSAVI2: {
     name: "MSAVI2",
+    palette: "vegetation",
     formula: "(2*NIR+1-sqrt((2*NIR+1)^2-8*(NIR-Red))) / 2",
     use: "Vigor ajustado para suelo expuesto.",
     bands: ["nir", "red"],
@@ -349,6 +373,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   VARI: {
     name: "VARI",
+    palette: "vegetation",
     formula: "(Green - Red) / (Green + Red - Blue)",
     use: "Verdor visible usando bandas RGB.",
     bands: ["green", "red", "blue"],
@@ -363,6 +388,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   MTVI2: {
     name: "MTVI2",
+    palette: "vegetation",
     formula: "Indice triangular modificado",
     use: "Clorofila y vigor en canopia.",
     bands: ["nir", "red", "green"],
@@ -377,6 +403,7 @@ const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   },
   TGI: {
     name: "TGI",
+    palette: "vegetation",
     formula: "Triangular Greenness Index",
     use: "Verdor y clorofila con bandas visibles.",
     bands: ["red", "green", "blue"],
@@ -4501,15 +4528,31 @@ function irrigationSatelliteIndexCards(scene = null) {
   }).join("");
 }
 
+function irrigationSatellitePaletteColors(definition) {
+  const paletteGroup = IRRIGATION_SATELLITE_PALETTES[definition.palette || "vegetation"] || IRRIGATION_SATELLITE_PALETTES.vegetation;
+  const paletteKey = irrigationSatelliteLayerStyle === "native" ? "standard" : irrigationSatelliteLayerStyle;
+  return paletteGroup[paletteKey] || paletteGroup.standard || paletteGroup.contrast || IRRIGATION_SATELLITE_PALETTES.vegetation.standard;
+}
+
+function irrigationSatelliteLegendColor(definition, rowIndex, rowCount) {
+  const colors = irrigationSatellitePaletteColors(definition);
+  if (!colors.length) return definition.legend?.[rowIndex]?.[0] || "#1f7a4d";
+  if (rowCount <= 1) return colors[Math.floor(colors.length / 2)];
+  const position = rowIndex / Math.max(1, rowCount - 1);
+  const colorIndex = Math.round(position * (colors.length - 1));
+  return colors[Math.max(0, Math.min(colors.length - 1, colorIndex))];
+}
+
 function irrigationSatelliteIndexLegend(index = irrigationSatelliteIndex) {
   const definition = irrigationSatelliteIndexDefinition(index);
   const style = IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle] || IRRIGATION_SATELLITE_LAYER_STYLES.contrast;
+  const legendRows = definition.legend || [];
   return `
     <div class="satellite-decision-legend">
       <strong>${escapeHtml(definition.name)} - ${escapeHtml(style.name)}</strong>
       <div>
-        ${definition.legend.map(([color, label, range]) => `
-          <span><i style="background:${htmlAttr(color)}"></i><b>${escapeHtml(label)}</b><em>${escapeHtml(range)}</em></span>
+        ${legendRows.map(([, label, range], index) => `
+          <span><i style="background:${htmlAttr(irrigationSatelliteLegendColor(definition, index, legendRows.length))}"></i><b>${escapeHtml(label)}</b><em>${escapeHtml(range)}</em></span>
         `).join("")}
       </div>
     </div>
