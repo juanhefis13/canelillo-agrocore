@@ -9028,22 +9028,31 @@ function renderFertilizerBlockChecklist(potrero, selectedIds = [], litersByField
   const fields = fertilizerFieldsForPotrero(potrero);
   if (!potrero) return `<div class="fertilizer-block-empty">Selecciona un potrero para ver sus bloques.</div>`;
   if (!fields.length) return `<div class="fertilizer-block-empty">Este potrero no tiene bloques activos.</div>`;
-  return fields.map((field) => {
-    const checked = selected.has(field.id);
-    const liters = litersByField.get(field.id) || "";
-    return `
-      <label class="fertilizer-block-check">
-        <input type="checkbox" name="fieldIds" value="${htmlAttr(field.id)}" ${checked ? "checked" : ""}>
-        <span>
+  return `
+    <div class="fertilizer-block-table-head" aria-hidden="true">
+      <span>Sel.</span>
+      <span>Bloque</span>
+      <span>Variedad</span>
+      <span>Ha</span>
+      <span>Litros aplicados</span>
+    </div>
+    ${fields.map((field) => {
+      const checked = selected.has(field.id);
+      const liters = litersByField.get(field.id) || "";
+      return `
+        <label class="fertilizer-block-check">
+          <span class="fertilizer-block-select">
+            <input type="checkbox" name="fieldIds" value="${htmlAttr(field.id)}" ${checked ? "checked" : ""}>
+          </span>
           <strong>Bloque ${escapeHtml(field.block || "-")}</strong>
-          <em>${escapeHtml(field.variety || field.crop || "Sin variedad")} · ${number(field.hectares)} ha</em>
-        </span>
-        <input class="fertilizer-block-liters" type="number" min="0.001" step="0.001" inputmode="decimal" data-field-liters="${htmlAttr(field.id)}" value="${htmlAttr(liters)}" placeholder="L" ${checked ? "" : "disabled"}>
-      </label>
-    `;
-  }).join("");
+          <em>${escapeHtml(field.variety || field.crop || "Sin variedad")}</em>
+          <small>${number(field.hectares)} ha</small>
+          <input class="fertilizer-block-liters" type="number" min="0.001" step="0.001" inputmode="decimal" data-field-liters="${htmlAttr(field.id)}" value="${htmlAttr(liters)}" placeholder="Litros" aria-label="Litros aplicados bloque ${htmlAttr(field.block || "")}" ${checked ? "" : "disabled"}>
+        </label>
+      `;
+    }).join("")}
+  `;
 }
-
 function resetFertilizerLoadedState() {
   fertilizerRows = null;
   fertilizerStockRows = [];
@@ -16985,8 +16994,10 @@ async function openFertilizerApplicationDialog() {
   const casetas = fertilizerCasetaOptions();
   const initialCaseta = casetas[0] || "";
   const dialog = document.getElementById("purchaseDialog");
+  dialog.classList.add("fertilizer-application-modal");
+  dialog.addEventListener("close", () => dialog.classList.remove("fertilizer-application-modal"), { once: true });
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body fertilizer-operation-form" id="fertilizerApplicationForm">
+    <form method="dialog" class="modal-body fertilizer-operation-form fertilizer-application-form" id="fertilizerApplicationForm">
       <div class="modal-head">
         <div>
           <h2>Aplicar fertilizante</h2>
@@ -17010,7 +17021,10 @@ async function openFertilizerApplicationDialog() {
         <button class="secondary-button fertilizer-apply-liters-button" type="button" data-action="fertilizer-apply-liters-to-selected">Aplicar litros a seleccionados</button>
         <div class="fertilizer-block-picker full">
           <div class="fertilizer-block-picker-head">
-            <strong>Bloques</strong>
+            <div>
+              <strong>Bloques y litros aplicados</strong>
+              <span>Define el volumen individual de cada bloque seleccionado.</span>
+            </div>
             <div>
               <button class="mini-button" type="button" data-action="fertilizer-select-all-blocks">Seleccionar todos</button>
               <button class="mini-button" type="button" data-action="fertilizer-clear-blocks">Limpiar</button>

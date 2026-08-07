@@ -2334,6 +2334,28 @@ td span,
   background: #475569;
 }
 
+.fertilizer-application-modal {
+  width: min(1180px, calc(100vw - 28px));
+}
+
+.fertilizer-application-form {
+  gap: 12px;
+  padding: 18px;
+}
+
+.fertilizer-application-form .form-grid {
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.fertilizer-application-form .modal-head p {
+  margin: 4px 0 0;
+}
+
+.fertilizer-application-form .calc-preview {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .fertilizer-block-picker {
   display: grid;
   gap: 8px;
@@ -2356,7 +2378,20 @@ td span,
   font-weight: 950;
 }
 
-.fertilizer-block-picker-head > div {
+.fertilizer-block-picker-head span {
+  display: block;
+  margin-top: 2px;
+  color: #60756d;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.fertilizer-block-picker-head > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.fertilizer-block-picker-head > div:last-child {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2380,61 +2415,93 @@ td span,
 
 .fertilizer-block-checklist {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 6px;
-  max-height: 210px;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  max-height: min(42vh, 390px);
   overflow: auto;
-  padding-right: 2px;
+  padding-right: 3px;
+}
+
+.fertilizer-block-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 52px minmax(96px, 0.8fr) minmax(180px, 1.6fr) 84px minmax(160px, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  border-radius: 8px;
+  background: #eaf6ef;
+  color: #42665b;
+  font-size: 0.67rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .fertilizer-block-check,
 .fertilizer-block-empty {
-  display: flex;
+  display: grid;
+  grid-template-columns: 52px minmax(96px, 0.8fr) minmax(180px, 1.6fr) 84px minmax(160px, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 48px;
-  padding: 7px 8px;
+  min-height: 46px;
+  padding: 7px 10px;
   border: 1px solid rgba(31, 111, 74, 0.12);
   border-radius: 8px;
   background: #ffffff;
 }
 
-.fertilizer-block-check input {
+.fertilizer-block-empty {
+  grid-template-columns: 1fr;
+}
+
+.fertilizer-block-select {
+  display: flex;
+  align-items: center;
+}
+
+.fertilizer-block-select input {
   width: 16px;
   height: 16px;
   accent-color: var(--brand);
 }
 
-.fertilizer-block-check span {
-  display: grid;
-  min-width: 0;
-  flex: 1 1 auto;
-  gap: 2px;
-}
-
 .fertilizer-block-check strong {
+  min-width: 0;
+  overflow: hidden;
   color: #123c2f;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fertilizer-block-check em,
+.fertilizer-block-check small,
 .fertilizer-block-empty {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.7rem;
   font-style: normal;
   font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fertilizer-block-liters {
-  width: 70px;
-  min-height: 32px;
-  padding: 5px 7px;
+  width: 100% !important;
+  min-width: 140px;
+  min-height: 34px;
+  padding: 6px 9px;
   border: 1px solid rgba(31, 111, 74, 0.18);
   border-radius: 8px;
   background: #ffffff;
   color: #123c2f;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 900;
   text-align: right;
 }
@@ -2455,6 +2522,15 @@ td span,
 }
 
 @media (max-width: 760px) {
+  .fertilizer-application-form {
+    padding: 14px;
+  }
+
+  .fertilizer-application-form .form-grid,
+  .fertilizer-application-form .calc-preview {
+    grid-template-columns: 1fr;
+  }
+
   .fertilizer-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -2489,13 +2565,36 @@ td span,
     flex-direction: column;
   }
 
-  .fertilizer-block-picker-head > div {
+  .fertilizer-block-picker-head > div:last-child {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
 
+  .fertilizer-block-table-head {
+    display: none;
+  }
+
   .fertilizer-block-checklist {
     grid-template-columns: 1fr;
+    max-height: min(48vh, 430px);
+  }
+
+  .fertilizer-block-check {
+    grid-template-columns: 28px minmax(0, 1fr) minmax(112px, 0.72fr);
+    gap: 6px 8px;
+  }
+
+  .fertilizer-block-check em {
+    grid-column: 2 / 4;
+  }
+
+  .fertilizer-block-check small {
+    grid-column: 2;
+  }
+
+  .fertilizer-block-liters {
+    grid-column: 3;
+    min-width: 112px;
   }
 }
 
