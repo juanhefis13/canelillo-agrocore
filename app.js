@@ -230,6 +230,10 @@ const IRRIGATION_SATELLITE_PROXY_REMOTE = "https://canelillo-agrocore.netlify.ap
 const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
 const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
+  native: {
+    name: "Normal del mapa",
+    use: "Paleta base propia de cada indice."
+  },
   standard: {
     name: "Agricola",
     use: "Rojo a verde tradicional para decision agricola."
@@ -392,8 +396,8 @@ let irrigationSatelliteCloudMax = 35;
 let irrigationSatelliteLimit = 10;
 let irrigationSatelliteIndex = "NDVI";
 let irrigationSatelliteLayerOpacity = 82;
-let irrigationSatelliteLayerStyle = "contrast";
-let irrigationSatelliteLayerStrength = "reinforced";
+let irrigationSatelliteLayerStyle = "native";
+let irrigationSatelliteLayerStrength = "normal";
 let irrigationSatellitePaintedLayer = true;
 let irrigationSatelliteShowIndexLayer = true;
 let irrigationSatelliteShowBlocks = true;

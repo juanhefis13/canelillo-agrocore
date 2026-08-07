@@ -46,6 +46,7 @@ const waterPalettes = {
 };
 
 const layerStyles = {
+  native: { alpha: 0.74 },
   standard: { alpha: 0.72 },
   contrast: { alpha: 0.88 },
   alerts: { alpha: 0.93 }
@@ -457,7 +458,8 @@ async function sentinelHubTileBounds(x, y, z) {
 function satelliteEvalscript(indexName, styleName = "contrast") {
   const definition = satelliteIndexes[indexName];
   const style = layerStyles[styleName] || layerStyles.contrast;
-  const stops = definition.palettes?.[styleName] || definition.palettes?.contrast || definition.palettes?.standard || vegetationPalettes.contrast;
+  const paletteKey = styleName === "native" ? "standard" : styleName;
+  const stops = definition.palettes?.[paletteKey] || definition.palettes?.standard || definition.palettes?.contrast || vegetationPalettes.standard;
   return `//VERSION=3
 function setup() {
   return {
@@ -510,22 +512,14 @@ async function handleSentinelHub(req, res, url) {
   }
   if (url.pathname === "/api/sentinel-hub/status") {
     const aoi = await satelliteAoiMeta();
-    let active = false;
-    let message = sentinelConfigured()
+    const active = sentinelConfigured();
+    const message = sentinelConfigured()
       ? "Credenciales Sentinel Hub activas"
       : "Faltan SENTINEL_HUB_CLIENT_ID y SENTINEL_HUB_CLIENT_SECRET en el servidor";
-    if (sentinelConfigured()) {
-      try {
-        await sentinelAccessToken();
-        active = true;
-      } catch (error) {
-        message = error.message || "No se pudo validar credenciales Sentinel Hub";
-      }
-    }
     sendJson(res, 200, {
       configured: active,
       provider: "Copernicus Data Space - Sentinel Hub Process API",
-      build: "sentinel-palettes-v2-local",
+      build: "sentinel-palettes-v3-local",
       supportedIndexes: Object.keys(satelliteIndexes),
       supportedStyles: Object.keys(layerStyles),
       aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
@@ -544,7 +538,6 @@ async function handleSentinelHub(req, res, url) {
   const y = Number(url.searchParams.get("y"));
   const indexName = String(url.searchParams.get("index") || "NDVI").toUpperCase();
   const styleName = String(url.searchParams.get("style") || "contrast").toLowerCase();
-  const smooth = url.searchParams.get("smooth") !== "0";
   const from = String(url.searchParams.get("from") || "").slice(0, 10);
   const to = String(url.searchParams.get("to") || "").slice(0, 10);
   const maxCloud = Math.min(100, Math.max(0, Number(url.searchParams.get("maxCloud")) || 35));
@@ -565,8 +558,8 @@ async function handleSentinelHub(req, res, url) {
       sendImage(res, transparentPng, "image/png", "AOI-SKIP");
       return true;
     }
-    const outputSize = smooth ? 512 : 256;
-    const cacheKey = satelliteTileCacheKey("sentinel", { z, x, y, indexName, styleName, smooth, outputSize, from, to, maxCloud });
+    const outputSize = 256;
+    const cacheKey = satelliteTileCacheKey("sentinel", { z, x, y, indexName, styleName, outputSize, from, to, maxCloud });
     const cached = getSatelliteTileFromCache(cacheKey);
     if (cached) {
       sendImage(res, cached.image, cached.contentType, "HIT");
@@ -586,7 +579,7 @@ async function handleSentinelHub(req, res, url) {
           dataFilter: {
             timeRange: { from: `${from}T00:00:00Z`, to: `${to}T23:59:59Z` },
             maxCloudCoverage: maxCloud,
-            mosaickingOrder: "leastCC"
+            mosaickingOrder: "mostRecent"
           }
         }]
       },
@@ -604,7 +597,8 @@ async function handleSentinelHub(req, res, url) {
         "Content-Type": "application/json",
         Accept: "image/png"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(24000)
     });
     if (!response.ok) {
       sendText(res, response.status, `Sentinel Hub ${response.status}: ${(await response.text()).slice(0, 400)}`);

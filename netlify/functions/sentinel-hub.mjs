@@ -32,6 +32,7 @@ const waterPalettes = {
 };
 
 const layerStyles = {
+  native: { alpha: 0.74 },
   standard: { alpha: 0.72 },
   contrast: { alpha: 0.88 },
   alerts: { alpha: 0.93 }
@@ -248,7 +249,8 @@ async function accessToken() {
 function evalscript(indexName, styleName = "contrast") {
   const definition = satelliteIndexes[indexName];
   const style = layerStyles[styleName] || layerStyles.contrast;
-  const stops = definition.palettes?.[styleName] || definition.palettes?.contrast || definition.palettes?.standard || vegetationPalettes.contrast;
+  const paletteKey = styleName === "native" ? "standard" : styleName;
+  const stops = definition.palettes?.[paletteKey] || definition.palettes?.standard || definition.palettes?.contrast || vegetationPalettes.standard;
   return `//VERSION=3
 function setup() {
   return {
@@ -291,20 +293,12 @@ function evaluatePixel(sample) {
 
 async function statusResponse() {
   const aoi = await aoiMeta();
-  let active = false;
-  let message = configured() ? "Credenciales Sentinel Hub activas" : "Faltan credenciales Sentinel Hub en Netlify";
-  if (configured()) {
-    try {
-      await accessToken();
-      active = true;
-    } catch (error) {
-      message = error.message || "No se pudo validar credenciales Sentinel Hub";
-    }
-  }
+  const active = configured();
+  const message = active ? "Credenciales Sentinel Hub configuradas" : "Faltan credenciales Sentinel Hub en Netlify";
   return json(200, {
     configured: active,
     provider: "Copernicus Data Space - Sentinel Hub Process API",
-    build: "sentinel-palettes-v2-netlify",
+    build: "sentinel-palettes-v3-netlify",
     supportedIndexes: Object.keys(satelliteIndexes),
     supportedStyles: Object.keys(layerStyles),
     aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
@@ -320,7 +314,6 @@ async function tileResponse(url) {
   const y = Number(url.searchParams.get("y"));
   const indexName = String(url.searchParams.get("index") || "NDVI").toUpperCase();
   const styleName = String(url.searchParams.get("style") || "contrast").toLowerCase();
-  const smooth = url.searchParams.get("smooth") !== "0";
   const from = String(url.searchParams.get("from") || "").slice(0, 10);
   const to = String(url.searchParams.get("to") || "").slice(0, 10);
   const maxCloud = Math.min(100, Math.max(0, Number(url.searchParams.get("maxCloud")) || 35));
@@ -328,8 +321,8 @@ async function tileResponse(url) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return text(400, "Rango de fecha invalido");
   if (!satelliteIndexes[indexName]) return text(400, `Indice Sentinel no soportado: ${indexName}`);
   if (await outsideAoi(x, y, z)) return image(transparentPng, "AOI-SKIP");
-  const outputSize = smooth ? 512 : 256;
-  const key = cacheKey({ z, x, y, indexName, styleName, smooth, outputSize, from, to, maxCloud });
+  const outputSize = 256;
+  const key = cacheKey({ z, x, y, indexName, styleName, outputSize, from, to, maxCloud });
   const cached = getCached(key);
   if (cached) return image(cached, "HIT");
 
@@ -341,7 +334,7 @@ async function tileResponse(url) {
         dataFilter: {
           timeRange: { from: `${from}T00:00:00Z`, to: `${to}T23:59:59Z` },
           maxCloudCoverage: maxCloud,
-          mosaickingOrder: "leastCC"
+          mosaickingOrder: "mostRecent"
         }
       }]
     },
@@ -351,7 +344,8 @@ async function tileResponse(url) {
   const response = await fetch(processUrl, {
     method: "POST",
     headers: { Authorization: `Bearer ${await accessToken()}`, "Content-Type": "application/json", Accept: "image/png" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(24000)
   });
   if (!response.ok) return text(response.status, `Sentinel Hub ${response.status}: ${(await response.text()).slice(0, 400)}`);
   const png = Buffer.from(await response.arrayBuffer());

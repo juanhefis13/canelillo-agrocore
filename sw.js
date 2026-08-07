@@ -1,4 +1,4 @@
-const CACHE = "canelillo-agrocore-v227-satellite-local-proxy-fallback";
+const CACHE = "canelillo-agrocore-v228-satellite-native-colors-fast";
 const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css", "./app.js", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
