@@ -226,6 +226,7 @@ const IRRIGATION_SATELLITE_PROXY_LOCAL = "/api/sentinel-hub";
 const IRRIGATION_SATELLITE_PROXY_SUPABASE = "/api/sentinel-hub";
 const IRRIGATION_PLANET_PROXY_LOCAL = "/api/planet";
 const IRRIGATION_PLANET_PROXY_SUPABASE = "/api/planet";
+const IRRIGATION_SATELLITE_PROXY_REMOTE = "https://canelillo-agrocore.netlify.app/api/sentinel-hub";
 const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
 const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
@@ -4735,7 +4736,8 @@ async function checkIrrigationSatelliteProcessing(force = false) {
   const endpoints = isLocalHost
     ? [
         { type: "planet", base: IRRIGATION_PLANET_PROXY_LOCAL },
-        { type: "sentinel", base: IRRIGATION_SATELLITE_PROXY_LOCAL }
+        { type: "sentinel", base: IRRIGATION_SATELLITE_PROXY_LOCAL, requireSupportedIndexes: true },
+        { type: "sentinel", base: IRRIGATION_SATELLITE_PROXY_REMOTE, requireSupportedIndexes: true }
       ]
     : [
         { type: "planet", base: IRRIGATION_PLANET_PROXY_SUPABASE },
@@ -4753,6 +4755,11 @@ async function checkIrrigationSatelliteProcessing(force = false) {
       }
       const payload = await response.json();
       if (payload.configured) {
+        const supportedIndexes = Array.isArray(payload.supportedIndexes) ? payload.supportedIndexes : [];
+        if (endpoint.requireSupportedIndexes && endpoint.type === "sentinel" && !supportedIndexes.length) {
+          lastMessage = `${endpoint.base} usa una version antigua del proxy Sentinel`;
+          continue;
+        }
         irrigationSatelliteProxyBase = endpoint.base;
         irrigationSatelliteProcessingStatus = {
           checked: true,
@@ -4761,7 +4768,7 @@ async function checkIrrigationSatelliteProcessing(force = false) {
           providerType: endpoint.type,
           message: payload.provider || (endpoint.type === "planet" ? "Planet activo" : "Sentinel Hub activo"),
           build: payload.build || "",
-          supportedIndexes: Array.isArray(payload.supportedIndexes) ? payload.supportedIndexes : []
+          supportedIndexes
         };
         if (endpoint.type === "planet") loadIrrigationPlanetMosaics();
         if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
