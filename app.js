@@ -8980,6 +8980,65 @@ function fertilizerAvailableProductAmount(caseta, productId) {
   return Number(row?.available) || 0;
 }
 
+function fertilizerCasetaOptions() {
+  return [...new Set((fertilizerRows || []).map((row) => row.caseta).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+}
+
+function fertilizerTanksForCaseta(caseta) {
+  return (fertilizerRows || [])
+    .filter((row) => !caseta || row.caseta === caseta)
+    .sort((a, b) =>
+      String(a.numeroEstanque).localeCompare(String(b.numeroEstanque), "es", { numeric: true })
+      || String(a.fip).localeCompare(String(b.fip), "es", { numeric: true })
+    );
+}
+
+function fertilizerPotreroOptions(tank = null) {
+  const tankPotreros = new Set((tank?.potreros || []).map(fertilizerReportKey));
+  return [...new Set((fertilizerFields || [])
+    .filter((field) => !tankPotreros.size || tankPotreros.has(fertilizerReportKey(field.potrero)))
+    .map((field) => field.potrero)
+    .filter(Boolean))]
+    .sort(comparePotrero);
+}
+
+function fertilizerFieldsForPotrero(potrero) {
+  return (fertilizerFields || [])
+    .filter((field) => !potrero || field.potrero === potrero)
+    .sort((a, b) => String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
+}
+
+function renderFertilizerTankOptions(caseta, selectedId = "") {
+  const tanks = fertilizerTanksForCaseta(caseta);
+  return `<option value="">Seleccionar estanque</option>${tanks.map((row) => `
+    <option value="${htmlAttr(row.id)}" ${row.id === selectedId ? "selected" : ""}>${escapeHtml(`Estanque ${row.numeroEstanque} / ${row.fip} - ${number(row.litrosActuales, 0)} L`)}</option>
+  `).join("")}`;
+}
+
+function renderFertilizerPotreroOptions(tank = null, selectedPotrero = "") {
+  const potreros = fertilizerPotreroOptions(tank);
+  return `<option value="">Seleccionar potrero</option>${potreros.map((potrero) => `
+    <option value="${htmlAttr(potrero)}" ${potrero === selectedPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>
+  `).join("")}`;
+}
+
+function renderFertilizerBlockChecklist(potrero, selectedIds = []) {
+  const selected = new Set(selectedIds);
+  const fields = fertilizerFieldsForPotrero(potrero);
+  if (!potrero) return `<div class="fertilizer-block-empty">Selecciona un potrero para ver sus bloques.</div>`;
+  if (!fields.length) return `<div class="fertilizer-block-empty">Este potrero no tiene bloques activos.</div>`;
+  return fields.map((field) => `
+    <label class="fertilizer-block-check">
+      <input type="checkbox" name="fieldIds" value="${htmlAttr(field.id)}" ${selected.has(field.id) ? "checked" : ""}>
+      <span>
+        <strong>Bloque ${escapeHtml(field.block || "-")}</strong>
+        <em>${escapeHtml(field.variety || field.crop || "Sin variedad")} · ${number(field.hectares)} ha</em>
+      </span>
+    </label>
+  `).join("");
+}
+
 function resetFertilizerLoadedState() {
   fertilizerRows = null;
   fertilizerStockRows = [];
@@ -16918,27 +16977,43 @@ async function openFertilizerApplicationDialog() {
     return;
   }
   if (!fertilizerRows) await loadFertilizerRows();
+  const casetas = fertilizerCasetaOptions();
+  const initialCaseta = casetas[0] || "";
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <form method="dialog" class="modal-body fertilizer-operation-form" id="fertilizerApplicationForm">
       <div class="modal-head">
         <div>
           <h2>Aplicar fertilizante</h2>
-          <p>Registra litros aplicados desde un estanque hacia un bloque.</p>
+          <p>Registra litros aplicados desde un estanque hacia uno o varios bloques.</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
         <label>Fecha y hora<input name="date" type="datetime-local" value="${currentDateTimeLocalValue()}" required></label>
+        <label>Caseta<select name="caseta" required>
+          <option value="">Seleccionar caseta</option>
+          ${casetas.map((caseta) => `<option value="${htmlAttr(caseta)}" ${caseta === initialCaseta ? "selected" : ""}>${escapeHtml(caseta)}</option>`).join("")}
+        </select></label>
         <label class="full">Estanque<select name="tankId" required>
-          <option value="">Seleccionar</option>
-          ${(fertilizerRows || []).map((row) => `<option value="${htmlAttr(row.id)}">${escapeHtml(fertilizerTankOptionLabel(row))} - ${number(row.litrosActuales, 0)} L</option>`).join("")}
+          ${renderFertilizerTankOptions(initialCaseta)}
         </select></label>
-        <label class="full">Potrero / Bloque<select name="fieldId" required>
-          <option value="">Seleccionar</option>
-          ${(fertilizerFields || []).map((field) => `<option value="${htmlAttr(field.id)}" data-potrero="${htmlAttr(fertilizerReportKey(field.potrero))}">${escapeHtml(potreroLabel(field.potrero))} / Bloque ${escapeHtml(field.block)} - ${escapeHtml(field.variety || field.crop || "")} - ${number(field.hectares)} ha</option>`).join("")}
+        <label>Potrero<select name="potrero" required>
+          ${renderFertilizerPotreroOptions()}
         </select></label>
-        <label>Litros aplicados<input name="liters" type="number" min="0.001" step="0.001" required></label>
+        <label>Litros aplicados por bloque<input name="liters" type="number" min="0.001" step="0.001" required></label>
+        <div class="fertilizer-block-picker full">
+          <div class="fertilizer-block-picker-head">
+            <strong>Bloques</strong>
+            <div>
+              <button class="mini-button" type="button" data-action="fertilizer-select-all-blocks">Seleccionar todos</button>
+              <button class="mini-button" type="button" data-action="fertilizer-clear-blocks">Limpiar</button>
+            </div>
+          </div>
+          <div class="fertilizer-block-checklist" id="fertilizerApplicationBlocks">
+            ${renderFertilizerBlockChecklist("")}
+          </div>
+        </div>
         <label class="full">Observacion<input name="note" placeholder="Turno, operador, sector o detalle"></label>
       </div>
       <div class="calc-preview" id="fertilizerApplicationPreview"></div>
@@ -16950,26 +17025,60 @@ async function openFertilizerApplicationDialog() {
   `;
   dialog.showModal();
   const form = document.getElementById("fertilizerApplicationForm");
-  const update = () => {
+  const blocksContainer = document.getElementById("fertilizerApplicationBlocks");
+  const selectedFieldIds = () => [...form.querySelectorAll('input[name="fieldIds"]:checked')].map((input) => input.value);
+  const renderBlocks = (selected = selectedFieldIds()) => {
+    blocksContainer.innerHTML = renderFertilizerBlockChecklist(form.potrero.value, selected);
+  };
+  const syncPotreroOptions = (selectedPotrero = form.potrero.value) => {
     const tank = fertilizerTankById(form.tankId.value);
-    const selectedPotreros = new Set((tank?.potreros || []).map(fertilizerReportKey));
-    let visibleCount = 0;
-    [...form.fieldId.options].forEach((option) => {
-      if (!option.value) return;
-      const visible = !selectedPotreros.size || selectedPotreros.has(option.dataset.potrero);
-      option.hidden = !visible;
-      if (visible) visibleCount += 1;
-    });
-    if (form.fieldId.selectedOptions[0]?.hidden) form.fieldId.value = "";
+    form.potrero.innerHTML = renderFertilizerPotreroOptions(tank, selectedPotrero);
+    if (selectedPotrero && form.potrero.value !== selectedPotrero) form.potrero.value = "";
+  };
+  const update = () => {
+    const currentTankId = form.tankId.value;
+    form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value, currentTankId);
+    if (currentTankId && !form.tankId.value) form.tankId.value = "";
+    const tank = fertilizerTankById(form.tankId.value);
+    const fields = selectedFieldIds().map((id) => fertilizerFields.find((field) => field.id === id)).filter(Boolean);
     const liters = Number(form.liters.value) || 0;
+    const hectares = fields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
     document.getElementById("fertilizerApplicationPreview").innerHTML = `
       <span>Disponible estanque: <strong>${number(tank?.litrosActuales || 0, 0)} L</strong></span>
-      <span>Aplicar: <strong>${number(liters, 0)} L</strong></span>
-      <span>Bloques disponibles: <strong>${number(visibleCount, 0)}</strong></span>
+      <span>Aplicar por bloque: <strong>${number(liters, 0)} L</strong></span>
+      <span>Bloques seleccionados: <strong>${number(fields.length, 0)}</strong></span>
+      <span>Total aplicacion: <strong>${number(liters * fields.length, 0)} L</strong></span>
+      <span>Hectareas: <strong>${number(hectares)} ha</strong></span>
     `;
   };
+  form.caseta.addEventListener("change", () => {
+    form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value);
+    syncPotreroOptions("");
+    renderBlocks([]);
+    update();
+  });
+  form.tankId.addEventListener("change", () => {
+    syncPotreroOptions("");
+    renderBlocks([]);
+    update();
+  });
+  form.potrero.addEventListener("change", () => {
+    renderBlocks([]);
+    update();
+  });
+  blocksContainer.addEventListener("change", update);
   form.addEventListener("input", update);
-  form.addEventListener("change", update);
+  form.addEventListener("change", (event) => {
+    if (event.target.name !== "caseta" && event.target.name !== "potrero") update();
+  });
+  form.querySelector('[data-action="fertilizer-select-all-blocks"]')?.addEventListener("click", () => {
+    form.querySelectorAll('input[name="fieldIds"]').forEach((input) => { input.checked = true; });
+    update();
+  });
+  form.querySelector('[data-action="fertilizer-clear-blocks"]')?.addEventListener("click", () => {
+    form.querySelectorAll('input[name="fieldIds"]').forEach((input) => { input.checked = false; });
+    update();
+  });
   update();
   document.getElementById("saveFertilizerApplication").addEventListener("click", saveFertilizerApplication);
 }
@@ -16979,15 +17088,19 @@ async function saveFertilizerApplication() {
   if (!form?.reportValidity()) return;
   const data = Object.fromEntries(new FormData(form));
   const tank = fertilizerTankById(data.tankId);
-  const field = fertilizerFields.find((item) => item.id === data.fieldId);
+  const selectedFieldIds = [...form.querySelectorAll('input[name="fieldIds"]:checked')].map((input) => input.value);
+  const fields = selectedFieldIds
+    .map((id) => fertilizerFields.find((item) => item.id === id))
+    .filter(Boolean);
   const liters = Number(data.liters) || 0;
-  if (!tank || !field || liters <= 0) {
-    showToast("Completa estanque, bloque y litros positivos");
+  if (!tank || !fields.length || liters <= 0) {
+    showToast("Completa caseta, estanque, bloques y litros positivos");
     return;
   }
-  if (liters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Guardar de todas formas?`)) return;
+  const totalLiters = liters * fields.length;
+  if (totalLiters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion total supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Se registraran ${number(totalLiters, 0)} L en ${fields.length} bloques. Guardar de todas formas?`)) return;
   const user = fertilizerCurrentUserPayload();
-  const payload = {
+  const payload = fields.map((field) => ({
     estanque_id: tank.id,
     campo_id: field.id,
     fecha: data.date || new Date().toISOString(),
@@ -16999,7 +17112,7 @@ async function saveFertilizerApplication() {
     observacion: String(data.note || "").trim() || null,
     creado_por: user.id,
     creado_por_nombre: user.name
-  };
+  }));
   try {
     await sbFetch("/rest/v1/fertilizante_aplicaciones", {
       method: "POST",
@@ -17010,7 +17123,7 @@ async function saveFertilizerApplication() {
     document.getElementById("purchaseDialog")?.close();
     await loadFertilizerRows();
     if (currentView === "fertilizers") renderFertilizers();
-    showToast("Aplicacion registrada");
+    showToast(`Aplicacion registrada en ${fields.length} bloque${fields.length === 1 ? "" : "s"}`);
   } catch (error) {
     showToast(`No se guardo la aplicacion: ${error.message}`);
   }

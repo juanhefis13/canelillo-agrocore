@@ -2334,6 +2334,97 @@ td span,
   background: #475569;
 }
 
+.fertilizer-block-picker {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(31, 111, 74, 0.16);
+  border-radius: 10px;
+  background: #f7fbf8;
+}
+
+.fertilizer-block-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fertilizer-block-picker-head strong {
+  color: #123c2f;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.fertilizer-block-picker-head > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fertilizer-block-picker .mini-button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(31, 111, 74, 0.18);
+  border-radius: 8px;
+  background: #eef7f1;
+  color: var(--brand);
+  font-size: 0.68rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fertilizer-block-picker .mini-button:hover {
+  background: #dff0e6;
+}
+
+.fertilizer-block-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 6px;
+  max-height: 210px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.fertilizer-block-check,
+.fertilizer-block-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 8px;
+  border: 1px solid rgba(31, 111, 74, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.fertilizer-block-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
+.fertilizer-block-check span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.fertilizer-block-check strong {
+  color: #123c2f;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.fertilizer-block-check em,
+.fertilizer-block-empty {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 750;
+}
+
 @media (max-width: 760px) {
   .fertilizer-toolbar {
     align-items: stretch;
@@ -2361,6 +2452,20 @@ td span,
   }
 
   .fertilizer-tank-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fertilizer-block-picker-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fertilizer-block-picker-head > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fertilizer-block-checklist {
     grid-template-columns: 1fr;
   }
 }
