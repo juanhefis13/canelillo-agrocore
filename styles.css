@@ -5826,6 +5826,238 @@ td span,
   font-weight: 900;
 }
 
+.harvest-sync-open-button {
+  white-space: nowrap;
+}
+
+.modal:has(.harvest-sync-dialog) {
+  width: min(1180px, calc(100vw - 20px));
+}
+
+.modal:has(.harvest-sync-dialog) .modal-body {
+  max-height: calc(100vh - 24px);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.harvest-sync-dialog {
+  min-height: min(760px, calc(100vh - 24px));
+}
+
+.harvest-sync-upload-card,
+.harvest-sync-summary,
+.harvest-sync-actions,
+.harvest-sync-change {
+  border: 1px solid #cfe3d8;
+  border-radius: 8px;
+  background: #f8fcf9;
+}
+
+.harvest-sync-upload-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.harvest-sync-upload-card > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.harvest-sync-upload-card strong {
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.harvest-sync-upload-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.harvest-sync-preview {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.harvest-sync-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(100px, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.harvest-sync-summary span {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.harvest-sync-summary strong {
+  color: var(--brand);
+  font-size: 1.15rem;
+}
+
+.harvest-sync-actions {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.harvest-sync-actions strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-sync-actions > span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.harvest-sync-saving {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #9bd8be;
+  border-radius: 8px;
+  background: #ecfbf3;
+  color: var(--brand);
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.harvest-sync-saving div {
+  display: grid;
+  gap: 2px;
+}
+
+.harvest-sync-saving small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.harvest-sync-change-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.harvest-sync-change {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+}
+
+.harvest-sync-change input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+
+.harvest-sync-change.new {
+  border-color: #9bd8be;
+  background: #f1fbf5;
+}
+
+.harvest-sync-change.modified {
+  border-color: #f0c985;
+  background: #fffaf0;
+}
+
+.harvest-sync-change-main,
+.harvest-sync-diffs {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.harvest-sync-change-main b {
+  width: max-content;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #e0f4ea;
+  color: var(--brand);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-sync-change.modified .harvest-sync-change-main b {
+  background: #fff1d3;
+  color: #9a5b00;
+}
+
+.harvest-sync-change-main strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-sync-change-main small,
+.harvest-sync-diffs {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.harvest-sync-diffs em {
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .harvest-sync-upload-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .harvest-sync-actions {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .harvest-sync-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .harvest-sync-change {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .harvest-sync-diffs {
+    grid-column: 1 / -1;
+  }
+
+  .harvest-sync-change-main strong,
+  .harvest-sync-diffs em {
+    white-space: normal;
+  }
+}
+
 .harvest-year-checks {
   display: flex;
   min-width: 0;

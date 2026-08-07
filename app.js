@@ -521,6 +521,10 @@ let harvestAnalysisPotreroFilter = "Todos";
 let harvestAnalysisSelectedSpecies = "Todas";
 let harvestAnalysisSelectedYears = new Set();
 let harvestAnalysisMetric = "kg";
+let harvestAnalysisDbRows = [];
+let harvestExportDbRows = [];
+let harvestExcelSyncState = null;
+let harvestExcelSyncSaving = false;
 let harvestUniqueCacheSource = null;
 let harvestUniqueCache = [];
 let harvestFilteredCacheSource = null;
@@ -10324,6 +10328,817 @@ function harvestOptionValues(rows, getValue, allLabel = "Todos") {
   return [allLabel, ...values];
 }
 
+const HARVEST_EXCEL_SYNC_CONFIG = {
+  harvest: {
+    table: "cosecha_analisis",
+    title: "Actualizar Cosecha Analisis",
+    sheetName: "BD COSECHA SUPA",
+    defaultSourceName: "COSECHA SUPA.xlsx",
+    currentRows: () => harvestAnalysisDbRows,
+    columns: [
+      "fecha", "anio", "semana", "especie", "variedad", "potrero_excel", "bloque_formula",
+      "bloque_excel", "potrero_normalizado", "bloque_normalizado", "contratista", "cuadrilla",
+      "jornales", "bins_nac", "bins_expo", "total_bins", "kg_nac", "kg_exp", "kg_totales",
+      "archivo_origen", "fila_excel", "campo_id"
+    ],
+    compareColumns: [
+      "fecha", "anio", "semana", "especie", "variedad", "potrero_excel", "bloque_formula",
+      "bloque_excel", "potrero_normalizado", "bloque_normalizado", "contratista", "cuadrilla",
+      "jornales", "bins_nac", "bins_expo", "total_bins", "kg_nac", "kg_exp", "kg_totales"
+    ]
+  },
+  export: {
+    table: "exportacion_analisis",
+    title: "Actualizar Exportacion",
+    sheetName: "BD EXPORTACION SUPA",
+    defaultSourceName: "cosecha supabase.xlsx",
+    currentRows: () => harvestExportDbRows,
+    columns: [
+      "fecha", "anio", "especie", "variedad", "potrero_excel", "potrero_normalizado",
+      "cant_bins", "enviados_kg", "recepcionados_kg", "diferencia_kg", "bins_por_confirmar",
+      "kg_en_proceso", "kg_por_procesar", "exportados_kg", "descarte_kg", "precalibre_kg",
+      "desecho_kg", "merma_kg", "x_kg", "porcentaje_expo", "calibres_kg", "calibres_cajas",
+      "calibres_kg_total", "calibres_cajas_total", "archivo_origen", "fila_excel", "campo_ids"
+    ],
+    compareColumns: [
+      "fecha", "anio", "especie", "variedad", "potrero_excel", "potrero_normalizado",
+      "cant_bins", "enviados_kg", "recepcionados_kg", "diferencia_kg", "bins_por_confirmar",
+      "kg_en_proceso", "kg_por_procesar", "exportados_kg", "descarte_kg", "precalibre_kg",
+      "desecho_kg", "merma_kg", "x_kg", "porcentaje_expo", "calibres_kg", "calibres_cajas",
+      "calibres_kg_total", "calibres_cajas_total"
+    ]
+  }
+};
+
+const HARVEST_EXCEL_FIELD_LABELS = {
+  fecha: "Fecha",
+  anio: "Ano",
+  semana: "Semana",
+  especie: "Especie",
+  variedad: "Variedad",
+  potrero_excel: "Potrero",
+  bloque_formula: "Bloque formula",
+  bloque_excel: "Bloque Excel",
+  potrero_normalizado: "Potrero normalizado",
+  bloque_normalizado: "Bloque normalizado",
+  contratista: "Contratista",
+  cuadrilla: "Cuadrilla",
+  jornales: "Jornales",
+  bins_nac: "Bins nac",
+  bins_expo: "Bins expo",
+  total_bins: "Total bins",
+  kg_nac: "Kg nac",
+  kg_exp: "Kg exp",
+  kg_totales: "Kg totales",
+  cant_bins: "Bins",
+  enviados_kg: "Enviados kg",
+  recepcionados_kg: "Recepcionados kg",
+  diferencia_kg: "Dif kg",
+  bins_por_confirmar: "Bins por confirmar",
+  kg_en_proceso: "Kg procesados",
+  kg_por_procesar: "Por procesar",
+  exportados_kg: "Real exportado",
+  descarte_kg: "Descarte",
+  precalibre_kg: "Precalibre",
+  desecho_kg: "Desecho",
+  merma_kg: "Merma",
+  x_kg: "X",
+  porcentaje_expo: "% exportacion",
+  calibres_kg: "Calibres kg",
+  calibres_cajas: "Cajas",
+  calibres_kg_total: "Total calibres kg",
+  calibres_cajas_total: "Total cajas"
+};
+
+const HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS = {
+  jornales: 2,
+  bins_nac: 3,
+  bins_expo: 3,
+  total_bins: 3,
+  kg_nac: 0,
+  kg_exp: 0,
+  kg_totales: 0,
+  cant_bins: 0,
+  enviados_kg: 0,
+  recepcionados_kg: 0,
+  diferencia_kg: 0,
+  bins_por_confirmar: 0,
+  kg_en_proceso: 0,
+  kg_por_procesar: 0,
+  exportados_kg: 0,
+  descarte_kg: 0,
+  precalibre_kg: 0,
+  desecho_kg: 0,
+  merma_kg: 0,
+  x_kg: 0,
+  porcentaje_expo: 6,
+  calibres_kg_total: 0,
+  calibres_cajas_total: 0
+};
+
+function harvestSyncCompareDigits(column) {
+  if (Object.prototype.hasOwnProperty.call(HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS, column)) {
+    return HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS[column];
+  }
+  if (column === "calibres_kg") return 0;
+  if (column === "calibres_cajas") return 0;
+  return 6;
+}
+
+function harvestSyncRoundNumber(value, column) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  const digits = harvestSyncCompareDigits(column);
+  const factor = 10 ** digits;
+  return Math.round((numeric + Number.EPSILON) * factor) / factor;
+}
+
+function harvestSyncCleanText(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isInteger(value)) return String(value);
+  return String(value).trim();
+}
+
+function harvestSyncNormalizeHeader(value) {
+  return harvestSyncCleanText(value)
+    .replace(/\u00a0/g, " ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function harvestSyncNormalizeLabel(value) {
+  return harvestSyncCleanText(value).replace(/\s+/g, " ").trim().toLocaleUpperCase("es");
+}
+
+function harvestSyncNormalizePotrero(value) {
+  return harvestSyncCleanText(value).replace(/\s+/g, " ").trim();
+}
+
+function harvestSyncHeaderIndex(row = []) {
+  const index = {};
+  row.forEach((cell, cellIndex) => {
+    const key = harvestSyncNormalizeHeader(cell);
+    if (key) index[key] = cellIndex;
+  });
+  return index;
+}
+
+function harvestSyncFindIndex(headerIndex, ...aliases) {
+  for (const alias of aliases) {
+    const key = harvestSyncNormalizeHeader(alias);
+    if (Object.prototype.hasOwnProperty.call(headerIndex, key)) return headerIndex[key];
+  }
+  throw new Error(`No se encontro la columna ${aliases.join(" / ")}`);
+}
+
+function harvestSyncValue(row, index) {
+  return index >= 0 && index < row.length ? row[index] : null;
+}
+
+function harvestSyncParseNumber(value, defaultValue = 0) {
+  if (value === null || value === undefined || value === "") return defaultValue;
+  if (typeof value === "number") return Number.isFinite(value) ? value : defaultValue;
+  let text = String(value).trim();
+  if (!text) return defaultValue;
+  const isPercent = text.includes("%");
+  text = text.replace("%", "").replace(/\s+/g, "");
+  if (text.includes(",") && text.includes(".")) {
+    text = text.lastIndexOf(",") > text.lastIndexOf(".")
+      ? text.replace(/\./g, "").replace(",", ".")
+      : text.replace(/,/g, "");
+  } else if (text.includes(",")) {
+    text = text.replace(",", ".");
+  }
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return defaultValue;
+  const numberValue = Number(match[0]);
+  if (!Number.isFinite(numberValue)) return defaultValue;
+  return isPercent ? numberValue / 100 : numberValue;
+}
+
+function harvestSyncParseInt(value) {
+  const numberValue = harvestSyncParseNumber(value, null);
+  return numberValue === null ? null : Math.trunc(numberValue);
+}
+
+function harvestSyncDateFromExcelSerial(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days) || days < 1) return null;
+  const date = new Date(Date.UTC(1899, 11, 30) + Math.round(days) * 86400000);
+  return date.toISOString().slice(0, 10);
+}
+
+function harvestSyncParseDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (typeof value === "number") return harvestSyncDateFromExcelSerial(value);
+  const text = harvestSyncCleanText(value);
+  if (!text) return null;
+  const clean = text.slice(0, 10);
+  const isoMatch = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}`;
+  const clMatch = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (clMatch) return `${clMatch[3]}-${clMatch[2].padStart(2, "0")}-${clMatch[1].padStart(2, "0")}`;
+  return null;
+}
+
+function harvestSyncCalculatedExportPercent(exportedKg, kgEnProceso) {
+  const denominator = harvestSyncParseNumber(kgEnProceso, 0);
+  if (!denominator) return null;
+  return harvestSyncParseNumber(exportedKg, 0) / denominator;
+}
+
+function harvestSyncCalibreLabel(header, isCaja = false) {
+  let text = harvestSyncCleanText(header).replace(/\s+/g, " ").trim().toLocaleUpperCase("es");
+  if (isCaja) {
+    text = text.replace(/^(CAJAS?|CAJ)\s+/, "");
+    text = text.replace(/^CAT\s+(\d+)/, "$1");
+    text = text.replace(/^C(\d+)$/, "$1");
+  }
+  return text;
+}
+
+function harvestSyncFindSheetRows(workbook, sheetName, requiredAliases) {
+  const worksheet = workbook.Sheets[sheetName]
+    || workbook.Sheets[workbook.SheetNames.find((name) => harvestSyncNormalizeHeader(name) === harvestSyncNormalizeHeader(sheetName))]
+    || null;
+  if (!worksheet) throw new Error(`El Excel no tiene la hoja ${sheetName}`);
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, defval: null });
+  const headerRowIndex = rows.findIndex((row) => {
+    const index = harvestSyncHeaderIndex(row);
+    return requiredAliases.every((alias) => Object.prototype.hasOwnProperty.call(index, harvestSyncNormalizeHeader(alias)));
+  });
+  if (headerRowIndex < 0) throw new Error(`No se encontro encabezado valido en ${sheetName}`);
+  return { rows, headerRowIndex, headerIndex: harvestSyncHeaderIndex(rows[headerRowIndex]) };
+}
+
+function harvestSyncReadCosechaWorkbook(workbook, sourceName, options = {}) {
+  let sheet;
+  try {
+    sheet = harvestSyncFindSheetRows(workbook, "BD COSECHA SUPA", ["Especie", "Variedad", "Potrero", "FECHA COSECHA"]);
+  } catch (error) {
+    if (options.optional) return [];
+    throw error;
+  }
+  const idx = {
+    especie: harvestSyncFindIndex(sheet.headerIndex, "Especie"),
+    variedad: harvestSyncFindIndex(sheet.headerIndex, "Variedad"),
+    potrero: harvestSyncFindIndex(sheet.headerIndex, "Potrero"),
+    bloque_formula: harvestSyncFindIndex(sheet.headerIndex, "Bloque Formula"),
+    bloque: harvestSyncFindIndex(sheet.headerIndex, "Bloque"),
+    fecha: harvestSyncFindIndex(sheet.headerIndex, "FECHA COSECHA"),
+    semana: harvestSyncFindIndex(sheet.headerIndex, "Semana"),
+    contratista: harvestSyncFindIndex(sheet.headerIndex, "CONTRATISTA"),
+    cuadrilla: harvestSyncFindIndex(sheet.headerIndex, "CUADRILLA"),
+    jornales: harvestSyncFindIndex(sheet.headerIndex, "JORNALES"),
+    bins_nac: harvestSyncFindIndex(sheet.headerIndex, "BINS NAC"),
+    bins_expo: harvestSyncFindIndex(sheet.headerIndex, "BINS EXPO"),
+    total_bins: harvestSyncFindIndex(sheet.headerIndex, "Total Bins"),
+    kg_nac: harvestSyncFindIndex(sheet.headerIndex, "KG NAC"),
+    kg_exp: harvestSyncFindIndex(sheet.headerIndex, "KG EXP"),
+    kg_totales: harvestSyncFindIndex(sheet.headerIndex, "KG TOTALES")
+  };
+  const records = [];
+  sheet.rows.slice(sheet.headerRowIndex + 1).forEach((row, offset) => {
+    const filaExcel = sheet.headerRowIndex + 2 + offset;
+    const fecha = harvestSyncParseDate(harvestSyncValue(row, idx.fecha));
+    const especie = harvestSyncNormalizeLabel(harvestSyncValue(row, idx.especie));
+    const variedad = harvestSyncNormalizeLabel(harvestSyncValue(row, idx.variedad));
+    const potrero = harvestSyncNormalizePotrero(harvestSyncValue(row, idx.potrero));
+    if (!fecha || !variedad || !potrero) return;
+    const bloqueFormula = harvestSyncNormalizePotrero(harvestSyncValue(row, idx.bloque_formula));
+    const bloqueExcel = harvestSyncNormalizePotrero(harvestSyncValue(row, idx.bloque));
+    const record = {
+      fecha,
+      anio: Number(fecha.slice(0, 4)),
+      semana: harvestSyncParseInt(harvestSyncValue(row, idx.semana)),
+      especie,
+      variedad,
+      potrero_excel: potrero,
+      bloque_formula: bloqueFormula || null,
+      bloque_excel: bloqueExcel || null,
+      potrero_normalizado: potrero,
+      bloque_normalizado: bloqueFormula || bloqueExcel || null,
+      contratista: harvestSyncNormalizePotrero(harvestSyncValue(row, idx.contratista)) || null,
+      cuadrilla: harvestSyncNormalizePotrero(harvestSyncValue(row, idx.cuadrilla)) || null,
+      jornales: harvestSyncParseNumber(harvestSyncValue(row, idx.jornales), 0),
+      bins_nac: harvestSyncParseNumber(harvestSyncValue(row, idx.bins_nac), 0),
+      bins_expo: harvestSyncParseNumber(harvestSyncValue(row, idx.bins_expo), 0),
+      total_bins: harvestSyncParseNumber(harvestSyncValue(row, idx.total_bins), 0),
+      kg_nac: harvestSyncParseNumber(harvestSyncValue(row, idx.kg_nac), 0),
+      kg_exp: harvestSyncParseNumber(harvestSyncValue(row, idx.kg_exp), 0),
+      kg_totales: harvestSyncParseNumber(harvestSyncValue(row, idx.kg_totales), 0),
+      archivo_origen: sourceName,
+      fila_excel: filaExcel
+    };
+    record.campo_id = harvestSyncFindCosechaFieldId(record);
+    records.push(record);
+  });
+  return records;
+}
+
+function harvestSyncSpeciesByVariety(cosechaRecords = []) {
+  const counts = new Map();
+  cosechaRecords.forEach((row) => {
+    if (!row.variedad || !row.especie) return;
+    const bySpecies = counts.get(row.variedad) || new Map();
+    bySpecies.set(row.especie, (bySpecies.get(row.especie) || 0) + 1);
+    counts.set(row.variedad, bySpecies);
+  });
+  (state.harvestAnalysisRecords || []).forEach((row) => {
+    const variety = harvestDisplayVariety(row.variety);
+    const species = harvestDisplaySpecies(row.species);
+    if (!variety || !species) return;
+    const bySpecies = counts.get(variety) || new Map();
+    bySpecies.set(species, (bySpecies.get(species) || 0) + 1);
+    counts.set(variety, bySpecies);
+  });
+  const mapping = new Map();
+  counts.forEach((speciesCounts, variety) => {
+    const [species] = [...speciesCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "es"))[0] || [];
+    if (species) mapping.set(variety, species);
+  });
+  mapping.set("BARNFIELD", mapping.get("BARNFIELD") || "NARANJA");
+  return mapping;
+}
+
+function harvestSyncReadExportWorkbook(workbook, sourceName, speciesByVariety) {
+  const sheet = harvestSyncFindSheetRows(workbook, "BD EXPORTACION SUPA", ["VARIEDAD", "Fecha", "Potrero"]);
+  const idx = {
+    variedad: harvestSyncFindIndex(sheet.headerIndex, "VARIEDAD"),
+    anio: harvestSyncFindIndex(sheet.headerIndex, "ANO", "AÑO", "AÃ‘O"),
+    fecha: harvestSyncFindIndex(sheet.headerIndex, "Fecha"),
+    potrero: harvestSyncFindIndex(sheet.headerIndex, "Potrero"),
+    cant_bins: harvestSyncFindIndex(sheet.headerIndex, "Cant Bins"),
+    enviados_kg: harvestSyncFindIndex(sheet.headerIndex, "Enviados Kg"),
+    recepcionados_kg: harvestSyncFindIndex(sheet.headerIndex, "Recepcionados"),
+    diferencia_kg: harvestSyncFindIndex(sheet.headerIndex, "dif"),
+    bins_por_confirmar: harvestSyncFindIndex(sheet.headerIndex, "Bins por confirmar"),
+    kg_en_proceso: harvestSyncFindIndex(sheet.headerIndex, "Kg. I Proceso"),
+    kg_por_procesar: harvestSyncFindIndex(sheet.headerIndex, "Kg. X Procesar", "Kg. X  Procesar"),
+    exportados_kg: harvestSyncFindIndex(sheet.headerIndex, "exportados"),
+    descarte_kg: harvestSyncFindIndex(sheet.headerIndex, "descarte"),
+    precalibre_kg: harvestSyncFindIndex(sheet.headerIndex, "precalibre"),
+    desecho_kg: harvestSyncFindIndex(sheet.headerIndex, "Desecho"),
+    merma_kg: harvestSyncFindIndex(sheet.headerIndex, "merma"),
+    x_kg: harvestSyncFindIndex(sheet.headerIndex, "x."),
+    porcentaje_expo: harvestSyncFindIndex(sheet.headerIndex, "% Expo"),
+    cajas: harvestSyncFindIndex(sheet.headerIndex, "cajas")
+  };
+  const headerRow = sheet.rows[sheet.headerRowIndex] || [];
+  const kgCols = Array.from({ length: Math.max(0, idx.cajas - idx.porcentaje_expo - 1) }, (_, index) => idx.porcentaje_expo + 1 + index);
+  const cajaCols = Array.from({ length: Math.max(0, headerRow.length - idx.cajas - 1) }, (_, index) => idx.cajas + 1 + index);
+  const records = [];
+  sheet.rows.slice(sheet.headerRowIndex + 1).forEach((row, offset) => {
+    const filaExcel = sheet.headerRowIndex + 2 + offset;
+    const variedad = harvestSyncNormalizeLabel(harvestSyncValue(row, idx.variedad));
+    const fecha = harvestSyncParseDate(harvestSyncValue(row, idx.fecha));
+    const potrero = harvestSyncNormalizePotrero(harvestSyncValue(row, idx.potrero));
+    if (!variedad || !fecha || !potrero) return;
+    const calibresKg = {};
+    const calibresCajas = {};
+    kgCols.forEach((col) => {
+      const amount = harvestSyncParseNumber(harvestSyncValue(row, col), 0);
+      const label = harvestSyncCalibreLabel(headerRow[col], false);
+      if (label && amount) calibresKg[label] = (calibresKg[label] || 0) + amount;
+    });
+    cajaCols.forEach((col) => {
+      const amount = harvestSyncParseNumber(harvestSyncValue(row, col), 0);
+      const label = harvestSyncCalibreLabel(headerRow[col], true);
+      if (label && amount) calibresCajas[label] = (calibresCajas[label] || 0) + amount;
+    });
+    const kgEnProceso = harvestSyncParseNumber(harvestSyncValue(row, idx.kg_en_proceso), 0);
+    const exportadosKg = harvestSyncParseNumber(harvestSyncValue(row, idx.exportados_kg), 0);
+    const record = {
+      fecha,
+      anio: harvestSyncParseInt(harvestSyncValue(row, idx.anio)) || Number(fecha.slice(0, 4)),
+      especie: speciesByVariety.get(variedad) || "SIN ESPECIE",
+      variedad,
+      potrero_excel: potrero,
+      potrero_normalizado: potrero,
+      cant_bins: harvestSyncParseNumber(harvestSyncValue(row, idx.cant_bins), 0),
+      enviados_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.enviados_kg), 0),
+      recepcionados_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.recepcionados_kg), 0),
+      diferencia_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.diferencia_kg), 0),
+      bins_por_confirmar: harvestSyncParseNumber(harvestSyncValue(row, idx.bins_por_confirmar), 0),
+      kg_en_proceso: kgEnProceso,
+      kg_por_procesar: harvestSyncParseNumber(harvestSyncValue(row, idx.kg_por_procesar), 0),
+      exportados_kg: exportadosKg,
+      descarte_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.descarte_kg), 0),
+      precalibre_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.precalibre_kg), 0),
+      desecho_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.desecho_kg), 0),
+      merma_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.merma_kg), 0),
+      x_kg: harvestSyncParseNumber(harvestSyncValue(row, idx.x_kg), 0),
+      porcentaje_expo: harvestSyncCalculatedExportPercent(exportadosKg, kgEnProceso),
+      calibres_kg: calibresKg,
+      calibres_cajas: calibresCajas,
+      calibres_kg_total: Object.values(calibresKg).reduce((sum, value) => sum + value, 0),
+      calibres_cajas_total: Object.values(calibresCajas).reduce((sum, value) => sum + value, 0),
+      archivo_origen: sourceName,
+      fila_excel: filaExcel
+    };
+    record.campo_ids = harvestSyncFindExportFieldIds(record);
+    records.push(record);
+  });
+  return records;
+}
+
+function harvestSyncFieldNorm(value) {
+  return harvestSyncNormalizeHeader(value).replace(/^p(?=\d)/, "");
+}
+
+function harvestSyncFindCosechaFieldId(record) {
+  const potrero = harvestSyncFieldNorm(record.potrero_normalizado || record.potrero_excel);
+  const block = harvestSyncFieldNorm(record.bloque_normalizado || record.bloque_excel);
+  if (!potrero || !block) return null;
+  const exact = (state.blocks || []).filter((field) => (
+    harvestSyncFieldNorm(field.potrero) === potrero
+    && harvestSyncFieldNorm(field.block) === block
+  ));
+  if (exact.length === 1) return exact[0].id || null;
+  if (potrero === "27") {
+    const special = (state.blocks || []).filter((field) => (
+      harvestSyncFieldNorm(field.potrero).startsWith("27")
+      && harvestSyncFieldNorm(field.block) === block
+      && harvestSyncNormalizeHeader(field.variety) === harvestSyncNormalizeHeader(record.variedad)
+    ));
+    if (special.length === 1) return special[0].id || null;
+  }
+  return null;
+}
+
+function harvestSyncFindExportFieldIds(record) {
+  const potrero = harvestSyncFieldNorm(record.potrero_normalizado || record.potrero_excel);
+  const variety = harvestSyncNormalizeHeader(record.variedad);
+  const ids = (state.blocks || [])
+    .filter((field) => {
+      const fieldPotrero = harvestSyncFieldNorm(field.potrero);
+      const fieldVariety = harvestSyncNormalizeHeader(field.variety);
+      if (fieldVariety !== variety) return false;
+      return fieldPotrero === potrero
+        || (potrero === "27" && fieldPotrero.startsWith("27"))
+        || (potrero === "26" && ["d", "e", "f", "g", "h", "i", "j"].includes(fieldPotrero));
+    })
+    .map((field) => field.id)
+    .filter(Boolean);
+  return ids.length ? ids : null;
+}
+
+function harvestSyncRecordKey(source, rowNumber) {
+  return `${String(source || "").trim()}|${Number(rowNumber) || 0}`;
+}
+
+function harvestSyncSourceSignature(value) {
+  return harvestSyncNormalizeHeader(value)
+    .replace(/\.(xlsx|xls)$/i, "")
+    .replace(/\s*\(\d+\)$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function harvestSyncMostCommonSource(rows = [], fallback = "") {
+  const counts = new Map();
+  rows.forEach((row) => {
+    const source = harvestSyncCleanText(row.archivo_origen);
+    if (!source) return;
+    counts.set(source, (counts.get(source) || 0) + 1);
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "es"))[0]?.[0] || fallback;
+}
+
+function harvestSyncCanonicalSourceName(module, fileName) {
+  const config = HARVEST_EXCEL_SYNC_CONFIG[module];
+  const rows = config?.currentRows?.() || [];
+  const fallback = config?.defaultSourceName || fileName || "";
+  const uploadedSignature = harvestSyncSourceSignature(fileName);
+  const sources = [...new Set(rows.map((row) => harvestSyncCleanText(row.archivo_origen)).filter(Boolean))];
+  const exactSignatureSource = sources.find((source) => harvestSyncSourceSignature(source) === uploadedSignature);
+  if (exactSignatureSource) return exactSignatureSource;
+  if (uploadedSignature.includes("cosecha")) return harvestSyncMostCommonSource(rows, fallback);
+  return harvestSyncMostCommonSource(rows, fallback) || fallback;
+}
+
+function harvestSyncFindExisting(record, rows) {
+  const exact = new Map();
+  rows.forEach((row) => {
+    const fila = Number(row.fila_excel) || 0;
+    if (!fila) return;
+    exact.set(harvestSyncRecordKey(row.archivo_origen, fila), row);
+  });
+  return exact.get(harvestSyncRecordKey(record.archivo_origen, record.fila_excel)) || null;
+}
+
+function harvestSyncComparableValue(value, column = "") {
+  if (value === null || value === undefined || value === "") return null;
+  if (Array.isArray(value)) return value.map(String).sort();
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .map(([key, entryValue]) => [key, harvestSyncRoundNumber(harvestSyncParseNumber(entryValue, 0), column)])
+      .filter(([, entryValue]) => entryValue !== 0)
+      .sort(([a], [b]) => a.localeCompare(b, "es", { numeric: true })));
+  }
+  if (typeof value === "number") return harvestSyncRoundNumber(value, column);
+  if (HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS[column] !== undefined) return harvestSyncRoundNumber(harvestSyncParseNumber(value, 0), column);
+  return String(value).trim();
+}
+
+function harvestSyncValuesEqual(a, b, column = "") {
+  const left = harvestSyncComparableValue(a, column);
+  const right = harvestSyncComparableValue(b, column);
+  if (typeof left === "number" || typeof right === "number") {
+    const leftNumber = Number(left || 0);
+    const rightNumber = Number(right || 0);
+    return Math.abs(leftNumber - rightNumber) < 0.000001;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function harvestSyncDisplayValue(value, column = "") {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "object") {
+    const entries = Object.entries(value || {}).filter(([, entryValue]) => harvestSyncParseNumber(entryValue, 0) !== 0);
+    if (!entries.length) return "{}";
+    const digits = harvestSyncCompareDigits(column);
+    return entries.slice(0, 4).map(([key, entryValue]) => `${key}: ${number(harvestSyncRoundNumber(entryValue, column), digits)}`).join(", ");
+  }
+  if (typeof value === "number") return number(harvestSyncRoundNumber(value, column), harvestSyncCompareDigits(column));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return printDate(value);
+  if (HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS[column] !== undefined) {
+    return number(harvestSyncRoundNumber(harvestSyncParseNumber(value, 0), column), harvestSyncCompareDigits(column));
+  }
+  return String(value);
+}
+
+function harvestSyncBuildChanges(module, records) {
+  const config = HARVEST_EXCEL_SYNC_CONFIG[module];
+  const currentRows = config.currentRows() || [];
+  const changes = [];
+  let identical = 0;
+  records.forEach((record) => {
+    const existing = harvestSyncFindExisting(record, currentRows);
+    if (existing?.archivo_origen) record.archivo_origen = existing.archivo_origen;
+    const payload = Object.fromEntries(config.columns.map((column) => [column, record[column] ?? null]));
+    if (!existing) {
+      changes.push({
+        id: `${module}:new:${record.archivo_origen}:${record.fila_excel}`,
+        module,
+        type: "new",
+        table: config.table,
+        payload,
+        existing: null,
+        diffs: []
+      });
+      return;
+    }
+    const diffs = config.compareColumns
+      .filter((column) => !harvestSyncValuesEqual(existing[column], payload[column], column))
+      .map((column) => ({
+        column,
+        before: existing[column],
+        after: payload[column]
+      }));
+    if (!diffs.length) {
+      identical += 1;
+      return;
+    }
+    changes.push({
+      id: `${module}:mod:${existing.id || record.archivo_origen}:${record.fila_excel}`,
+      module,
+      type: "modified",
+      table: config.table,
+      rowId: existing.id,
+      payload,
+      existing,
+      diffs
+    });
+  });
+  return { changes, identical };
+}
+
+function harvestSyncRecordTitle(change) {
+  const row = change.payload || {};
+  if (change.module === "export") {
+    return `${row.anio || ""} | ${row.variedad || "Sin variedad"} | ${potreroLabel(row.potrero_excel || row.potrero_normalizado || "")}`;
+  }
+  return `${printDate(row.fecha)} | ${row.variedad || "Sin variedad"} | ${potreroLabel(row.potrero_excel || row.potrero_normalizado || "")} ${row.bloque_excel || row.bloque_normalizado || ""}`.trim();
+}
+
+function renderHarvestExcelSyncButton(module) {
+  return `<button class="secondary-button harvest-sync-open-button" type="button" data-action="open-harvest-excel-sync" data-sync-module="${htmlAttr(module)}">Actualizar Excel</button>`;
+}
+
+function renderHarvestExcelSyncEmpty(module, title, detail) {
+  return `
+    <section class="panel">
+      <div class="empty-state">
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(detail)}</p>
+        <button class="primary" type="button" data-action="open-harvest-excel-sync" data-sync-module="${htmlAttr(module)}">Actualizar desde Excel</button>
+      </div>
+    </section>`;
+}
+
+function openHarvestExcelSyncDialog(module = "harvest") {
+  const config = HARVEST_EXCEL_SYNC_CONFIG[module];
+  if (!config) return;
+  const dialog = document.getElementById("purchaseDialog");
+  if (!dialog) return;
+  harvestExcelSyncState = {
+    module,
+    fileName: "",
+    sourceName: "",
+    parsed: 0,
+    changes: [],
+    identical: 0,
+    accepted: new Set(),
+    error: ""
+  };
+  dialog.innerHTML = `
+    <div class="modal-body harvest-sync-dialog">
+      <div class="modal-head">
+        <div>
+          <h2>${escapeHtml(config.title)}</h2>
+          <p>Sube el Excel, revisa nuevos y modificaciones, y guarda solo lo aprobado.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cerrar">x</button>
+      </div>
+      <div class="harvest-sync-upload-card">
+        <input id="harvestExcelSyncFile" type="file" accept=".xlsx,.xls" hidden>
+        <div>
+          <strong>Archivo Excel</strong>
+          <span>Hojas requeridas: ${escapeHtml(config.sheetName)}${module === "export" ? " y BD COSECHA SUPA para reconocer especie" : ""}</span>
+        </div>
+        <button class="secondary-button" type="button" data-action="choose-harvest-excel-sync">Seleccionar archivo</button>
+      </div>
+      <div id="harvestExcelSyncPreview" class="harvest-sync-preview">
+        <div class="empty">Selecciona un archivo para comparar contra Supabase.</div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary" type="button" data-action="save-harvest-excel-sync" disabled>Guardar seleccionados</button>
+      </div>
+    </div>`;
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+}
+
+function renderHarvestExcelSyncPreview() {
+  const container = document.getElementById("harvestExcelSyncPreview");
+  if (!container || !harvestExcelSyncState) return;
+  const stateSync = harvestExcelSyncState;
+  const changes = stateSync.changes || [];
+  const selectedCount = changes.filter((change) => stateSync.accepted.has(change.id)).length;
+  const newCount = changes.filter((change) => change.type === "new").length;
+  const modifiedCount = changes.filter((change) => change.type === "modified").length;
+  const saveButton = document.querySelector("[data-action='save-harvest-excel-sync']");
+  if (saveButton) {
+    saveButton.disabled = !selectedCount || harvestExcelSyncSaving;
+    saveButton.textContent = harvestExcelSyncSaving ? "Guardando..." : "Guardar seleccionados";
+  }
+  if (stateSync.error) {
+    container.innerHTML = `<div class="empty-state compact-error"><strong>No se pudo leer el Excel</strong><p>${escapeHtml(stateSync.error)}</p></div>`;
+    return;
+  }
+  if (!stateSync.fileName) {
+    container.innerHTML = `<div class="empty">Selecciona un archivo para comparar contra Supabase.</div>`;
+    return;
+  }
+  container.innerHTML = `
+    ${harvestExcelSyncSaving ? `
+      <div class="harvest-sync-saving" role="status" aria-live="polite">
+        <span class="weather-import-spinner" aria-hidden="true"></span>
+        <div><strong>Guardando seleccionados</strong><small>Actualizando Supabase y recargando cosecha.</small></div>
+      </div>` : ""}
+    <div class="harvest-sync-summary">
+      <span><strong>${number(stateSync.parsed, 0)}</strong> filas leidas</span>
+      <span><strong>${number(newCount, 0)}</strong> nuevas</span>
+      <span><strong>${number(modifiedCount, 0)}</strong> con cambios</span>
+      <span><strong>${number(stateSync.identical, 0)}</strong> iguales</span>
+      <span><strong>${number(selectedCount, 0)}</strong> seleccionadas</span>
+    </div>
+    <div class="harvest-sync-actions">
+      <strong title="${htmlAttr(`Archivo: ${stateSync.fileName} | Origen BD: ${stateSync.sourceName || stateSync.fileName}`)}">${escapeHtml(stateSync.fileName)}</strong>
+      <span>Origen BD: ${escapeHtml(stateSync.sourceName || stateSync.fileName)}</span>
+      <button class="secondary-button" type="button" data-action="accept-all-harvest-excel-sync" ${harvestExcelSyncSaving ? "disabled" : ""}>Si a todo</button>
+      <button class="secondary-button" type="button" data-action="clear-harvest-excel-sync-selection" ${harvestExcelSyncSaving ? "disabled" : ""}>Limpiar seleccion</button>
+    </div>
+    <div class="harvest-sync-change-list">
+      ${changes.map((change) => `
+        <label class="harvest-sync-change ${change.type}">
+          <input type="checkbox" data-harvest-sync-accept="${htmlAttr(change.id)}" ${stateSync.accepted.has(change.id) ? "checked" : ""} ${harvestExcelSyncSaving ? "disabled" : ""}>
+          <span class="harvest-sync-change-main">
+            <b>${change.type === "new" ? "Nuevo" : "Cambio"}</b>
+            <strong>${escapeHtml(harvestSyncRecordTitle(change))}</strong>
+            <small>Fila Excel ${escapeHtml(change.payload.fila_excel)} · ${escapeHtml(change.payload.archivo_origen)}</small>
+          </span>
+          <span class="harvest-sync-diffs">
+            ${change.type === "new"
+              ? "Se insertara como nuevo registro."
+              : change.diffs.slice(0, 5).map((diff) => `<em>${escapeHtml(HARVEST_EXCEL_FIELD_LABELS[diff.column] || diff.column)}: ${escapeHtml(harvestSyncDisplayValue(diff.before, diff.column))} -> ${escapeHtml(harvestSyncDisplayValue(diff.after, diff.column))}</em>`).join("")}
+            ${change.diffs.length > 5 ? `<em>+${change.diffs.length - 5} campos mas</em>` : ""}
+          </span>
+        </label>`).join("") || `<div class="empty">No hay registros nuevos ni modificaciones.</div>`}
+    </div>`;
+}
+
+async function handleHarvestExcelSyncFile(file) {
+  if (!harvestExcelSyncState || !file) return;
+  if (!window.XLSX) {
+    harvestExcelSyncState.error = "No se cargo el lector de Excel. Recarga la pagina.";
+    renderHarvestExcelSyncPreview();
+    return;
+  }
+  const sourceName = harvestSyncCanonicalSourceName(harvestExcelSyncState.module, file.name);
+  harvestExcelSyncState.fileName = file.name;
+  harvestExcelSyncState.sourceName = sourceName;
+  harvestExcelSyncState.error = "";
+  harvestExcelSyncState.changes = [];
+  harvestExcelSyncState.accepted = new Set();
+  renderHarvestExcelSyncPreview();
+  const container = document.getElementById("harvestExcelSyncPreview");
+  if (container) {
+    container.innerHTML = `
+      <div class="weather-import-loading" role="status">
+        <span class="weather-import-spinner" aria-hidden="true"></span>
+        <strong>Comparando Excel con Supabase</strong>
+        <small>Esto no guarda nada todavia.</small>
+      </div>`;
+  }
+  try {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    const cosechaRows = harvestSyncReadCosechaWorkbook(workbook, sourceName, { optional: harvestExcelSyncState.module === "export" });
+    const speciesByVariety = harvestSyncSpeciesByVariety(cosechaRows);
+    const records = harvestExcelSyncState.module === "export"
+      ? harvestSyncReadExportWorkbook(workbook, sourceName, speciesByVariety)
+      : cosechaRows;
+    const result = harvestSyncBuildChanges(harvestExcelSyncState.module, records);
+    harvestExcelSyncState.parsed = records.length;
+    harvestExcelSyncState.changes = result.changes;
+    harvestExcelSyncState.identical = result.identical;
+    harvestExcelSyncState.accepted = new Set(result.changes.filter((change) => change.type === "new").map((change) => change.id));
+    renderHarvestExcelSyncPreview();
+  } catch (error) {
+    harvestExcelSyncState.error = error.message || "Error leyendo archivo";
+    renderHarvestExcelSyncPreview();
+  }
+}
+
+async function saveHarvestExcelSyncAccepted() {
+  if (!supabaseSession?.access_token) {
+    showToast("Inicia sesion para actualizar cosecha");
+    return;
+  }
+  if (!harvestExcelSyncState || harvestExcelSyncSaving) return;
+  const accepted = (harvestExcelSyncState.changes || []).filter((change) => harvestExcelSyncState.accepted.has(change.id));
+  if (!accepted.length) {
+    showToast("No hay cambios seleccionados");
+    return;
+  }
+  harvestExcelSyncSaving = true;
+  renderHarvestExcelSyncPreview();
+  try {
+    const byTable = new Map();
+    accepted.forEach((change) => {
+      const rows = byTable.get(change.table) || { inserts: [], updates: [] };
+      const payload = { ...change.payload };
+      if (change.type === "modified" && change.rowId) rows.updates.push({ id: change.rowId, payload });
+      else rows.inserts.push(payload);
+      byTable.set(change.table, rows);
+    });
+    for (const [table, batches] of byTable.entries()) {
+      for (let start = 0; start < batches.inserts.length; start += 200) {
+        const chunk = batches.inserts.slice(start, start + 200);
+        if (chunk.length) {
+          await sbFetch(`/rest/v1/${table}?on_conflict=archivo_origen,fila_excel`, {
+            method: "POST",
+            prefer: "resolution=merge-duplicates,return=minimal",
+            body: JSON.stringify(chunk)
+          });
+        }
+      }
+      for (const update of batches.updates) {
+        await sbFetch(`/rest/v1/${table}?id=eq.${encodeURIComponent(update.id)}`, {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: JSON.stringify(update.payload)
+        });
+      }
+    }
+    invalidateCloudModules(["harvest"]);
+    await loadCloudData({ modules: ["harvest"], force: true, render: false });
+    render();
+    document.getElementById("purchaseDialog")?.close();
+    showToast(`Actualizacion aplicada: ${accepted.length} registros`);
+  } catch (error) {
+    showToast(`No se guardo la actualizacion: ${error.message}`);
+  } finally {
+    harvestExcelSyncSaving = false;
+    renderHarvestExcelSyncPreview();
+  }
+}
+
 function harvestSelectOptions(values, selected, formatter = (value) => value) {
   return values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(formatter(value))}</option>`).join("");
 }
@@ -11166,13 +11981,11 @@ function renderHarvestExportCalibreTable(rows, options = {}) {
 function renderHarvestExport() {
   const allRows = state.harvestExportRecords || [];
   if (!allRows.length) {
-    views.harvestExport.innerHTML = `
-      <section class="panel">
-        <div class="empty-state">
-          <strong>Sin datos de exportacion</strong>
-          <p>Ejecuta supabase_cosecha_analisis.sql y luego carga los datos de COSECHA SUPA.xlsx.</p>
-        </div>
-      </section>`;
+    views.harvestExport.innerHTML = renderHarvestExcelSyncEmpty(
+      "export",
+      "Sin datos de exportacion",
+      "Carga el Excel de cosecha/exportacion para crear o actualizar los registros."
+    );
     return;
   }
   ensureHarvestExportYearSelection(allRows);
@@ -11207,6 +12020,7 @@ function renderHarvestExport() {
     <section class="panel harvest-analytics-panel">
       <div class="panel-header">
         <div><h2>Exportacion</h2><p>Resumen de exportacion, proceso y calibres por ano.</p></div>
+        <div class="top-actions">${renderHarvestExcelSyncButton("export")}</div>
       </div>
       <div class="harvest-export-filter-panel">
         <div class="harvest-export-filter-title">
@@ -11630,13 +12444,11 @@ function renderHarvestStartDatesPanel(rows, allRows, years) {
 function renderHarvestAnalysis() {
   const allRows = state.harvestAnalysisRecords || [];
   if (!allRows.length) {
-    views.harvestAnalysis.innerHTML = `
-      <section class="panel">
-        <div class="empty-state">
-          <strong>Sin datos de cosecha analisis</strong>
-          <p>Ejecuta supabase_cosecha_analisis.sql y luego carga los datos de COSECHA SUPA.xlsx.</p>
-        </div>
-      </section>`;
+    views.harvestAnalysis.innerHTML = renderHarvestExcelSyncEmpty(
+      "harvest",
+      "Sin datos de cosecha analisis",
+      "Carga el Excel de cosecha/exportacion para crear o actualizar los registros."
+    );
     return;
   }
   ensureHarvestAnalysisYearSelection(allRows);
@@ -11653,6 +12465,7 @@ function renderHarvestAnalysis() {
     <section class="panel harvest-analytics-panel">
       <div class="panel-header">
         <div><h2>Cosecha Analisis</h2><p>Comparativo historico por especie, variedad, potrero y bloque.</p></div>
+        <div class="top-actions">${renderHarvestExcelSyncButton("harvest")}</div>
       </div>
       <div class="program-filters harvest-analytics-filters harvest-analysis-filters">
         <label>Especie<select data-harvest-analysis-filter="species">${harvestSelectOptions(species, harvestAnalysisSpeciesFilter)}</select></label>
@@ -12600,11 +13413,11 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar jornales de cosecha", error);
       return [];
     }) : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("cosecha_analisis", "select=id,campo_id,fecha,anio,semana,especie,variedad,potrero_excel,bloque_formula,bloque_excel,potrero_normalizado,bloque_normalizado,contratista,cuadrilla,jornales,bins_nac,bins_expo,total_bins,kg_nac,kg_exp,kg_totales&order=fecha.asc,id.asc").catch((error) => {
+    loadHarvest ? sbSelectAll("cosecha_analisis", "select=id,campo_id,fecha,anio,semana,especie,variedad,potrero_excel,bloque_formula,bloque_excel,potrero_normalizado,bloque_normalizado,contratista,cuadrilla,jornales,bins_nac,bins_expo,total_bins,kg_nac,kg_exp,kg_totales,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
       console.warn("No se pudo cargar cosecha_analisis", error);
       return [];
     }) : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("exportacion_analisis", "select=id,fecha,anio,especie,variedad,potrero_excel,potrero_normalizado,cant_bins,enviados_kg,recepcionados_kg,diferencia_kg,bins_por_confirmar,kg_en_proceso,kg_por_procesar,exportados_kg,descarte_kg,precalibre_kg,desecho_kg,merma_kg,x_kg,porcentaje_expo,calibres_kg,calibres_cajas,calibres_kg_total,calibres_cajas_total&order=fecha.asc,id.asc").catch((error) => {
+    loadHarvest ? sbSelectAll("exportacion_analisis", "select=id,campo_ids,fecha,anio,especie,variedad,potrero_excel,potrero_normalizado,cant_bins,enviados_kg,recepcionados_kg,diferencia_kg,bins_por_confirmar,kg_en_proceso,kg_por_procesar,exportados_kg,descarte_kg,precalibre_kg,desecho_kg,merma_kg,x_kg,porcentaje_expo,calibres_kg,calibres_cajas,calibres_kg_total,calibres_cajas_total,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
       console.warn("No se pudo cargar exportacion_analisis", error);
       return [];
     }) : Promise.resolve(null)
@@ -12789,9 +13602,12 @@ async function loadCloudData(options = {}) {
     })).filter((item) => item.active);
   }
   if (Array.isArray(harvestAnalysisRows)) {
+    harvestAnalysisDbRows = harvestAnalysisRows;
     state.harvestAnalysisRecords = harvestAnalysisRows.map((item) => ({
       id: item.id,
       fieldId: item.campo_id || "",
+      sourceFile: item.archivo_origen || "",
+      excelRow: Number(item.fila_excel) || null,
       date: item.fecha || "",
       year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
       week: Number(item.semana) || null,
@@ -12814,8 +13630,11 @@ async function loadCloudData(options = {}) {
     }));
   }
   if (Array.isArray(harvestExportRows)) {
+    harvestExportDbRows = harvestExportRows;
     state.harvestExportRecords = harvestExportRows.map((item) => ({
       id: item.id,
+      sourceFile: item.archivo_origen || "",
+      excelRow: Number(item.fila_excel) || null,
       date: item.fecha || "",
       year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
       species: harvestDisplaySpecies(item.especie),
@@ -17685,6 +18504,25 @@ document.addEventListener("click", async (event) => {
     harvestAnalysisMetric = "kg";
     renderHarvestAnalysis();
   }
+  if (action === "open-harvest-excel-sync") {
+    openHarvestExcelSyncDialog(actionTarget.dataset.syncModule || "harvest");
+  }
+  if (action === "choose-harvest-excel-sync") {
+    document.getElementById("harvestExcelSyncFile")?.click();
+  }
+  if (action === "accept-all-harvest-excel-sync") {
+    if (!harvestExcelSyncState) return;
+    harvestExcelSyncState.accepted = new Set((harvestExcelSyncState.changes || []).map((change) => change.id));
+    renderHarvestExcelSyncPreview();
+  }
+  if (action === "clear-harvest-excel-sync-selection") {
+    if (!harvestExcelSyncState) return;
+    harvestExcelSyncState.accepted = new Set();
+    renderHarvestExcelSyncPreview();
+  }
+  if (action === "save-harvest-excel-sync") {
+    await saveHarvestExcelSyncAccepted();
+  }
   if (action === "select-harvest-analysis-species") {
     harvestAnalysisSelectedSpecies = actionTarget.dataset.value || "Todas";
     renderHarvestAnalysis();
@@ -17957,6 +18795,19 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target?.id === "harvestExcelSyncFile") {
+    await handleHarvestExcelSyncFile(event.target.files?.[0] || null);
+    event.target.value = "";
+    return;
+  }
+  if (event.target?.matches?.("[data-harvest-sync-accept]")) {
+    if (!harvestExcelSyncState) return;
+    const changeId = event.target.dataset.harvestSyncAccept;
+    if (event.target.checked) harvestExcelSyncState.accepted.add(changeId);
+    else harvestExcelSyncState.accepted.delete(changeId);
+    renderHarvestExcelSyncPreview();
+    return;
+  }
   if (event.target?.id === "programAutoPotrero") {
     updateIrrigationProgramDialogBlocks();
     return;
