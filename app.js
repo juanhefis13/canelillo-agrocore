@@ -84,6 +84,7 @@ const seedState = {
     { id: "b-p28-2", potrero: "P28", block: "2", crop: "NARANJA", variety: "FUKUMOTO", hectares: 5.05 },
     { id: "b-av-1", potrero: "PALTO 1", block: "A", crop: "PALTO", variety: "HASS", hectares: 4.8 }
   ],
+  harvestFields: [],
   operators: [
     { id: "op-1", name: "Juan Contreras", phone: "", active: true },
     { id: "op-2", name: "Luis Ramirez", phone: "", active: true },
@@ -964,6 +965,7 @@ function normalizeState(rawState) {
     program.waterHa ??= 0;
   });
   next.blocks ||= [];
+  next.harvestFields ||= next.blocks || [];
   next.operators ||= [];
   next.equipment ||= [];
   next.vehicles ||= [];
@@ -10477,6 +10479,10 @@ function harvestSyncNormalizePotrero(value) {
   return harvestSyncCleanText(value).replace(/\s+/g, " ").trim();
 }
 
+function harvestFieldCatalog() {
+  return state.harvestFields?.length ? state.harvestFields : state.blocks || [];
+}
+
 function harvestSyncHeaderIndex(row = []) {
   const index = {};
   row.forEach((cell, cellIndex) => {
@@ -10620,7 +10626,7 @@ function harvestSyncReadCosechaWorkbook(workbook, sourceName, options = {}) {
       bloque_formula: bloqueFormula || null,
       bloque_excel: bloqueExcel || null,
       potrero_normalizado: potrero,
-      bloque_normalizado: bloqueFormula || bloqueExcel || null,
+      bloque_normalizado: bloqueExcel || bloqueFormula || null,
       contratista: harvestSyncNormalizePotrero(harvestSyncValue(row, idx.contratista)) || null,
       cuadrilla: harvestSyncNormalizePotrero(harvestSyncValue(row, idx.cuadrilla)) || null,
       jornales: harvestSyncParseNumber(harvestSyncValue(row, idx.jornales), 0),
@@ -10746,41 +10752,16 @@ function harvestSyncReadExportWorkbook(workbook, sourceName, speciesByVariety) {
 }
 
 function harvestSyncFieldNorm(value) {
-  return harvestSyncNormalizeHeader(value).replace(/^p(?=\d)/, "");
+  return harvestAnalysisNormalizeFieldToken(value, { potrero: true, block: true });
 }
 
 function harvestSyncFindCosechaFieldId(record) {
-  const potrero = harvestSyncFieldNorm(record.potrero_normalizado || record.potrero_excel);
-  const block = harvestSyncFieldNorm(record.bloque_normalizado || record.bloque_excel);
-  if (!potrero || !block) return null;
-  const exact = (state.blocks || []).filter((field) => (
-    harvestSyncFieldNorm(field.potrero) === potrero
-    && harvestSyncFieldNorm(field.block) === block
-  ));
-  if (exact.length === 1) return exact[0].id || null;
-  if (potrero === "27") {
-    const special = (state.blocks || []).filter((field) => (
-      harvestSyncFieldNorm(field.potrero).startsWith("27")
-      && harvestSyncFieldNorm(field.block) === block
-      && harvestSyncNormalizeHeader(field.variety) === harvestSyncNormalizeHeader(record.variedad)
-    ));
-    if (special.length === 1) return special[0].id || null;
-  }
-  return null;
+  const match = harvestAnalysisFieldForRow(record);
+  return match?.id || null;
 }
 
 function harvestSyncFindExportFieldIds(record) {
-  const potrero = harvestSyncFieldNorm(record.potrero_normalizado || record.potrero_excel);
-  const variety = harvestSyncNormalizeHeader(record.variedad);
-  const ids = (state.blocks || [])
-    .filter((field) => {
-      const fieldPotrero = harvestSyncFieldNorm(field.potrero);
-      const fieldVariety = harvestSyncNormalizeHeader(field.variety);
-      if (fieldVariety !== variety) return false;
-      return fieldPotrero === potrero
-        || (potrero === "27" && fieldPotrero.startsWith("27"))
-        || (potrero === "26" && ["d", "e", "f", "g", "h", "i", "j"].includes(fieldPotrero));
-    })
+  const ids = harvestExportFieldsForRecord(record)
     .map((field) => field.id)
     .filter(Boolean);
   return ids.length ? ids : null;
@@ -12134,6 +12115,216 @@ function harvestAnalysisSummary(rows) {
   };
 }
 
+function harvestAnalysisNormalizeFieldToken(value, options = {}) {
+  let text = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\u00a0/g, " ")
+    .trim()
+    .toLocaleLowerCase("es");
+  text = text
+    .replace(/^potrero\s+/, "")
+    .replace(/^bloque\s+/, "")
+    .replace(/^cuartel\s+/, "")
+    .replace(/\s+/g, " ");
+  if (options.potrero) {
+    text = text.replace(/^p\s*(?=\d)/, "");
+  }
+  if (options.block) {
+    text = text.replace(/^b\s*(?=\d)/, "");
+  }
+  return text.trim();
+}
+
+function harvestAnalysisBlockCandidates(row) {
+  const rowPotrero = harvestAnalysisNormalizeFieldToken(row?.potrero || row?.potrero_normalizado || row?.excelPotrero || row?.potrero_excel, { potrero: true });
+  const sources = [
+    { value: row?.excelBlock || row?.bloque_excel, priority: 300 },
+    { value: row?.block || row?.bloque_normalizado, priority: 250 },
+    { value: row?.formulaBlock || row?.bloque_formula, priority: 200 }
+  ];
+  const candidates = new Map();
+  const addCandidate = (value, priority) => {
+    const normalized = harvestAnalysisNormalizeFieldToken(value, { block: true });
+    if (!normalized) return;
+    candidates.set(normalized, Math.max(priority, candidates.get(normalized) || 0));
+  };
+
+  sources.forEach(({ value, priority }) => {
+    const normalized = harvestAnalysisNormalizeFieldToken(value, { block: true });
+    addCandidate(normalized, priority);
+    if (rowPotrero && normalized.startsWith(rowPotrero) && normalized.length > rowPotrero.length) {
+      addCandidate(normalized.slice(rowPotrero.length).replace(/^[-/\s]+/, ""), priority - 20);
+    }
+  });
+  return [...candidates.entries()].map(([value, priority]) => ({ value, priority }));
+}
+
+const harvestAnalysisFieldMetaCache = new WeakMap();
+
+function harvestAnalysisFieldMeta(field) {
+  if (!field || typeof field !== "object") return { potrero: "", block: "", variety: "", species: "" };
+  const cached = harvestAnalysisFieldMetaCache.get(field);
+  if (cached) return cached;
+  const meta = {
+    potrero: harvestAnalysisNormalizeFieldToken(field.potrero, { potrero: true }),
+    block: harvestAnalysisNormalizeFieldToken(field.block, { block: true }),
+    variety: harvestAnalysisNormalizeFieldToken(field.variety),
+    species: harvestAnalysisNormalizeFieldToken(field.crop)
+  };
+  harvestAnalysisFieldMetaCache.set(field, meta);
+  return meta;
+}
+
+function harvestAnalysisFieldMatchScore(row, field) {
+  const rowPotrero = harvestAnalysisNormalizeFieldToken(row?.potrero || row?.potrero_normalizado || row?.excelPotrero || row?.potrero_excel, { potrero: true });
+  const rowBlocks = harvestAnalysisBlockCandidates(row);
+  const rowFormulaBlock = harvestAnalysisNormalizeFieldToken(row?.formulaBlock || row?.bloque_formula, { block: true });
+  const fieldMeta = harvestAnalysisFieldMeta(field);
+  const fieldPotrero = fieldMeta.potrero;
+  const fieldBlock = fieldMeta.block;
+  const rowVariety = harvestAnalysisNormalizeFieldToken(row?.variety || row?.variedad);
+  const rowSpecies = harvestAnalysisNormalizeFieldToken(row?.species || row?.especie);
+  const fieldVariety = fieldMeta.variety;
+  const fieldSpecies = fieldMeta.species;
+  if (!rowPotrero || !rowBlocks.length || !fieldPotrero || !fieldBlock) return 0;
+
+  let score = 0;
+  rowBlocks.forEach(({ value: rowBlock, priority }) => {
+    if (rowPotrero === fieldPotrero && rowBlock === fieldBlock) score = Math.max(score, priority);
+
+    const splitBlock = rowBlock.match(/^([a-z])\s*0*([0-9]+)$/i);
+    if (rowPotrero === "26" && splitBlock && fieldPotrero === splitBlock[1].toLocaleLowerCase("es")) {
+      const numericBlock = String(Number(splitBlock[2]));
+      if (fieldBlock === rowBlock || fieldBlock === numericBlock) score = Math.max(score, priority - 5);
+    }
+
+    if (rowPotrero === "27" && rowBlock === fieldBlock) {
+      const expectedPotrero = rowFormulaBlock.startsWith("oo")
+        ? "27 imp"
+        : rowFormulaBlock.startsWith("o")
+          ? "27 grav"
+          : "";
+      if (expectedPotrero && fieldPotrero === expectedPotrero) score = Math.max(score, priority + 5);
+      else if (!expectedPotrero && fieldPotrero.startsWith("27")) score = Math.max(score, priority - 10);
+    }
+
+    const splitFieldBlock = fieldBlock.match(/^0*([0-9]+)[a-z]$/i);
+    if (rowPotrero === fieldPotrero && /^0*[0-9]+$/.test(rowBlock) && splitFieldBlock && String(Number(rowBlock)) === String(Number(splitFieldBlock[1]))) {
+      score = Math.max(score, priority - 15);
+    }
+  });
+
+  if (!score) return 0;
+  if (rowVariety && fieldVariety && rowVariety === fieldVariety) score += 8;
+  if (rowSpecies && fieldSpecies && rowSpecies === fieldSpecies) score += 3;
+  return score;
+}
+
+function harvestAnalysisFieldsForRow(row) {
+  const fields = harvestFieldCatalog();
+  const blockCandidates = harvestAnalysisBlockCandidates(row);
+  const scored = fields
+    .map((field) => ({ field, score: harvestAnalysisFieldMatchScore(row, field) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || comparePotrero(a.field.potrero, b.field.potrero) || String(a.field.block).localeCompare(String(b.field.block), "es", { numeric: true }));
+  if (scored.length) {
+    const bestScore = scored[0].score;
+    return scored.filter((item) => item.score === bestScore).map((item) => item.field);
+  }
+
+  const linkedId = row?.fieldId || row?.campo_id;
+  const linkedField = linkedId ? fields.find((field) => field.id === linkedId) : null;
+  if (!blockCandidates.length && linkedField) return [linkedField];
+
+  if (blockCandidates.length) return [];
+  const rowPotrero = harvestAnalysisNormalizeFieldToken(row?.potrero || row?.potrero_normalizado || row?.excelPotrero || row?.potrero_excel, { potrero: true });
+  const rowVariety = harvestAnalysisNormalizeFieldToken(row?.variety || row?.variedad);
+  if (!rowPotrero || !rowVariety) return [];
+  return fields.filter((field) => {
+    const fieldMeta = harvestAnalysisFieldMeta(field);
+    const fieldPotrero = fieldMeta.potrero;
+    const fieldVariety = fieldMeta.variety;
+    if (fieldVariety !== rowVariety) return false;
+    if (fieldPotrero === rowPotrero) return true;
+    if (rowPotrero === "26") return ["d", "e", "f", "g", "h", "i", "j"].includes(fieldPotrero);
+    if (rowPotrero === "27") return fieldPotrero.startsWith("27");
+    return false;
+  });
+}
+
+function harvestAnalysisFieldForRow(row) {
+  return harvestAnalysisFieldsForRow(row)[0] || null;
+}
+
+function harvestExportFieldsForRecord(row) {
+  const fields = harvestFieldCatalog();
+  const rowIds = Array.isArray(row?.fieldIds) ? row.fieldIds : Array.isArray(row?.campo_ids) ? row.campo_ids : [];
+  const byId = rowIds.map((id) => fields.find((field) => field.id === id)).filter(Boolean);
+  if (byId.length) return byId;
+
+  const rowPotrero = harvestAnalysisNormalizeFieldToken(row?.potrero || row?.potrero_normalizado || row?.excelPotrero || row?.potrero_excel, { potrero: true });
+  const rowVariety = harvestAnalysisNormalizeFieldToken(row?.variety || row?.variedad);
+  const rowSpecies = harvestAnalysisNormalizeFieldToken(row?.species || row?.especie);
+  if (!rowPotrero || !rowVariety) return [];
+
+  return fields
+    .map((field) => {
+      const fieldMeta = harvestAnalysisFieldMeta(field);
+      const fieldPotrero = fieldMeta.potrero;
+      const fieldVariety = fieldMeta.variety;
+      const fieldSpecies = fieldMeta.species;
+      if (fieldVariety !== rowVariety) return { field, score: 0 };
+      let score = 0;
+      if (fieldPotrero === rowPotrero) score = 100;
+      else if (rowPotrero === "27" && fieldPotrero.startsWith("27")) score = 90;
+      else if (rowPotrero === "26" && ["d", "e", "f", "g", "h", "i", "j"].includes(fieldPotrero)) score = 85;
+      if (!score) return { field, score: 0 };
+      if (rowSpecies && fieldSpecies && rowSpecies === fieldSpecies) score += 3;
+      return { field, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || comparePotrero(a.field.potrero, b.field.potrero) || String(a.field.block).localeCompare(String(b.field.block), "es", { numeric: true }))
+    .map((item) => item.field);
+}
+
+function harvestAnalysisFieldStats(row) {
+  const fields = harvestAnalysisFieldsForRow(row);
+  if (!fields.length) return null;
+  return fields.map((field) => {
+    const hectares = harvestNumericValue(field.hectares);
+    const plants = harvestNumericValue(field.plants) || (hectares && harvestNumericValue(field.plantsPerHa) ? hectares * harvestNumericValue(field.plantsPerHa) : 0);
+    return {
+      key: field.id || fieldIdentityKey(field.potrero, field.block),
+      hectares,
+      plants
+    };
+  });
+}
+
+function harvestAnalysisEmptyYearStats() {
+  return {
+    value: 0,
+    kg: 0,
+    hectares: 0,
+    plants: 0,
+    fields: new Set()
+  };
+}
+
+function harvestAnalysisProductivityLabel(yearEntry) {
+  const kg = harvestNumericValue(yearEntry?.kg);
+  const kgHa = yearEntry?.hectares ? kg / yearEntry.hectares : 0;
+  const kgPlant = yearEntry?.plants ? kg / yearEntry.plants : 0;
+  return {
+    kg,
+    kgHa,
+    kgPlant,
+    hectares: harvestNumericValue(yearEntry?.hectares),
+    plants: harvestNumericValue(yearEntry?.plants)
+  };
+}
+
 const HARVEST_YEAR_COLORS = [
   "#0f766e",
   "#2563eb",
@@ -12494,6 +12685,7 @@ function renderHarvestPotreroBlockSummary(rows) {
   const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b));
   const decimals = harvestAnalysisMetricDecimals();
   const unit = harvestAnalysisMetricUnit();
+  const showProductivity = harvestAnalysisMetric === "kg";
   const speciesGroups = new Map();
   rows.forEach((row) => {
     const year = String(row.year || "");
@@ -12502,11 +12694,21 @@ function renderHarvestPotreroBlockSummary(rows) {
     const variety = harvestCleanValue(row.variety, "Sin variedad");
     const potrero = harvestCleanValue(row.potrero, "Sin potrero");
     const value = harvestAnalysisMetricValue(row);
+    const kg = harvestNumericValue(row.kgTotal);
+    const fieldStats = harvestAnalysisFieldStats(row);
     const speciesEntry = speciesGroups.get(species) || { species, total: 0, varieties: new Map() };
     const varietyEntry = speciesEntry.varieties.get(variety) || { variety, total: 0, potreros: new Map() };
     const potreroEntry = varietyEntry.potreros.get(potrero) || { potrero, total: 0, years: new Map() };
-    const currentYearValue = harvestNumericValue(potreroEntry.years.get(year));
-    potreroEntry.years.set(year, currentYearValue + value);
+    const yearEntry = potreroEntry.years.get(year) || harvestAnalysisEmptyYearStats();
+    yearEntry.value += value;
+    yearEntry.kg += kg;
+    (fieldStats || []).forEach((fieldStat) => {
+      if (!fieldStat.key || yearEntry.fields.has(fieldStat.key)) return;
+      yearEntry.fields.add(fieldStat.key);
+      yearEntry.hectares += harvestNumericValue(fieldStat.hectares);
+      yearEntry.plants += harvestNumericValue(fieldStat.plants);
+    });
+    potreroEntry.years.set(year, yearEntry);
     potreroEntry.total += value;
     varietyEntry.total += value;
     speciesEntry.total += value;
@@ -12521,9 +12723,9 @@ function renderHarvestPotreroBlockSummary(rows) {
         .sort((a, b) => b.total - a.total || a.variety.localeCompare(b.variety, "es", { numeric: true }))
         .map((entry) => {
           const potreros = [...entry.potreros.values()].sort((a, b) => b.total - a.total || comparePotrero(a.potrero, b.potrero));
-          const max = Math.max(1, ...potreros.flatMap((potrero) => years.map((year) => harvestNumericValue(potrero.years.get(year)))));
+          const max = Math.max(1, ...potreros.flatMap((potrero) => years.map((year) => harvestNumericValue(potrero.years.get(year)?.value))));
           return `
-            <section class="harvest-potrero-variety-card">
+            <section class="harvest-potrero-variety-card harvest-productivity-variety-card">
               <header>
                 <div>
                   <strong>${escapeHtml(entry.variety)}</strong>
@@ -12531,19 +12733,34 @@ function renderHarvestPotreroBlockSummary(rows) {
                 </div>
                 <b>${number(entry.total, decimals)}${unit}</b>
               </header>
-              <div class="harvest-potrero-year-list">
+              <div class="harvest-productivity-list">
                 ${potreros.map((potrero) => `
-                  <div class="harvest-potrero-year-row">
-                    <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${escapeHtml(potreroLabel(potrero.potrero))}</strong>
-                    <div class="harvest-potrero-year-bars">
+                  <div class="harvest-productivity-potrero-row">
+                    <div class="harvest-productivity-potrero-head">
+                      <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${escapeHtml(potreroLabel(potrero.potrero))}</strong>
+                      <span>${number(potrero.total, decimals)}${unit}</span>
+                    </div>
+                    <div class="harvest-productivity-years">
                       ${years.map((year, index) => {
-                        const value = harvestNumericValue(potrero.years.get(year));
+                        const yearEntry = potrero.years.get(year) || harvestAnalysisEmptyYearStats();
+                        const value = harvestNumericValue(yearEntry.value);
+                        const productivity = harvestAnalysisProductivityLabel(yearEntry);
+                        const kgHa = yearEntry.hectares ? yearEntry.kg / yearEntry.hectares : 0;
+                        const kgPlant = yearEntry.plants ? yearEntry.kg / yearEntry.plants : 0;
+                        const kgHaLabel = productivity.hectares ? number(kgHa, 0) : "-";
+                        const kgPlantLabel = productivity.plants ? number(kgPlant, 0) : "-";
                         const width = value > 0 ? Math.max(3, value / max * 100) : 0;
-                        return `<span title="${htmlAttr(`${speciesEntry.species} - ${entry.variety} - ${potreroLabel(potrero.potrero)} - ${year}: ${number(value, decimals)}${unit}`)}">
-                          <b>${escapeHtml(year)}</b>
-                          <i><em style="width:${width}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></em></i>
-                          <small>${number(value, decimals)}</small>
-                        </span>`;
+                        return `<article class="harvest-productivity-year-card" title="${htmlAttr(`${speciesEntry.species} - ${entry.variety} - ${potreroLabel(potrero.potrero)} - ${year}: ${number(value, decimals)}${unit}${showProductivity ? ` | ${kgHaLabel} kg/ha | ${kgPlantLabel} kg/planta` : ""}`)}">
+                          <header>
+                            <b>${escapeHtml(year)}</b>
+                            <i><em style="width:${width}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></em></i>
+                          </header>
+                          <div class="harvest-productivity-metrics">
+                            <span><small>${harvestAnalysisMetric === "kg" ? "Kg" : "Bins"}</small><strong>${number(value, decimals)}</strong></span>
+                            ${showProductivity ? `<span><small>Kg/ha</small><strong>${productivity.hectares ? number(productivity.kgHa, 0) : "-"}</strong></span>
+                            <span><small>Kg/planta</small><strong>${productivity.plants ? number(productivity.kgPlant, 0) : "-"}</strong></span>` : ""}
+                          </div>
+                        </article>`;
                       }).join("")}
                     </div>
                   </div>`).join("")}
@@ -12568,8 +12785,8 @@ function renderHarvestPotreroBlockSummary(rows) {
     <article class="panel harvest-analytics-card harvest-full-width harvest-potrero-summary-card">
       <div class="panel-header">
         <div>
-          <h2>Resumen por especie, variedad y potrero</h2>
-          <p>Barras por ano, sin separar por bloque.</p>
+          <h2>${showProductivity ? "Productividad por especie, variedad y potrero" : "Resumen por especie, variedad y potrero"}</h2>
+          <p>${showProductivity ? "Kg, Kg/ha y Kg/planta por potrero y ano." : "Barras por ano, sin separar por bloque."}</p>
         </div>
       </div>
       <div class="harvest-variety-year-legend">
@@ -13307,7 +13524,7 @@ async function loadCloudData(options = {}) {
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, programProductRows, fields, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
+  const [seasons, programs, programProductRows, fields, harvestFieldRows, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
     loadPlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programa_productos", "select=*&order=programa_id.asc,orden.asc").catch((error) => {
@@ -13315,6 +13532,10 @@ async function loadCloudData(options = {}) {
       return [];
     }) : Promise.resolve(null),
     loadFields ? sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc") : Promise.resolve(null),
+    loadHarvest ? sbSelectAll("campos", "select=*&order=potrero.asc,bloque.asc", 5000).catch((error) => {
+      console.warn("No se pudo cargar campos completos para analisis de cosecha", error);
+      return null;
+    }) : Promise.resolve(null),
     loadApplications ? sbSelect("productos", "select=*&activo=eq.true&order=nombre.asc") : Promise.resolve(null),
     loadApplications ? sbSelect("ordenes_aplicacion", "select=*&order=creado_en.desc,fecha_planificada.desc,numero_orden.desc") : Promise.resolve(null),
     loadApplications ? sbSelect("orden_productos", "select=*") : Promise.resolve(null),
@@ -13478,21 +13699,27 @@ async function loadCloudData(options = {}) {
       incomplete: Boolean(line.incompleto)
     }));
   }
+  const mapFieldRow = (field) => ({
+    id: field.id,
+    potrero: field.potrero,
+    block: field.bloque,
+    crop: field.especie || field.cultivo,
+    variety: field.variedad,
+    hectares: Number(field.hectareas) || 0,
+    precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
+    flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
+    baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base),
+    active: field.activo !== false,
+    plants: Number(field.plantas) || 0,
+    plantsPerHa: Number(field.plantas_por_ha) || 0
+  });
   if (Array.isArray(fields)) {
-    state.blocks = fields.map((field) => ({
-      id: field.id,
-      potrero: field.potrero,
-      block: field.bloque,
-      crop: field.especie || field.cultivo,
-      variety: field.variedad,
-      hectares: Number(field.hectareas) || 0,
-      precipitation: field.precipitacion === null || field.precipitacion === undefined ? null : Number(field.precipitacion),
-      flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
-      baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base),
-      active: field.activo !== false,
-      plants: Number(field.plantas) || 0,
-      plantsPerHa: Number(field.plantas_por_ha) || 0
-    }));
+    state.blocks = fields.map(mapFieldRow);
+  }
+  if (Array.isArray(harvestFieldRows)) {
+    state.harvestFields = harvestFieldRows.map(mapFieldRow);
+  } else if (Array.isArray(fields)) {
+    state.harvestFields = state.blocks;
   }
   if (Array.isArray(calicatas)) {
     state.calicatas = calicatas.map((item) => ({
@@ -13631,36 +13858,43 @@ async function loadCloudData(options = {}) {
   }
   if (Array.isArray(harvestExportRows)) {
     harvestExportDbRows = harvestExportRows;
-    state.harvestExportRecords = harvestExportRows.map((item) => ({
-      id: item.id,
-      sourceFile: item.archivo_origen || "",
-      excelRow: Number(item.fila_excel) || null,
-      date: item.fecha || "",
-      year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
-      species: harvestDisplaySpecies(item.especie),
-      variety: harvestDisplayVariety(item.variedad),
-      excelPotrero: harvestCleanValue(item.potrero_excel, ""),
-      potrero: harvestCleanValue(item.potrero_normalizado || item.potrero_excel, "Sin potrero"),
-      bins: harvestNumericValue(item.cant_bins),
-      sentKg: harvestNumericValue(item.enviados_kg),
-      receivedKg: harvestNumericValue(item.recepcionados_kg),
-      differenceKg: harvestNumericValue(item.diferencia_kg),
-      binsToConfirm: harvestNumericValue(item.bins_por_confirmar),
-      inProcessKg: harvestNumericValue(item.kg_en_proceso),
-      toProcessKg: harvestNumericValue(item.kg_por_procesar),
-      exportedKg: harvestNumericValue(item.exportados_kg),
-      discardKg: harvestNumericValue(item.descarte_kg),
-      precalibreKg: harvestNumericValue(item.precalibre_kg),
-      wasteKg: harvestNumericValue(item.desecho_kg),
-      shrinkKg: harvestNumericValue(item.merma_kg),
-      xKg: harvestNumericValue(item.x_kg),
-      exportPercent: harvestExportPercentRatio(item.porcentaje_expo),
-      hasExportPercent: item.porcentaje_expo !== null && item.porcentaje_expo !== undefined && String(item.porcentaje_expo).trim() !== "",
-      calibresKg: harvestJsonObject(item.calibres_kg),
-      calibresCajas: harvestJsonObject(item.calibres_cajas),
-      calibresKgTotal: harvestNumericValue(item.calibres_kg_total),
-      calibresCajasTotal: harvestNumericValue(item.calibres_cajas_total)
-    }));
+    state.harvestExportRecords = harvestExportRows.map((item) => {
+      const record = {
+        id: item.id,
+        fieldIds: Array.isArray(item.campo_ids) ? item.campo_ids.filter(Boolean) : [],
+        sourceFile: item.archivo_origen || "",
+        excelRow: Number(item.fila_excel) || null,
+        date: item.fecha || "",
+        year: Number(item.anio) || Number(String(item.fecha || "").slice(0, 4)) || "",
+        species: harvestDisplaySpecies(item.especie),
+        variety: harvestDisplayVariety(item.variedad),
+        excelPotrero: harvestCleanValue(item.potrero_excel, ""),
+        potrero: harvestCleanValue(item.potrero_normalizado || item.potrero_excel, "Sin potrero"),
+        bins: harvestNumericValue(item.cant_bins),
+        sentKg: harvestNumericValue(item.enviados_kg),
+        receivedKg: harvestNumericValue(item.recepcionados_kg),
+        differenceKg: harvestNumericValue(item.diferencia_kg),
+        binsToConfirm: harvestNumericValue(item.bins_por_confirmar),
+        inProcessKg: harvestNumericValue(item.kg_en_proceso),
+        toProcessKg: harvestNumericValue(item.kg_por_procesar),
+        exportedKg: harvestNumericValue(item.exportados_kg),
+        discardKg: harvestNumericValue(item.descarte_kg),
+        precalibreKg: harvestNumericValue(item.precalibre_kg),
+        wasteKg: harvestNumericValue(item.desecho_kg),
+        shrinkKg: harvestNumericValue(item.merma_kg),
+        xKg: harvestNumericValue(item.x_kg),
+        exportPercent: harvestExportPercentRatio(item.porcentaje_expo),
+        hasExportPercent: item.porcentaje_expo !== null && item.porcentaje_expo !== undefined && String(item.porcentaje_expo).trim() !== "",
+        calibresKg: harvestJsonObject(item.calibres_kg),
+        calibresCajas: harvestJsonObject(item.calibres_cajas),
+        calibresKgTotal: harvestNumericValue(item.calibres_kg_total),
+        calibresCajasTotal: harvestNumericValue(item.calibres_cajas_total)
+      };
+      if (!record.fieldIds.length) {
+        record.fieldIds = harvestExportFieldsForRecord(record).map((field) => field.id).filter(Boolean);
+      }
+      return record;
+    });
   }
   if (Array.isArray(products)) {
     state.products = products.map((product) => ({
