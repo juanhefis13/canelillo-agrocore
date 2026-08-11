@@ -28,6 +28,7 @@ with ranked as (
     row_number() over (
       partition by fecha, hora
       order by
+        (fuente = 'bandeja_lluvia_manual') desc,
         ((humedad is not null)::integer + (velocidad_viento is not null)::integer + (precipitacion is not null)::integer) desc,
         creado_en desc,
         id desc
@@ -44,8 +45,8 @@ merged as (
     (array_agg(low_temp order by creado_en desc, id desc))[1] as low_temp,
     (array_agg(humedad order by (humedad is not null) desc, creado_en desc, id desc))[1] as humedad,
     (array_agg(velocidad_viento order by (velocidad_viento is not null) desc, creado_en desc, id desc))[1] as velocidad_viento,
-    (array_agg(precipitacion order by (precipitacion is not null) desc, creado_en desc, id desc))[1] as precipitacion,
-    (array_agg(fuente order by creado_en desc, id desc))[1] as fuente
+    (array_agg(precipitacion order by (fuente = 'bandeja_lluvia_manual') desc, (precipitacion is not null) desc, creado_en desc, id desc))[1] as precipitacion,
+    (array_agg(fuente order by (fuente = 'bandeja_lluvia_manual') desc, creado_en desc, id desc))[1] as fuente
   from ranked
   group by fecha, hora
   having count(*) > 1
@@ -68,6 +69,7 @@ with duplicates as (
     row_number() over (
       partition by fecha, hora
       order by
+        (fuente = 'bandeja_lluvia_manual') desc,
         ((humedad is not null)::integer + (velocidad_viento is not null)::integer + (precipitacion is not null)::integer) desc,
         creado_en desc,
         id desc
