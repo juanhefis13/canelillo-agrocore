@@ -14564,7 +14564,7 @@ body {
 }
 
 .pest-monthly-table {
-  min-width: 1180px;
+  min-width: 1080px;
 }
 
 .pest-monthly-table th {
@@ -14587,20 +14587,100 @@ body {
 
 .pest-monthly-table th:first-child,
 .pest-monthly-table th:nth-child(2),
-.pest-monthly-table th:nth-child(3),
 .pest-monthly-table td:first-child,
-.pest-monthly-table td:nth-child(2),
-.pest-monthly-table td:nth-child(3) {
+.pest-monthly-table td:nth-child(2) {
   text-align: left;
-}
-
-.pest-monthly-table time {
-  color: #315f52;
-  font-weight: 850;
 }
 
 .pest-monthly-table tbody tr:nth-child(even) {
   background: #f7faf8;
+}
+
+.pest-latest-potrero-meta,
+.pest-monthly-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pest-latest-potrero-meta {
+  margin-bottom: 6px;
+  color: #60766e;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.pest-latest-potrero-meta strong {
+  color: #116a50;
+}
+
+.pest-latest-potrero-wrap {
+  max-height: 250px;
+  overflow: auto;
+  border: 1px solid #cfe1da;
+  border-radius: 6px;
+}
+
+.pest-latest-potrero-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pest-latest-potrero-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 8px;
+  background: #e2f1eb;
+  color: #285447;
+  font-size: 0.65rem;
+  text-align: left;
+}
+
+.pest-latest-potrero-table td {
+  padding: 7px 8px;
+  border-top: 1px solid #e1ebe7;
+  color: #263f37;
+  font-size: 0.68rem;
+}
+
+.pest-latest-potrero-table td:last-child {
+  text-align: right;
+}
+
+.pest-latest-potrero-table time {
+  color: #116a50;
+  font-weight: 900;
+}
+
+.pest-latest-potrero-table td:nth-child(3) span {
+  display: inline-block;
+  margin: 1px 3px 1px 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #edf6f2;
+  color: #42675b;
+  font-size: 0.61rem;
+  font-weight: 850;
+}
+
+.pest-monthly-subhead {
+  margin: 12px 0 6px;
+  padding-top: 10px;
+  border-top: 1px solid #d8e7e1;
+}
+
+.pest-monthly-subhead h3 {
+  margin: 0;
+  color: #173c31;
+  font-size: 0.8rem;
+}
+
+.pest-monthly-subhead span {
+  color: #647b73;
+  font-size: 0.64rem;
+  font-weight: 750;
 }
 
 .pest-ranking-row {

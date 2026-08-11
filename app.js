@@ -10350,8 +10350,7 @@ function pestMonitoringMonthlyRows(records) {
       larvae: 0,
       pupae: 0,
       eggNymphTotal: 0,
-      observedTotal: 0,
-      latestDate: ""
+      observedTotal: 0
     };
     summary.samples += 1;
     if (pestMonitoringObservedTotal(record) > 0) summary.positives += 1;
@@ -10360,7 +10359,6 @@ function pestMonitoringMonthlyRows(records) {
     });
     summary.eggNymphTotal += pestMonitoringEggNymphTotal(record);
     summary.observedTotal += pestMonitoringObservedTotal(record);
-    if (record.date && record.date > summary.latestDate) summary.latestDate = record.date;
     grouped.set(key, summary);
   });
   return [...grouped.values()].sort((a, b) => b.month.localeCompare(a.month) || a.pest.localeCompare(b.pest, "es"));
@@ -10372,15 +10370,65 @@ function renderPestMonitoringMonthlyTable(records) {
   return `
     <div class="pest-monthly-table-wrap">
       <table class="pest-monthly-table">
-        <thead><tr><th>Mes</th><th>Plaga</th><th>Último monitoreo</th><th>Monit.</th><th>Presencia</th><th>Huevos</th><th>Ninfa 1</th><th>Ninfa 2</th><th>Ninfa 3</th><th>Adultos</th><th>Larvas</th><th>Pupas</th><th>Total H+N</th><th>Carga total</th></tr></thead>
+        <thead><tr><th>Mes</th><th>Plaga</th><th>Monit.</th><th>Presencia</th><th>Huevos</th><th>Ninfa 1</th><th>Ninfa 2</th><th>Ninfa 3</th><th>Adultos</th><th>Larvas</th><th>Pupas</th><th>Total H+N</th><th>Carga total</th></tr></thead>
         <tbody>${rows.map((row) => `
           <tr>
-            <td>${escapeHtml(row.month)}</td><td><strong>${escapeHtml(row.pest)}</strong></td><td><time datetime="${htmlAttr(row.latestDate)}">${escapeHtml(printDate(row.latestDate))}</time></td><td>${row.samples}</td>
+            <td>${escapeHtml(row.month)}</td><td><strong>${escapeHtml(row.pest)}</strong></td><td>${row.samples}</td>
             <td>${number(row.samples ? row.positives / row.samples * 100 : 0, 1)}%</td>
             <td>${number(row.eggs, 0)}</td><td>${number(row.nymph1, 0)}</td><td>${number(row.nymph2, 0)}</td><td>${number(row.nymph3, 0)}</td>
             <td>${number(row.adults, 0)}</td><td>${number(row.larvae, 0)}</td><td>${number(row.pupae, 0)}</td>
             <td><strong>${number(row.eggNymphTotal, 0)}</strong></td><td><strong>${number(row.observedTotal, 0)}</strong></td>
           </tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+}
+
+function pestMonitoringLatestPotreroRows(records) {
+  const grouped = new Map();
+  records.forEach((record) => {
+    if (!record.date || !record.potrero) return;
+    const key = fieldIdentityKey(record.potrero, "");
+    const summary = grouped.get(key) || {
+      potrero: record.potrero,
+      latestDate: "",
+      latestSamples: 0,
+      latestBlocks: new Set()
+    };
+    if (record.date > summary.latestDate) {
+      summary.latestDate = record.date;
+      summary.latestSamples = 1;
+      summary.latestBlocks = new Set(record.excelBlock ? [String(record.excelBlock)] : []);
+    } else if (record.date === summary.latestDate) {
+      summary.latestSamples += 1;
+      if (record.excelBlock) summary.latestBlocks.add(String(record.excelBlock));
+    }
+    grouped.set(key, summary);
+  });
+  return [...grouped.values()].sort((a, b) => comparePotrero(a.potrero, b.potrero));
+}
+
+function renderPestMonitoringLatestPotreroTable(records) {
+  const rows = pestMonitoringLatestPotreroRows(records);
+  if (!rows.length) {
+    return `<div class="empty-state compact"><strong>Sin monitoreos para esta plaga</strong><span>Ajusta los filtros para revisar otros potreros.</span></div>`;
+  }
+  return `
+    <div class="pest-latest-potrero-meta">
+      <span>Plaga <strong>${escapeHtml(pestMonitoringPest)}</strong></span>
+      <span>${number(rows.length, 0)} ${rows.length === 1 ? "potrero" : "potreros"}</span>
+    </div>
+    <div class="pest-latest-potrero-wrap">
+      <table class="pest-latest-potrero-table">
+        <thead><tr><th>Potrero</th><th>Último monitoreo</th><th>Bloques de la visita</th><th>Registros</th></tr></thead>
+        <tbody>${rows.map((row) => {
+          const blocks = [...row.latestBlocks].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+          return `<tr>
+            <td><strong>${escapeHtml(potreroLabel(row.potrero))}</strong></td>
+            <td><time datetime="${htmlAttr(row.latestDate)}">${escapeHtml(printDate(row.latestDate))}</time></td>
+            <td>${blocks.length ? blocks.map((block) => `<span>B${escapeHtml(block)}</span>`).join("") : "-"}</td>
+            <td>${number(row.latestSamples, 0)}</td>
+          </tr>`;
+        }).join("")}</tbody>
       </table>
     </div>`;
 }
@@ -10442,7 +10490,9 @@ function renderPestMonitoring() {
         </aside>
       </div>
       <section class="panel pest-monthly-panel">
-        <div class="panel-header"><div><h2>Resumen mensual por plaga</h2><p>Etapas observadas y fecha del último monitoreo del mes.</p></div></div>
+        <div class="panel-header"><div><h2>Último monitoreo por potrero</h2><p>Fecha más reciente para la plaga seleccionada en los filtros.</p></div></div>
+        <div id="pestMonitoringLatestPotrero"></div>
+        <div class="pest-monthly-subhead"><h3>Resumen mensual por plaga</h3><span>Etapas observadas por mes.</span></div>
         <div id="pestMonitoringMonthly"></div>
       </section>
     </section>`;
@@ -10504,6 +10554,8 @@ function refreshPestMonitoring() {
   if (coverage) coverage.innerHTML = pestMonitoringCoverageRows(summaries, records.length);
   const monthly = document.getElementById("pestMonitoringMonthly");
   if (monthly) monthly.innerHTML = renderPestMonitoringMonthlyTable(pestMonitoringFilteredRecords({ includePest: false }));
+  const latestPotrero = document.getElementById("pestMonitoringLatestPotrero");
+  if (latestPotrero) latestPotrero.innerHTML = renderPestMonitoringLatestPotreroTable(records);
   const summary = document.getElementById("pestMonitoringSummary");
   if (summary) summary.textContent = `${summaries.size} bloques · ${records.length} monitoreos`;
   const pending = records.filter((record) => record.potreroNormalized === false).length;
