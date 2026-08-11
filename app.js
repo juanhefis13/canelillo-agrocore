@@ -10350,7 +10350,8 @@ function pestMonitoringMonthlyRows(records) {
       larvae: 0,
       pupae: 0,
       eggNymphTotal: 0,
-      observedTotal: 0
+      observedTotal: 0,
+      latestDate: ""
     };
     summary.samples += 1;
     if (pestMonitoringObservedTotal(record) > 0) summary.positives += 1;
@@ -10359,6 +10360,7 @@ function pestMonitoringMonthlyRows(records) {
     });
     summary.eggNymphTotal += pestMonitoringEggNymphTotal(record);
     summary.observedTotal += pestMonitoringObservedTotal(record);
+    if (record.date && record.date > summary.latestDate) summary.latestDate = record.date;
     grouped.set(key, summary);
   });
   return [...grouped.values()].sort((a, b) => b.month.localeCompare(a.month) || a.pest.localeCompare(b.pest, "es"));
@@ -10370,10 +10372,10 @@ function renderPestMonitoringMonthlyTable(records) {
   return `
     <div class="pest-monthly-table-wrap">
       <table class="pest-monthly-table">
-        <thead><tr><th>Mes</th><th>Plaga</th><th>Monit.</th><th>Presencia</th><th>Huevos</th><th>Ninfa 1</th><th>Ninfa 2</th><th>Ninfa 3</th><th>Adultos</th><th>Larvas</th><th>Pupas</th><th>Total H+N</th><th>Carga total</th></tr></thead>
+        <thead><tr><th>Mes</th><th>Plaga</th><th>Último monitoreo</th><th>Monit.</th><th>Presencia</th><th>Huevos</th><th>Ninfa 1</th><th>Ninfa 2</th><th>Ninfa 3</th><th>Adultos</th><th>Larvas</th><th>Pupas</th><th>Total H+N</th><th>Carga total</th></tr></thead>
         <tbody>${rows.map((row) => `
           <tr>
-            <td>${escapeHtml(row.month)}</td><td><strong>${escapeHtml(row.pest)}</strong></td><td>${row.samples}</td>
+            <td>${escapeHtml(row.month)}</td><td><strong>${escapeHtml(row.pest)}</strong></td><td><time datetime="${htmlAttr(row.latestDate)}">${escapeHtml(printDate(row.latestDate))}</time></td><td>${row.samples}</td>
             <td>${number(row.samples ? row.positives / row.samples * 100 : 0, 1)}%</td>
             <td>${number(row.eggs, 0)}</td><td>${number(row.nymph1, 0)}</td><td>${number(row.nymph2, 0)}</td><td>${number(row.nymph3, 0)}</td>
             <td>${number(row.adults, 0)}</td><td>${number(row.larvae, 0)}</td><td>${number(row.pupae, 0)}</td>
@@ -10440,7 +10442,7 @@ function renderPestMonitoring() {
         </aside>
       </div>
       <section class="panel pest-monthly-panel">
-        <div class="panel-header"><div><h2>Resumen mensual por plaga</h2><p>Etapas observadas según fecha, potrero y bloque Excel.</p></div></div>
+        <div class="panel-header"><div><h2>Resumen mensual por plaga</h2><p>Etapas observadas y fecha del último monitoreo del mes.</p></div></div>
         <div id="pestMonitoringMonthly"></div>
       </section>
     </section>`;

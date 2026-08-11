@@ -14564,7 +14564,7 @@ body {
 }
 
 .pest-monthly-table {
-  min-width: 1080px;
+  min-width: 1180px;
 }
 
 .pest-monthly-table th {
@@ -14587,9 +14587,16 @@ body {
 
 .pest-monthly-table th:first-child,
 .pest-monthly-table th:nth-child(2),
+.pest-monthly-table th:nth-child(3),
 .pest-monthly-table td:first-child,
-.pest-monthly-table td:nth-child(2) {
+.pest-monthly-table td:nth-child(2),
+.pest-monthly-table td:nth-child(3) {
   text-align: left;
+}
+
+.pest-monthly-table time {
+  color: #315f52;
+  font-weight: 850;
 }
 
 .pest-monthly-table tbody tr:nth-child(even) {
