@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-    <link rel="stylesheet" href="styles.css?v=240-harvest-block-productivity">
+  <link rel="stylesheet" href="styles.css?v=251-fertilizer-history-users">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -72,32 +72,32 @@
           </div>
         </div>
         <nav class="nav" aria-label="Principal">
-          <button class="nav-item active" data-view="dashboard" title="Inicio">Inicio</button>
-          <button class="nav-group-toggle" type="button" data-action="toggle-irrigation-menu" aria-expanded="false">Riego</button>
+          <button class="nav-item active" data-view="dashboard" title="Inicio"><span class="nav-label">Inicio</span></button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-irrigation-menu" aria-expanded="false"><span class="nav-label">Riego</span></button>
           <div class="nav-group" id="irrigationMenu">
-            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="gantt" title="Carta Gantt">Carta Gantt</button>
-            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="bandejas" title="Bandeja">Bandeja</button>
-            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="balance" title="Balance hidrico">Balance hidrico</button>
-            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="satellite" title="NDVI e indices satelitales">NDVI</button>
-            <button class="nav-item" data-view="calicatas" title="Calicatas">Calicatas</button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="gantt" title="Carta Gantt"><span class="nav-label">Carta Gantt</span></button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="bandejas" title="Bandeja"><span class="nav-label">Bandeja</span></button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="balance" title="Balance hidrico"><span class="nav-label">Balance hidrico</span></button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="satellite" title="NDVI e indices satelitales"><span class="nav-label">NDVI</span></button>
+            <button class="nav-item" data-view="calicatas" title="Calicatas"><span class="nav-label">Calicatas</span></button>
           </div>
-          <button class="nav-item" data-view="fertilizers" title="Fertilizantes">Fertilizantes</button>
-          <button class="nav-item" data-view="pestMonitoring" title="Monitoreo de plagas">Monitoreo de plagas</button>
-          <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false">Aplicaciones</button>
+          <button class="nav-item" data-view="fertilizers" title="Fertilizantes"><span class="nav-label">Fertilizantes</span></button>
+          <button class="nav-item" data-view="pestMonitoring" title="Monitoreo de plagas"><span class="nav-label">Monitoreo de plagas</span></button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false"><span class="nav-label">Aplicaciones</span></button>
           <div class="nav-group" id="applicationsMenu">
-            <button class="nav-item" data-view="applicationDashboard" title="Panel principal">Panel principal</button>
-            <button class="nav-item" data-view="program" title="Programa">Programa</button>
-            <button class="nav-item" data-view="manager" title="Supervisor">Supervisor</button>
-            <button class="nav-item" data-view="warehouse" title="Bodega">Bodega</button>
-            <button class="nav-item" data-view="inventory" title="Stock">Stock</button>
-            <button class="nav-item" data-view="reports" title="Reportes">Reportes</button>
+            <button class="nav-item" data-view="applicationDashboard" title="Panel principal"><span class="nav-label">Panel principal</span></button>
+            <button class="nav-item" data-view="program" title="Programa"><span class="nav-label">Programa</span></button>
+            <button class="nav-item" data-view="manager" title="Supervisor"><span class="nav-label">Supervisor</span></button>
+            <button class="nav-item" data-view="warehouse" title="Bodega"><span class="nav-label">Bodega</span></button>
+            <button class="nav-item" data-view="inventory" title="Stock"><span class="nav-label">Stock</span></button>
+            <button class="nav-item" data-view="reports" title="Reportes"><span class="nav-label">Reportes</span></button>
           </div>
-          <button class="nav-group-toggle" type="button" data-action="toggle-harvest-menu" aria-expanded="false">Cosecha</button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-harvest-menu" aria-expanded="false"><span class="nav-label">Cosecha</span></button>
           <div class="nav-group" id="harvestMenu">
-            <button class="nav-item" data-view="harvestMap" title="Mapa cosecha">Mapa</button>
-            <button class="nav-item" data-view="harvestInfo" title="Informacion cosecha">Informacion</button>
-            <button class="nav-item" data-view="harvestExport" title="Exportacion">Exportacion</button>
-            <button class="nav-item" data-view="harvestAnalysis" title="Cosecha Analisis">Cosecha Analisis</button>
+            <button class="nav-item" data-view="harvestMap" title="Mapa cosecha"><span class="nav-label">Mapa</span></button>
+            <button class="nav-item" data-view="harvestInfo" title="Informacion cosecha"><span class="nav-label">Informacion</span></button>
+            <button class="nav-item" data-view="harvestExport" title="Exportacion"><span class="nav-label">Exportacion</span></button>
+            <button class="nav-item" data-view="harvestAnalysis" title="Cosecha Analisis"><span class="nav-label">Cosecha Analisis</span></button>
           </div>
         </nav>
         <div class="sync-box sync-box--clean">
@@ -113,7 +113,17 @@
             <h1 id="viewTitle">Inicio</h1>
           </div>
         <div class="top-actions">
-            <button id="authButton" class="secondary-button">Cuenta</button>
+            <div class="user-menu" id="userMenu">
+              <button id="authButton" class="user-chip" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span class="user-avatar" data-user-avatar aria-hidden="true">AC</span>
+                <span class="user-chip-copy"><strong data-user-name>Cuenta</strong><small data-user-role>Usuario</small></span>
+                <span class="user-chevron" aria-hidden="true">&#8964;</span>
+              </button>
+              <div id="userMenuPanel" class="user-menu-panel" role="menu" hidden>
+                <button type="button" role="menuitem" data-action="open-account-info">Informacion de la cuenta</button>
+                <button type="button" role="menuitem" data-action="logout">Cerrar sesion</button>
+              </div>
+            </div>
             <button id="resetDemo" class="secondary-button" hidden>Restaurar datos</button>
             <button id="newOrderTop" class="primary-button" hidden>Nueva orden</button>
           </div>
@@ -161,6 +171,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/pdf-lib.min.js"></script>
-    <script src="app.js?v=240-harvest-block-productivity"></script>
+  <script src="app.js?v=251-fertilizer-history-users"></script>
   </body>
 </html>

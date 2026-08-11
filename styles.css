@@ -3416,6 +3416,350 @@ td span,
   }
 }
 
+/* AgroCore UI 242: filtros persistentes, mapas directos y comparaciones completas. */
+:root {
+  --agrocore-sticky-filter-top: 8px;
+}
+
+.nav-item,
+.nav-group-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.nav-icon,
+.nav-sub-dot,
+.harvest-species-badge {
+  display: none !important;
+}
+
+.nav-label {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.user-menu-panel button {
+  display: block;
+}
+
+.harvest-start-variety,
+.harvest-contractor-species > header {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.harvest-potrero-species-section > header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.view.active-view :is(
+  .weather-station-filters,
+  .satellite-toolbar,
+  .program-filters,
+  .gantt-controls,
+  .warehouse-filters,
+  .report-toolbar,
+  .irrigation-balance-toolbar,
+  .irrigation-local-filters,
+  .calicatas-filters,
+  .harvest-filter-shell,
+  .harvest-export-filter-panel,
+  .fertilizer-toolbar,
+  .pest-filter-bar
+) {
+  position: sticky !important;
+  top: var(--agrocore-sticky-filter-top) !important;
+  z-index: 880;
+  border-color: #b9d4c9;
+  background: rgba(248, 252, 250, 0.97);
+  box-shadow: 0 8px 20px rgba(13, 67, 52, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.view.active-view :is(
+  .program-filters,
+  .gantt-controls,
+  .warehouse-filters,
+  .report-toolbar,
+  .irrigation-filters,
+  .calicatas-filters,
+  .irrigation-local-filters
+)::before {
+  content: none !important;
+}
+
+.geo-map,
+.harvest-map,
+.pest-monitoring-map,
+.irrigation-calicata-map,
+.satellite-map {
+  cursor: grab;
+  touch-action: none;
+}
+
+.geo-map:active,
+.harvest-map:active,
+.pest-monitoring-map:active,
+.irrigation-calicata-map:active,
+.satellite-map:active {
+  cursor: grabbing;
+}
+
+.harvest-comparison-species-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.harvest-comparison-species {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #c9ddd5;
+  border-radius: 8px;
+  background: #f8fbf9;
+}
+
+.harvest-comparison-species-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 2px solid #b9d9cb;
+}
+
+.harvest-comparison-species-head > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.harvest-comparison-species-head > div:first-child strong {
+  color: #0e654e;
+  font-size: 0.86rem;
+  font-weight: 950;
+}
+
+.harvest-comparison-species-head > div:first-child span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.harvest-comparison-species-totals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.harvest-comparison-species-totals span,
+.harvest-comparison-species-totals > strong {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border: 1px solid #d2e2dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #294b41;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.harvest-comparison-species-totals > strong {
+  border-color: #99cab7;
+  background: #e5f5ed;
+  color: #0b6048;
+}
+
+.harvest-contractor-species > header {
+  padding: 7px 9px;
+}
+
+.harvest-contractor-years {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.harvest-contractor-year {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.harvest-contractor-year > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #536f65;
+  font-size: 0.64rem;
+}
+
+.harvest-contractor-bars {
+  display: grid;
+  gap: 5px;
+}
+
+.harvest-contractor-bar-row {
+  display: grid;
+  grid-template-columns: minmax(125px, 0.85fr) minmax(90px, 1.4fr) minmax(92px, auto) 48px;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #e0eae6;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.harvest-contractor-bar-row > strong {
+  min-width: 0;
+  color: #183f34;
+  font-size: 0.65rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.harvest-contractor-bar-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8f0ed;
+}
+
+.harvest-contractor-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--bar-color, #15815f);
+}
+
+.harvest-contractor-bar-value {
+  display: grid;
+  justify-items: end;
+  gap: 1px;
+  color: #274a40;
+  white-space: nowrap;
+}
+
+.harvest-contractor-bar-value b {
+  font-size: 0.63rem;
+}
+
+.harvest-contractor-bar-value small,
+.harvest-contractor-bar-row > em {
+  color: #667b74;
+  font-size: 0.56rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.harvest-contractor-bar-row > em {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Los contenedores informativos muestran el dato completo; las matrices densas conservan su ancho. */
+.view.active-view :is(
+  .kpi,
+  .weather-kpi,
+  .chart-panel,
+  .order-card,
+  .execution-card,
+  .harvest-analytics-card,
+  .harvest-map-info,
+  .pest-map-info,
+  .fertilizer-tank-card,
+  .fertilizer-warehouse-group,
+  .fertilizer-history-card
+) :is(strong, b, em, small, span)[title] {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.view.active-view table:not(.irrigation-bandeja-matrix-table) :is(th, td) {
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.view.active-view :is(.panel, .kpi, .weather-kpi, .chart-panel, .order-card, .execution-card) :is(strong, b, em, small, span, p):not(.irrigation-gantt *):not(.gantt-table *):not(.irrigation-bandeja-matrix *):not(.geo-map *) {
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.view.active-view :is(strong, b, em, small, span, td, th)[title]:not(.irrigation-gantt *):not(.gantt-table *):not(.irrigation-bandeja-matrix *) {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.harvest-variety-year-bar strong,
+.harvest-export-comparison-row :is(b, em),
+.harvest-export-year-row :is(span, b),
+.harvest-export-variety-year-block > header :is(strong, small, b, span),
+.harvest-start-variety > div :is(strong, span),
+.harvest-rank-row span,
+.user-chip-copy :is(strong, small),
+.account-identity :is(strong, span) {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.harvest-variety-year-bar strong {
+  font-size: 0.6rem;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  :root {
+    --agrocore-sticky-filter-top: clamp(126px, 15svh, 144px);
+  }
+
+  .nav-item,
+  .nav-group-toggle,
+  .nav-group .nav-item,
+  .nav > .nav-item {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .harvest-comparison-species-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .harvest-comparison-species-totals {
+    justify-content: flex-start;
+  }
+
+  .harvest-contractor-years {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-contractor-bar-row {
+    grid-template-columns: minmax(110px, 1fr) minmax(80px, 1.2fr) auto;
+  }
+
+  .harvest-contractor-bar-row > em {
+    grid-column: 1;
+    text-align: left;
+  }
+}
+
 .irrigation-panel {
   display: grid;
   gap: 5px;
@@ -17397,6 +17741,764 @@ body {
   }
 }
 
+/* AgroCore UI 241: navegacion, cuenta y lectura visual de Cosecha. */
+:root {
+  --orchard-orange: #e47c16;
+  --orchard-mandarin: #f3a51b;
+  --orchard-avocado: #557b2d;
+  --panel-line: #c7d9d2;
+  --panel-shadow: 0 7px 20px rgba(18, 59, 49, 0.075);
+}
+
+body {
+  background: #edf4f1;
+}
+
+.sidebar {
+  border-right: 1px solid rgba(255, 255, 255, 0.09);
+  background:
+    linear-gradient(180deg, #073f35 0%, #075b47 48%, #073b34 100%);
+}
+
+.sidebar .brand {
+  padding: 2px 3px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.nav-item,
+.nav-group-toggle {
+  display: grid;
+  grid-template-columns: 23px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+}
+
+.nav-icon {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-sub-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: rgba(197, 236, 219, 0.72);
+}
+
+.nav-group .nav-item.active .nav-sub-dot {
+  background: var(--orchard-orange);
+  box-shadow: 0 0 0 3px rgba(228, 124, 22, 0.15);
+}
+
+.nav-group-toggle::after {
+  float: none;
+  justify-self: end;
+}
+
+.nav-group.open {
+  border-left-color: rgba(244, 168, 48, 0.72);
+}
+
+.nav > .nav-item.active,
+.nav-group .nav-item.active {
+  box-shadow: inset 3px 0 0 var(--orchard-orange);
+}
+
+.panel,
+.chart-panel,
+.kpi,
+.irrigation-report-panel {
+  border-color: var(--panel-line);
+  box-shadow: var(--panel-shadow);
+  background: #ffffff;
+}
+
+.panel-header {
+  min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #deebe6;
+}
+
+.panel-header h2 {
+  color: #153b31;
+}
+
+.user-menu {
+  position: relative;
+}
+
+.user-chip {
+  display: grid;
+  grid-template-columns: 30px minmax(90px, 1fr) 16px;
+  gap: 7px;
+  align-items: center;
+  min-height: 38px;
+  max-width: 260px;
+  border: 1px solid #c4d8d0;
+  border-radius: 8px;
+  padding: 3px 7px 3px 4px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 4px 13px rgba(16, 66, 53, 0.08);
+  cursor: pointer;
+  text-align: left;
+}
+
+.user-chip:hover,
+.user-menu.open .user-chip {
+  border-color: #68aa91;
+  background: #f7fbf9;
+}
+
+.user-avatar,
+.account-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: linear-gradient(145deg, #08664f, #12a476);
+  color: #ffffff;
+  font-weight: 950;
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  font-size: 0.65rem;
+}
+
+.user-chip-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.05;
+}
+
+.user-chip-copy strong,
+.user-chip-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-chip-copy strong {
+  font-size: 0.7rem;
+}
+
+.user-chip-copy small {
+  margin-top: 3px;
+  color: #667d75;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.user-chevron {
+  color: #668078;
+  font-size: 0.86rem;
+  font-weight: 900;
+  transition: transform 160ms ease;
+}
+
+.user-menu.open .user-chevron {
+  transform: rotate(180deg);
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 1000;
+  display: grid;
+  width: 215px;
+  padding: 6px;
+  border: 1px solid #c6d9d1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 38px rgba(13, 54, 43, 0.18);
+}
+
+.user-menu-panel[hidden] {
+  display: none;
+}
+
+.user-menu-panel button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  color: #173d33;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-menu-panel button:hover {
+  background: #edf7f2;
+}
+
+.user-menu-panel button:last-child {
+  color: #a53027;
+}
+
+.modal:has(.account-dialog) {
+  width: min(850px, calc(100vw - 24px));
+}
+
+.account-dialog {
+  max-height: calc(100dvh - 28px);
+  overflow: auto;
+}
+
+.account-dialog .modal-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.account-dialog-eyebrow {
+  color: var(--brand);
+  font-size: 0.62rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.account-identity {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #c9ddd4;
+  border-radius: 8px;
+  background: #f3f9f6;
+}
+
+.account-avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 0.9rem;
+}
+
+.account-identity div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.account-identity strong,
+.account-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-identity strong {
+  font-size: 0.95rem;
+}
+
+.account-identity span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.account-identity em {
+  padding: 4px 8px;
+  border: 1px solid #b9d8ca;
+  border-radius: 999px;
+  background: #e4f4ec;
+  color: #0a684e;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.account-dialog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(250px, 0.75fr);
+  gap: 10px;
+}
+
+.account-section {
+  display: grid;
+  gap: 9px;
+  align-content: start;
+  padding: 11px;
+  border: 1px solid #d3e2dc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.account-section-head {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #e1ebe7;
+}
+
+.account-section-head strong {
+  color: #143e33;
+  font-size: 0.82rem;
+}
+
+.account-section-head span {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.account-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.account-form-grid .full {
+  grid-column: 1 / -1;
+}
+
+.account-section label {
+  display: grid;
+  gap: 3px;
+  color: #536c64;
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.account-section input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #c9dcd4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.account-section input[readonly] {
+  background: #f2f6f4;
+  color: #63756f;
+}
+
+.account-save-button {
+  justify-self: end;
+  min-height: 34px;
+}
+
+.harvest-filter-shell,
+.harvest-export-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(118px, 0.72fr)) minmax(230px, 1.35fr) auto;
+  gap: 7px;
+  align-items: end;
+  padding: 8px;
+  border: 1px solid #ccdcd6;
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.harvest-operational-filters {
+  grid-template-columns: minmax(250px, 1.35fr) repeat(3, minmax(125px, 0.72fr)) auto;
+}
+
+.harvest-filter-shell > label,
+.harvest-export-filter-grid > label,
+.harvest-export-years-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #50685f;
+  font-size: 0.61rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.harvest-filter-shell select,
+.harvest-filter-shell input,
+.harvest-export-filter-grid select {
+  width: 100%;
+  min-height: 31px;
+  border: 1px solid #c5d8d0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.harvest-filter-shell > button,
+.harvest-export-filter-grid > button {
+  justify-self: end;
+  min-height: 31px;
+}
+
+.harvest-analysis-filters .harvest-year-checks,
+.harvest-export-years-field .harvest-year-checks {
+  justify-content: flex-end;
+}
+
+.harvest-export-filter-panel {
+  grid-template-columns: 1fr;
+  padding: 8px;
+}
+
+.harvest-export-filter-grid {
+  grid-template-columns: repeat(3, minmax(122px, 0.72fr)) minmax(250px, 1.35fr) auto;
+}
+
+.harvest-species-badge {
+  display: grid;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(20, 60, 49, 0.12);
+  border-radius: 8px;
+  font-size: 1.3rem;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.62);
+}
+
+.harvest-species-badge.orange {
+  background: #fff0dc;
+}
+
+.harvest-species-badge.mandarin {
+  background: #fff6d8;
+  filter: saturate(1.12);
+}
+
+.harvest-species-badge.avocado {
+  background: #eaf2dc;
+}
+
+.harvest-species-badge.other {
+  background: #e7f3ed;
+}
+
+.harvest-species-badge.compact {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  font-size: 1rem;
+}
+
+.harvest-start-variety {
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+}
+
+.harvest-start-variety > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.harvest-start-variety > div strong,
+.harvest-start-variety > div span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-potrero-species-section > header {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: #bdd8ca;
+  background: #edf7f2;
+}
+
+.harvest-contractor-ranking-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.harvest-contractor-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.harvest-contractor-species {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.harvest-contractor-species > header {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 7px 9px;
+  border-left: 4px solid var(--orchard-orange);
+  background: #f1f7f4;
+}
+
+.harvest-contractor-species > header div {
+  display: grid;
+  gap: 1px;
+}
+
+.harvest-contractor-species > header strong {
+  color: #135846;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.harvest-contractor-species > header span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.harvest-contractor-variety-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 8px;
+}
+
+.harvest-contractor-variety-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d2e1db;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.harvest-contractor-variety-card h3 {
+  margin: 0;
+  color: #173e34;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.harvest-contractor-years {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 7px;
+}
+
+.harvest-contractor-year {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  padding-top: 6px;
+  border-top: 1px solid #e1ebe7;
+}
+
+.harvest-contractor-year > b {
+  color: #647970;
+  font-size: 0.64rem;
+}
+
+.harvest-contractor-year > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.harvest-contractor-rank {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr) auto auto;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px 5px;
+  border-radius: 6px;
+  background: #f5f8f6;
+}
+
+.harvest-contractor-rank em {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.harvest-contractor-rank.rank-1 em { background: #c88b09; }
+.harvest-contractor-rank.rank-2 em { background: #7b8790; }
+.harvest-contractor-rank.rank-3 em { background: #a35e2a; }
+
+.harvest-contractor-rank strong,
+.harvest-contractor-rank i,
+.harvest-contractor-rank small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-contractor-rank strong {
+  font-size: 0.66rem;
+}
+
+.harvest-contractor-rank i,
+.harvest-contractor-rank small {
+  color: #5d7069;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+@media (max-width: 1100px) {
+  .harvest-filter-shell,
+  .harvest-operational-filters,
+  .harvest-export-filter-grid {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+
+  .harvest-analysis-filters .harvest-year-checks,
+  .harvest-export-years-field {
+    grid-column: span 2;
+    justify-content: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .nav-item,
+  .nav-group-toggle,
+  .nav-group .nav-item,
+  .nav > .nav-item {
+    display: inline-grid !important;
+    grid-template-columns: auto auto auto !important;
+    gap: 5px !important;
+  }
+
+  .nav-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    font-size: 0.68rem;
+  }
+
+  .nav-sub-dot {
+    width: 5px;
+    height: 5px;
+    margin-left: 2px;
+  }
+
+  .user-chip {
+    grid-template-columns: 27px minmax(58px, 92px) 12px;
+    min-height: 31px;
+    max-width: 145px;
+    padding-right: 5px;
+  }
+
+  .user-avatar {
+    width: 27px;
+    height: 27px;
+  }
+
+  .user-chip-copy strong {
+    font-size: 0.61rem;
+  }
+
+  .user-chip-copy small {
+    font-size: 0.52rem;
+  }
+
+  .user-menu-panel {
+    position: fixed;
+    top: 106px;
+    right: 8px;
+    width: min(230px, calc(100vw - 16px));
+  }
+
+  .account-dialog-grid,
+  .account-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-form-grid .full {
+    grid-column: auto;
+  }
+
+  .account-identity {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .account-avatar {
+    width: 42px;
+    height: 42px;
+  }
+
+  .account-identity em {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .harvest-filter-shell,
+  .harvest-operational-filters,
+  .harvest-export-filter-grid {
+    display: flex !important;
+    align-items: end;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 6px !important;
+  }
+
+  .harvest-filter-shell > label,
+  .harvest-export-filter-grid > label {
+    flex: 0 0 138px;
+  }
+
+  .harvest-operational-filters .harvest-date-range {
+    flex-basis: 238px;
+  }
+
+  .harvest-analysis-filters .harvest-year-checks,
+  .harvest-export-years-field {
+    flex: 0 0 auto;
+    grid-column: auto;
+    min-width: max-content;
+  }
+
+  .harvest-filter-shell > button,
+  .harvest-export-filter-grid > button {
+    flex: 0 0 auto;
+  }
+
+  .harvest-contractor-variety-grid,
+  .harvest-contractor-years {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-contractor-rank {
+    grid-template-columns: 21px minmax(0, 1fr) auto;
+  }
+
+  .harvest-contractor-rank small {
+    display: none;
+  }
+}
+
 @media (max-width: 980px) {
   .satellite-toolbar,
   .satellite-layout {
@@ -17487,5 +18589,557 @@ body {
 
   .satellite-decision-legend > div {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Overrides finales UI 242. */
+.nav-item,
+.nav-group-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.nav-icon,
+.nav-sub-dot,
+.harvest-species-badge {
+  display: none !important;
+}
+
+.nav-label,
+.user-chip-copy :is(strong, small),
+.account-identity :is(strong, span),
+.harvest-start-variety > div :is(strong, span),
+.harvest-rank-row span,
+.harvest-export-comparison-row :is(b, em),
+.harvest-export-year-row :is(span, b),
+.harvest-export-variety-year-block > header :is(strong, small, b, span) {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.user-menu-panel button {
+  display: block;
+}
+
+.harvest-start-variety,
+.harvest-contractor-species > header {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.harvest-potrero-species-section > header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.view.active-view :is(.weather-station-filters, .satellite-toolbar, .program-filters, .gantt-controls, .warehouse-filters, .report-toolbar, .irrigation-balance-toolbar, .irrigation-local-filters, .calicatas-filters, .harvest-filter-shell, .harvest-export-filter-panel, .fertilizer-toolbar, .pest-filter-bar) {
+  position: sticky !important;
+  top: var(--agrocore-sticky-filter-top) !important;
+  z-index: 880;
+  border-color: #b9d4c9;
+  background: rgba(248, 252, 250, 0.97);
+  box-shadow: 0 8px 20px rgba(13, 67, 52, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.view.active-view :is(.program-filters, .gantt-controls, .warehouse-filters, .report-toolbar, .irrigation-filters, .calicatas-filters, .irrigation-local-filters)::before {
+  content: none !important;
+}
+
+.harvest-contractor-years {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.harvest-contractor-year {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.harvest-contractor-year > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.harvest-contractor-bar-row {
+  grid-template-columns: minmax(90px, 0.85fr) minmax(50px, 1.4fr) minmax(74px, auto) 40px;
+  gap: 5px;
+}
+
+.harvest-variety-year-bar strong {
+  max-width: none;
+  overflow: visible;
+  font-size: 0.6rem;
+  line-height: 1.05;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.view.active-view table:not(.irrigation-bandeja-matrix-table) :is(th, td) {
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.view.active-view :is(.panel, .kpi, .weather-kpi, .chart-panel, .order-card, .execution-card) :is(strong, b, em, small, span, p):not(.irrigation-gantt *):not(.gantt-table *):not(.irrigation-bandeja-matrix *):not(.geo-map *) {
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.view.active-view :is(strong, b, em, small, span, td, th)[title]:not(.irrigation-gantt *):not(.gantt-table *):not(.irrigation-bandeja-matrix *) {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  :root {
+    --agrocore-sticky-filter-top: clamp(126px, 15svh, 144px);
+  }
+
+  .nav-item,
+  .nav-group-toggle,
+  .nav-group .nav-item,
+  .nav > .nav-item {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .harvest-contractor-years {
+    grid-template-columns: 1fr;
+  }
+
+  .harvest-contractor-year {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* AgroCore UI 243: cosecha analisis mas compacto y ranking expandible. */
+.view.active-view .harvest-analytics-card {
+  padding: 10px !important;
+  gap: 8px !important;
+}
+
+.view.active-view .harvest-analytics-card .panel-header {
+  min-height: 0;
+  margin-bottom: 2px;
+  padding-bottom: 4px;
+}
+
+.view.active-view .harvest-analytics-card .panel-header h2 {
+  font-size: 0.98rem;
+  line-height: 1.1;
+}
+
+.view.active-view .harvest-analytics-card .panel-header p {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+
+.harvest-analysis-filters {
+  padding: 8px !important;
+  gap: 7px !important;
+}
+
+.harvest-analysis-filters label {
+  gap: 3px;
+}
+
+.harvest-analysis-filters select,
+.harvest-analysis-filters button {
+  min-height: 34px;
+}
+
+.harvest-analysis-filters .harvest-year-checks {
+  min-height: 34px;
+  padding: 4px 5px;
+  gap: 5px;
+}
+
+.harvest-variety-year-totals {
+  gap: 5px !important;
+  margin-bottom: 4px;
+}
+
+.harvest-variety-year-totals span,
+.harvest-variety-year-totals em {
+  padding: 4px 6px !important;
+  font-size: 0.64rem !important;
+}
+
+.harvest-variety-year-legend {
+  gap: 7px !important;
+  margin: 2px 0 4px !important;
+}
+
+.harvest-comparison-species-stack,
+.harvest-contractor-stack {
+  gap: 8px !important;
+}
+
+.harvest-comparison-species,
+.harvest-contractor-species {
+  gap: 6px !important;
+}
+
+.harvest-comparison-species {
+  padding: 7px !important;
+}
+
+.harvest-comparison-species-head {
+  min-height: 0;
+  padding-bottom: 5px !important;
+}
+
+.harvest-comparison-species-totals span,
+.harvest-comparison-species-totals > strong {
+  padding: 3px 5px !important;
+}
+
+.harvest-variety-year-groups {
+  gap: 7px !important;
+}
+
+.harvest-variety-year-group {
+  padding: 7px !important;
+  gap: 5px !important;
+}
+
+.harvest-variety-year-group header {
+  gap: 5px !important;
+  margin-bottom: 1px !important;
+}
+
+.harvest-variety-year-bars {
+  min-height: 118px !important;
+  gap: 5px !important;
+}
+
+.harvest-variety-year-bar {
+  gap: 3px !important;
+}
+
+.harvest-variety-year-bar > div {
+  height: 82px !important;
+}
+
+.harvest-contractor-ranking-panel {
+  gap: 8px !important;
+}
+
+.harvest-contractor-species > header {
+  min-height: 0;
+  padding: 5px 8px !important;
+}
+
+.harvest-contractor-variety-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+  gap: 7px !important;
+}
+
+.harvest-contractor-variety-card {
+  padding: 7px !important;
+  gap: 5px !important;
+}
+
+.harvest-contractor-variety-card h3 {
+  font-size: 0.74rem !important;
+  line-height: 1.1;
+}
+
+.harvest-contractor-years {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+  gap: 6px !important;
+}
+
+.harvest-contractor-year {
+  gap: 4px !important;
+  padding-top: 4px !important;
+}
+
+.harvest-contractor-year > header {
+  min-height: 0;
+  font-size: 0.62rem !important;
+}
+
+.harvest-contractor-bars {
+  gap: 4px !important;
+}
+
+.harvest-contractor-bar-row {
+  grid-template-columns: 20px minmax(86px, 0.95fr) minmax(54px, 1.35fr) minmax(70px, auto) 38px !important;
+  min-height: 28px;
+  padding: 4px 5px !important;
+  gap: 5px !important;
+}
+
+.harvest-contractor-position {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e4f1eb;
+  color: #0d6b51;
+  font-size: 0.6rem;
+  font-weight: 950;
+}
+
+.harvest-contractor-bar-row > strong {
+  font-size: 0.61rem !important;
+  line-height: 1.08 !important;
+}
+
+.harvest-contractor-bar-track {
+  height: 7px !important;
+}
+
+.harvest-contractor-bar-value b,
+.harvest-contractor-bar-value small,
+.harvest-contractor-bar-row > em {
+  font-size: 0.57rem !important;
+  line-height: 1.05;
+}
+
+.harvest-show-more-button {
+  justify-self: start;
+  min-height: 27px;
+  padding: 4px 8px;
+  border: 1px solid #b8d7ca;
+  border-radius: 999px;
+  background: #f4fbf8;
+  color: #0d6048;
+  font-size: 0.64rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.harvest-show-more-button:hover {
+  border-color: #0d7a5a;
+  background: #e8f6ef;
+}
+
+@media (max-width: 760px) {
+  .harvest-contractor-variety-grid,
+  .harvest-contractor-years {
+    grid-template-columns: 1fr !important;
+  }
+
+  .harvest-contractor-bar-row {
+    grid-template-columns: 20px minmax(0, 1fr) 42px !important;
+  }
+
+  .harvest-contractor-bar-track,
+  .harvest-contractor-bar-value {
+    grid-column: 2 / -1;
+  }
+}
+
+/* AgroCore UI 244: analisis de cosecha progresivo y rankings legibles. */
+.harvest-analysis-open-section {
+  position: relative;
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 680px;
+}
+
+.harvest-analysis-open-section > .harvest-analytics-card .panel-header {
+  padding-right: 76px;
+}
+
+.harvest-analysis-fold-card {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0 !important;
+  border-color: #c7ddd3;
+  background: #f8fcfa;
+  box-shadow: none;
+}
+
+.harvest-analysis-fold-trigger {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harvest-analysis-fold-trigger:hover,
+.harvest-analysis-fold-trigger:focus-visible {
+  background: #edf8f3;
+}
+
+.harvest-analysis-fold-code {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #afd4c4;
+  border-radius: 7px;
+  background: #dff3e9;
+  color: #096348;
+  font-size: 0.72rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.harvest-analysis-fold-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.harvest-analysis-fold-copy strong {
+  color: #173d33;
+  font-size: 0.79rem;
+  font-weight: 950;
+}
+
+.harvest-analysis-fold-copy small {
+  overflow: hidden;
+  color: #667a72;
+  font-size: 0.64rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-analysis-fold-state {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid #bcd7cb;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #096348;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.harvest-analysis-collapse-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-grid;
+  grid-template-columns: 18px auto;
+  gap: 3px;
+  align-items: center;
+  min-height: 27px;
+  padding: 3px 7px 3px 4px;
+  border: 1px solid #bdd8cc;
+  border-radius: 6px;
+  background: #f3faf6;
+  color: #235e4d;
+  font-size: 0.62rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.harvest-analysis-collapse-button span:first-child {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 4px;
+  background: #dcefe6;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.harvest-contractor-position.rank-1,
+.harvest-contractor-position.rank-2,
+.harvest-contractor-position.rank-3,
+.harvest-rank-medal {
+  border: 1px solid rgba(39, 44, 42, 0.16);
+  color: #25312d;
+  box-shadow: 0 1px 3px rgba(14, 47, 37, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.harvest-contractor-position.rank-1,
+.harvest-rank-medal.rank-1 {
+  background: linear-gradient(180deg, #ffe584, #d99a12);
+}
+
+.harvest-contractor-position.rank-2,
+.harvest-rank-medal.rank-2 {
+  background: linear-gradient(180deg, #f5f7f8, #aeb9c1);
+}
+
+.harvest-contractor-position.rank-3,
+.harvest-rank-medal.rank-3 {
+  background: linear-gradient(180deg, #f4bf90, #b86b31);
+}
+
+.harvest-rank-medal {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 5px;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.57rem;
+  font-weight: 950;
+  vertical-align: middle;
+}
+
+.harvest-productivity-potrero-head > strong {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.harvest-start-cell.is-estimated {
+  border-style: dashed;
+}
+
+.harvest-contractor-years {
+  align-items: start;
+}
+
+.harvest-contractor-year {
+  align-self: start;
+}
+
+@media (max-width: 760px) {
+  .harvest-analysis-fold-trigger {
+    grid-template-columns: 32px minmax(0, 1fr) 26px;
+    min-height: 50px;
+  }
+
+  .harvest-analysis-fold-copy small {
+    white-space: normal;
+  }
+
+  .harvest-analysis-collapse-button {
+    width: 28px;
+    grid-template-columns: 1fr;
+    padding: 4px;
+  }
+
+  .harvest-analysis-collapse-button span:last-child {
+    display: none;
+  }
+
+  .harvest-analysis-open-section > .harvest-analytics-card .panel-header {
+    padding-right: 38px;
   }
 }

@@ -16,6 +16,32 @@ alter table public.fertilizante_aplicaciones
   add column if not exists modificado_por uuid null,
   add column if not exists modificado_por_nombre text null;
 
+update public.fertilizante_preparaciones
+set
+  creado_por = coalesce(creado_por, responsable_id),
+  creado_por_nombre = coalesce(nullif(btrim(creado_por_nombre), ''), nullif(btrim(responsable_nombre), ''))
+where creado_por is null
+   or nullif(btrim(creado_por_nombre), '') is null;
+
+update public.fertilizante_aplicaciones
+set
+  creado_por = coalesce(creado_por, responsable_id),
+  creado_por_nombre = coalesce(nullif(btrim(creado_por_nombre), ''), nullif(btrim(responsable_nombre), ''))
+where creado_por is null
+   or nullif(btrim(creado_por_nombre), '') is null;
+
+update public.fertilizante_preparaciones p
+set creado_por_nombre = u.nombre_completo
+from public.usuarios u
+where p.creado_por = u.id
+  and nullif(btrim(p.creado_por_nombre), '') is null;
+
+update public.fertilizante_aplicaciones a
+set creado_por_nombre = u.nombre_completo
+from public.usuarios u
+where a.creado_por = u.id
+  and nullif(btrim(a.creado_por_nombre), '') is null;
+
 create or replace function public.fertilizante_operacion_actualizado_en()
 returns trigger
 language plpgsql

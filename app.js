@@ -523,6 +523,14 @@ let harvestAnalysisSelectedSpecies = "Todas";
 let harvestAnalysisSelectedYears = new Set();
 let harvestAnalysisMetric = "kg";
 let harvestAnalysisDbRows = [];
+let harvestContractorExpandedKeys = new Set();
+let harvestAnalysisOpenSections = new Set(["annual", "progress"]);
+let harvestAnalysisRenderCacheSource = null;
+let harvestAnalysisRenderCacheFields = null;
+let harvestAnalysisRenderCache = new Map();
+const HARVEST_ANALYSIS_RENDER_CACHE_MAX = 12;
+let harvestAnalysisFieldIndexSource = null;
+let harvestAnalysisFieldIndex = new Map();
 let harvestExportDbRows = [];
 let harvestExcelSyncState = null;
 let harvestExcelSyncSaving = false;
@@ -567,6 +575,7 @@ let fertilizerFields = [];
 let fertilizerPreparationHistory = [];
 let fertilizerApplicationHistory = [];
 let fertilizerUserNames = new Map();
+let fertilizerHistoryLoadError = "";
 let fertilizerStockError = "";
 let fertilizerLotSaving = false;
 let weatherStationYear = String(new Date().getFullYear());
@@ -588,7 +597,9 @@ const CLOUD_MODULE_TTL_MS = {
   applications: 5 * 60 * 1000,
   irrigation: 2 * 60 * 1000,
   calicatas: 5 * 60 * 1000,
-  harvest: 60 * 1000
+  harvest: 60 * 1000,
+  harvestAnalysis: 5 * 60 * 1000,
+  harvestExport: 5 * 60 * 1000
 };
 let cloudModuleCacheMeta = loadCloudModuleCacheMeta();
 let cloudLoadedModules = new Set();
@@ -784,8 +795,7 @@ async function loadCloudProfile() {
   }
 
   applyRoleNavigation();
-  const authButton = document.getElementById("authButton");
-  if (authButton) authButton.textContent = `${roleLabel(currentProfile?.role) || "Supabase"}: ${currentProfile?.full_name || supabaseSession.user?.email || ""}`;
+  updateAuthenticatedUserUi();
   return currentProfile;
 }
 
@@ -811,7 +821,9 @@ function cloudModuleHasUsableState(module) {
   if (module === "applications") return Boolean(state.orders?.length || state.products?.length || state.programs?.length);
   if (module === "irrigation") return Boolean(Object.keys(irrigationHours || {}).length || Object.keys(irrigationProgramHours || {}).length || state.irrigationEvaporation?.length);
   if (module === "calicatas") return Boolean(state.calicatas?.length);
-  if (module === "harvest") return Boolean(state.harvestRecords?.length || state.harvestCrewSchedule?.length || state.harvestJornales?.length || state.harvestAnalysisRecords?.length || state.harvestExportRecords?.length);
+  if (module === "harvest") return Boolean(state.harvestRecords?.length || state.harvestCrewSchedule?.length || state.harvestJornales?.length);
+  if (module === "harvestAnalysis") return Boolean(state.harvestAnalysisRecords?.length && (state.harvestFields?.length || state.blocks?.length));
+  if (module === "harvestExport") return Boolean(state.harvestExportRecords?.length && (state.harvestFields?.length || state.blocks?.length));
   return false;
 }
 
@@ -875,7 +887,9 @@ function cloudModulesForView(view) {
     return modules;
   }
   if (view === "calicatas") return ["fields", "calicatas"];
-  if (view === "harvestMap" || view === "harvestInfo" || view === "harvestExport" || view === "harvestAnalysis") return ["harvest"];
+  if (view === "harvestMap" || view === "harvestInfo") return ["harvest"];
+  if (view === "harvestAnalysis") return ["harvestAnalysis"];
+  if (view === "harvestExport") return ["harvestExport"];
   if (["applicationDashboard", "program", "manager", "warehouse", "orders", "execution", "inventory", "prices", "reports", "masters"].includes(view)) {
     return ["fields", "applications"];
   }
@@ -1161,6 +1175,40 @@ function roleLabel(role) {
   const normalized = normalizeRole(role);
   const labels = { admin: "Admin", supervisor: "Jefe", bodeguero: "Bodeguero", operador: "Operador", lectura: "Solo lectura" };
   return labels[normalized] || role || "sin perfil";
+}
+
+function accountInitials(name = "") {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "AC";
+  return `${parts[0]?.[0] || ""}${parts.length > 1 ? parts.at(-1)?.[0] || "" : parts[0]?.[1] || ""}`.toLocaleUpperCase("es");
+}
+
+function updateAuthenticatedUserUi() {
+  const button = document.getElementById("authButton");
+  if (!button) return;
+  const name = currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || "Cuenta";
+  const role = supabaseSession ? roleLabel(currentProfile?.role || currentProfile?.rol) : "Usuario";
+  const nameNode = button.querySelector("[data-user-name]");
+  const roleNode = button.querySelector("[data-user-role]");
+  const avatarNode = button.querySelector("[data-user-avatar]");
+  if (nameNode) nameNode.textContent = name;
+  if (roleNode) roleNode.textContent = role;
+  if (avatarNode) avatarNode.textContent = accountInitials(name);
+  button.title = supabaseSession ? `${name} - ${role}` : "Cuenta";
+}
+
+function setUserMenuOpen(open) {
+  const button = document.getElementById("authButton");
+  const panel = document.getElementById("userMenuPanel");
+  if (!button || !panel) return;
+  panel.hidden = !open;
+  button.setAttribute("aria-expanded", String(Boolean(open)));
+  document.getElementById("userMenu")?.classList.toggle("open", Boolean(open));
+}
+
+function toggleUserMenu() {
+  const panel = document.getElementById("userMenuPanel");
+  setUserMenuOpen(Boolean(panel?.hidden));
 }
 
 function hasRole(...roles) {
@@ -4969,6 +5017,7 @@ async function renderIrrigationSatelliteMap(blocks) {
         tilt: 0
       });
     }
+    irrigationSatelliteMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
     maps.event.trigger(irrigationSatelliteMap, "resize");
 
     const activeBounds = new maps.LatLngBounds();
@@ -5899,20 +5948,52 @@ function clearRegistrationForm() {
 
 function openAuthDialog() {
   const dialog = document.getElementById("authDialog");
+  if (dialog?.open) dialog.close();
   if (supabaseSession) {
+    const displayName = currentProfile?.full_name || currentProfile?.nombre_completo || "Usuario Canelillo";
+    const userEmail = supabaseSession.user?.email || currentProfile?.email || "";
+    const userRut = currentProfile?.rut || "";
     dialog.innerHTML = `
-      <form method="dialog" class="modal-body">
+      <div class="modal-body account-dialog">
         <div class="modal-head">
-          <h2>Supabase conectado</h2>
+          <div>
+            <span class="account-dialog-eyebrow">Mi cuenta</span>
+            <h2>Informacion de la cuenta</h2>
+          </div>
           <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
         </div>
-        <p>Usuario: ${currentProfile?.full_name || supabaseSession.user?.email || "Sesion activa"}<br>Rol: ${roleLabel(currentProfile?.rol || currentProfile?.role)}<br>Area: ${areaLabel(currentProfile?.area)}</p>
+        <div class="account-identity">
+          <span class="account-avatar" aria-hidden="true">${escapeHtml(accountInitials(displayName))}</span>
+          <div><strong>${escapeHtml(displayName)}</strong><span>${escapeHtml(userEmail)}</span></div>
+          <em>${escapeHtml(roleLabel(currentProfile?.rol || currentProfile?.role))}</em>
+        </div>
+        <div class="account-dialog-grid">
+          <form id="accountProfileForm" class="account-section">
+            <div class="account-section-head"><strong>Datos personales</strong><span>Los cambios se comparten con las aplicaciones Canelillo.</span></div>
+            <div class="account-form-grid">
+              <label>Nombre completo<input name="fullName" autocomplete="name" maxlength="120" value="${htmlAttr(displayName)}" required></label>
+              <label>RUT<input name="rut" maxlength="20" value="${htmlAttr(userRut)}" placeholder="12.345.678-9" required></label>
+              <label>Correo<input type="email" value="${htmlAttr(userEmail)}" readonly></label>
+              <label>Rol<input value="${htmlAttr(roleLabel(currentProfile?.rol || currentProfile?.role))}" readonly></label>
+              <label class="full">Area de acceso<input value="${htmlAttr(areaLabel(currentProfile?.area))}" readonly></label>
+            </div>
+            <button class="primary-button account-save-button" type="button" data-action="save-account-profile">Guardar informacion</button>
+          </form>
+          <form id="accountPasswordForm" class="account-section account-security-section">
+            <div class="account-section-head"><strong>Cambiar contrasena</strong><span>Confirma tu clave actual antes de definir una nueva.</span></div>
+            <label>Contrasena actual<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+            <label>Nueva contrasena<input name="newPassword" type="password" autocomplete="new-password" required></label>
+            <label>Repetir nueva contrasena<input name="newPassword2" type="password" autocomplete="new-password" required></label>
+            <button class="secondary-button account-save-button" type="button" data-action="save-account-password">Actualizar contrasena</button>
+          </form>
+        </div>
         <div class="modal-actions">
           <button class="secondary-button" type="button" data-action="close-dialog">Cerrar</button>
           <button class="danger-button" type="button" data-action="logout">Cerrar sesion</button>
         </div>
-      </form>
+      </div>
     `;
+    setUserMenuOpen(false);
     dialog.showModal();
     return;
   }
@@ -5957,6 +6038,98 @@ function openAuthDialog() {
   dialog.showModal();
   document.getElementById("loginButton").addEventListener("click", loginSupabase);
   document.getElementById("registerButton").addEventListener("click", registerSupabase);
+}
+
+async function updateAuthUserMetadata(metadata = {}) {
+  const session = await ensureSupabaseSession(false);
+  if (!session?.access_token) return;
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ data: metadata })
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "No se pudo sincronizar el perfil de acceso");
+  }
+}
+
+async function saveAccountProfile() {
+  const form = document.getElementById("accountProfileForm");
+  const button = form?.querySelector('[data-action="save-account-profile"]');
+  if (!form || !form.reportValidity() || !supabaseSession?.user?.id) return;
+  const data = Object.fromEntries(new FormData(form));
+  const fullName = String(data.fullName || "").trim();
+  const rut = normalizeRutValue(data.rut);
+  if (fullName.length < 3 || !rut) {
+    showToast("Revisa el nombre y RUT");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Guardando...");
+    await sbFetch(`/rest/v1/usuarios?id=eq.${supabaseSession.user.id}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: JSON.stringify({ nombre_completo: fullName, rut })
+    });
+    try {
+      await updateAuthUserMetadata({
+        ...(supabaseSession.user?.user_metadata || {}),
+        full_name: fullName,
+        nombre_completo: fullName,
+        rut
+      });
+    } catch (metadataError) {
+      console.warn("El perfil publico se guardo, pero no se actualizo metadata de Auth", metadataError);
+    }
+    currentProfile = { ...currentProfile, nombre_completo: fullName, full_name: fullName, rut };
+    updateAuthenticatedUserUi();
+    openAuthDialog();
+    showToast("Informacion de cuenta actualizada");
+  } catch (error) {
+    showToast(`No se actualizo la cuenta: ${error.message}`);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function saveAccountPassword() {
+  const form = document.getElementById("accountPasswordForm");
+  const button = form?.querySelector('[data-action="save-account-password"]');
+  if (!form || !form.reportValidity()) return;
+  const data = Object.fromEntries(new FormData(form));
+  const currentPassword = String(data.currentPassword || "");
+  const password = String(data.newPassword || "");
+  const password2 = String(data.newPassword2 || "");
+  const email = normalizeEmailValue(supabaseSession?.user?.email);
+  if (password !== password2) {
+    showToast("Las contrasenas nuevas no coinciden");
+    return;
+  }
+  if (!isStrongPassword(password)) {
+    showToast("Usa 8 caracteres, mayuscula, minuscula y numero");
+    return;
+  }
+  if (password === currentPassword) {
+    showToast("La nueva contrasena debe ser distinta");
+    return;
+  }
+  try {
+    setButtonBusy(button, true, "Actualizando...");
+    const freshSession = await sbAuthPassword(email, currentPassword);
+    await sbUpdatePassword(freshSession.access_token, password);
+    saveSession(freshSession);
+    form.reset();
+    showToast("Contrasena actualizada");
+  } catch (error) {
+    showToast(`No se cambio la contrasena: ${error.message}`);
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 async function loginSupabase() {
@@ -6475,8 +6648,7 @@ async function logoutSupabase() {
   applyRoleNavigation();
   render();
 
-  const authButton = document.getElementById("authButton");
-  if (authButton) authButton.textContent = "Cuenta";
+  updateAuthenticatedUserUi();
 
   const storageStatus = document.getElementById("storageStatus");
   if (storageStatus) storageStatus.textContent = "Esperando inicio de sesión";
@@ -8573,42 +8745,26 @@ function computeFertilizerStockRows({ lots = [], preparations = [], products = [
 }
 
 async function loadFertilizerPreparationsForModule() {
-  const fullQuery = "select=id,estanque_id,producto_id,producto,producto_cantidad,producto_unidad,cantidad_litros,fecha,responsable_id,responsable_nombre,observacion,creado_por,creado_por_nombre,creado_en,modificado_por,modificado_por_nombre,actualizado_en&order=fecha.desc,creado_en.desc";
-  try {
-    return await sbSelectAll("fertilizante_preparaciones", fullQuery, 5000);
-  } catch (error) {
-    if (!isMissingSupabaseColumn(error, ["modificado_por_nombre", "actualizado_en", "producto_id", "producto_cantidad", "producto_unidad"])) throw error;
-    return sbSelectAll(
-      "fertilizante_preparaciones",
-      "select=id,estanque_id,producto_id,producto,producto_cantidad,producto_unidad,cantidad_litros,fecha,responsable_id,responsable_nombre,observacion,creado_por,creado_por_nombre,creado_en&order=fecha.desc,creado_en.desc",
-      5000
-    );
-  }
+  return sbSelectAll("fertilizante_preparaciones", "select=*&order=fecha.desc,creado_en.desc", 5000);
 }
 
 async function loadFertilizerApplicationsForModule() {
-  const fullQuery = "select=id,estanque_id,campo_id,fecha,potrero,bloque,cantidad_litros,responsable_id,responsable_nombre,observacion,creado_por,creado_por_nombre,creado_en,modificado_por,modificado_por_nombre,actualizado_en&order=fecha.desc,creado_en.desc";
-  try {
-    return await sbSelectAll("fertilizante_aplicaciones", fullQuery, 5000);
-  } catch (error) {
-    if (!isMissingSupabaseColumn(error, ["modificado_por_nombre", "actualizado_en"])) throw error;
-    return sbSelectAll(
-      "fertilizante_aplicaciones",
-      "select=id,estanque_id,campo_id,fecha,potrero,bloque,cantidad_litros,responsable_id,responsable_nombre,observacion,creado_por,creado_por_nombre,creado_en&order=fecha.desc,creado_en.desc",
-      5000
-    );
-  }
+  return sbSelectAll("fertilizante_aplicaciones", "select=*&order=fecha.desc,creado_en.desc", 5000);
 }
 
 async function loadFertilizerUserNamesForHistory(rows = []) {
   const ids = [...new Set(rows.flatMap((row) => [row.responsable_id, row.creado_por, row.modificado_por]).filter(Boolean))];
   const names = new Map();
   if (currentProfile?.id && currentProfile?.full_name) names.set(currentProfile.id, currentProfile.full_name);
+  if (supabaseSession?.user?.id) names.set(
+    supabaseSession.user.id,
+    currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession.user.email || ""
+  );
   if (!ids.length) return names;
   try {
-    const users = await sbSelectAll("usuarios", `select=id,nombre_completo,email&id=in.(${ids.join(",")})`, 1000);
+    const users = await sbSelectAll("usuarios", `select=id,nombre_completo&id=in.(${ids.join(",")})`, 1000);
     users.forEach((user) => {
-      if (user.id) names.set(user.id, user.nombre_completo || user.email || "");
+      if (user.id) names.set(user.id, user.nombre_completo || "");
     });
   } catch (error) {
     console.warn("No se pudieron cargar nombres de usuarios para fertilizantes", error);
@@ -8618,6 +8774,8 @@ async function loadFertilizerUserNamesForHistory(rows = []) {
 
 async function loadFertilizerRowsFromSupabase() {
   fertilizerStockError = "";
+  fertilizerHistoryLoadError = "";
+  const historyErrors = [];
   const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, applicationsRaw, lotsRaw] = await Promise.all([
     sbSelectAll(
       "v_fertilizante_estado_estanques",
@@ -8628,8 +8786,16 @@ async function loadFertilizerRowsFromSupabase() {
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
     sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true&order=numero_estanque.asc,fip.asc", 1000).catch(() => []),
     sbSelectAll("campos", "select=id,potrero,bloque,especie,variedad,hectareas,activo&activo=eq.true&order=potrero.asc,bloque.asc", 5000).catch(() => []),
-    loadFertilizerPreparationsForModule().catch(() => []),
-    loadFertilizerApplicationsForModule().catch(() => []),
+    loadFertilizerPreparationsForModule().catch((error) => {
+      console.warn("No se pudo cargar el historial de preparaciones", error);
+      historyErrors.push(`Preparaciones: ${error.message || "error de lectura"}`);
+      return [];
+    }),
+    loadFertilizerApplicationsForModule().catch((error) => {
+      console.warn("No se pudo cargar el historial de aplicaciones", error);
+      historyErrors.push(`Aplicaciones: ${error.message || "error de lectura"}`);
+      return [];
+    }),
     sbSelectAll("fertilizante_lotes", "select=id,caseta_id,producto_id,fecha,folio,lote,unidad,cantidad_total,observacion,creado_en&activo=eq.true&order=fecha.desc,creado_en.desc", 5000).catch((error) => {
       if (!isMissingSupabaseRelation(error, ["fertilizante_lotes"])) throw error;
       fertilizerStockError = "Ejecuta supabase_fertilizacion_lotes.sql para activar el inventario por caseta.";
@@ -8651,6 +8817,7 @@ async function loadFertilizerRowsFromSupabase() {
   fertilizerStockLots = lotsRaw;
   fertilizerPreparationHistory = preparationsRaw;
   fertilizerApplicationHistory = applicationsRaw;
+  fertilizerHistoryLoadError = historyErrors.join(" | ");
   fertilizerUserNames = await loadFertilizerUserNamesForHistory([...preparationsRaw, ...applicationsRaw]);
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
@@ -8676,6 +8843,7 @@ async function loadFertilizerRowsFromLocalBackup() {
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
   fertilizerUserNames = new Map();
+  fertilizerHistoryLoadError = "El historial requiere conexion con Supabase.";
   fertilizerStockError = "Inventario por caseta disponible solo con Supabase.";
   fertilizerDataSource = "Respaldo local";
   return (collection.records || []).map(normalizeFertilizerTankRow);
@@ -9120,6 +9288,7 @@ function resetFertilizerLoadedState() {
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
   fertilizerUserNames = new Map();
+  fertilizerHistoryLoadError = "";
   fertilizerStockError = "";
 }
 
@@ -9143,8 +9312,8 @@ function fertilizerStatusLabel(status) {
 
 function fertilizerHistoryUser(row) {
   const idName = fertilizerUserNames.get(row?.modificado_por) || fertilizerUserNames.get(row?.responsable_id) || fertilizerUserNames.get(row?.creado_por);
-  const rawName = idName || row?.modificado_por_nombre || row?.actualizado_por_nombre || row?.responsable_nombre || row?.creado_por_nombre || currentProfile?.full_name || currentProfile?.nombre_completo || "";
-  if (!rawName) return "Sin usuario";
+  const rawName = idName || row?.modificado_por_nombre || row?.actualizado_por_nombre || row?.creado_por_nombre || row?.responsable_nombre || "";
+  if (!rawName) return "Sin usuario registrado";
   const cleaned = String(rawName).trim();
   if (!cleaned.includes("@")) return cleaned;
   return cleaned.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -9292,9 +9461,8 @@ function renderFertilizerApplicationHistoryTable(rows) {
 }
 
 function renderFertilizerOperationsHistory() {
-  const visibleTankIds = new Set(fertilizerFilteredRows().map((row) => row.id));
-  const preparationRows = (fertilizerPreparationHistory || []).filter((row) => !visibleTankIds.size || visibleTankIds.has(row.estanque_id));
-  const applicationRows = (fertilizerApplicationHistory || []).filter((row) => !visibleTankIds.size || visibleTankIds.has(row.estanque_id));
+  const preparationRows = fertilizerHistoryRowsForMode("preparations");
+  const applicationRows = fertilizerHistoryRowsForMode("applications");
   return `
     <section class="fertilizer-operations-history">
       <article class="panel fertilizer-history-panel">
@@ -9314,17 +9482,22 @@ function renderFertilizerOperationsHistory() {
 }
 
 function fertilizerHistoryRowsForMode(mode = "applications") {
-  const visibleTankIds = new Set(fertilizerFilteredRows().map((row) => row.id));
   const sourceRows = mode === "preparations" ? fertilizerPreparationHistory : fertilizerApplicationHistory;
-  return (sourceRows || []).filter((row) => !visibleTankIds.size || visibleTankIds.has(row.estanque_id));
+  const hasActiveFilter = fertilizerCasetaFilter !== "Todas" || fertilizerPotreroFilter !== "Todos" || fertilizerStatusFilter !== "Todos";
+  if (!hasActiveFilter) return sourceRows || [];
+  const visibleTankIds = new Set(fertilizerFilteredRows().map((row) => row.id));
+  return (sourceRows || []).filter((row) => visibleTankIds.has(row.estanque_id));
 }
 
 function renderFertilizerHistoryDialogContent(mode = "applications") {
   const activeMode = mode === "preparations" ? "preparations" : "applications";
+  const applicationsCount = fertilizerHistoryRowsForMode("applications").length;
+  const preparationsCount = fertilizerHistoryRowsForMode("preparations").length;
   return `
+    ${fertilizerHistoryLoadError ? `<div class="empty-state compact fertilizer-history-error"><strong>No se pudo cargar todo el historial.</strong><p>${escapeHtml(fertilizerHistoryLoadError)}</p></div>` : ""}
     <div class="fertilizer-history-tabs">
-      <button type="button" data-action="set-fertilizer-history-mode" data-mode="applications" class="${activeMode === "applications" ? "active" : ""}">Aplicaciones</button>
-      <button type="button" data-action="set-fertilizer-history-mode" data-mode="preparations" class="${activeMode === "preparations" ? "active" : ""}">Preparacion</button>
+      <button type="button" data-action="set-fertilizer-history-mode" data-mode="applications" class="${activeMode === "applications" ? "active" : ""}">Aplicaciones <span>${number(applicationsCount, 0)}</span></button>
+      <button type="button" data-action="set-fertilizer-history-mode" data-mode="preparations" class="${activeMode === "preparations" ? "active" : ""}">Preparacion <span>${number(preparationsCount, 0)}</span></button>
     </div>
     <div class="fertilizer-history-dialog-table">
       ${activeMode === "preparations"
@@ -9683,7 +9856,7 @@ function harvestFilterControls() {
   if (harvestCrewFilter !== "Todas" && !crews.includes(harvestCrewFilter)) harvestCrewFilter = "Todas";
   if (harvestSdpFilter !== "Todos" && !sdps.includes(harvestSdpFilter)) harvestSdpFilter = "Todos";
   return `
-    <div class="program-filters harvest-filters">
+    <div class="harvest-filter-shell harvest-operational-filters">
       <label class="harvest-date-range">Rango fechas
         <span>
           <input data-harvest-filter="from" type="date" value="${harvestDateFromFilter}" title="Fecha inicio">
@@ -10372,6 +10545,8 @@ async function renderPestMonitoringMap(records, summaries, scale) {
         fullscreenControl: true,
         mapTypeControl: true,
         clickableIcons: false,
+        gestureHandling: "greedy",
+        scrollwheel: true,
         tilt: 0
       });
       const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
@@ -10439,6 +10614,7 @@ async function renderPestMonitoringMap(records, summaries, scale) {
         blockRings.flatMap((item) => item.rings)
       );
     }
+    pestMonitoringMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
     pestMonitoringPolygons.forEach((entry) => {
       const block = summaries.get(entry.key);
       const value = block?.intensity || 0;
@@ -10563,10 +10739,7 @@ function renderHarvestMap() {
     </div>
     <section class="panel harvest-map-panel">
       <div class="panel-header">
-        <div>
-          <h2>Mapa de bines</h2>
-          <p>Ubicaciones de escaneo desde cosecha, sobre el mapa de potreros y bloques.</p>
-        </div>
+        <h2>Mapa de bines</h2>
       </div>
       ${harvestFilterControls()}
       <div id="harvestGeoMap" class="geo-map harvest-map"><span>Cargando mapa de cosecha...</span></div>
@@ -10595,10 +10768,7 @@ function renderHarvestInfo() {
     </div>
     <section class="panel">
       <div class="panel-header">
-        <div>
-          <h2>Informacion de cosecha</h2>
-          <p>Dashboard basado en los datos usados para el Excel de cosecha.</p>
-        </div>
+        <h2>Informacion de cosecha</h2>
       </div>
       <div class="harvest-missing-compact">
         <strong>Sin escaneo hoy</strong>
@@ -11449,8 +11619,9 @@ async function saveHarvestExcelSyncAccepted() {
         });
       }
     }
-    invalidateCloudModules(["harvest"]);
-    await loadCloudData({ modules: ["harvest"], force: true, render: false });
+    const updatedModules = [...byTable.keys()].map((table) => table === "cosecha_analisis" ? "harvestAnalysis" : "harvestExport");
+    invalidateCloudModules(updatedModules);
+    await loadCloudData({ modules: updatedModules, force: true, render: false });
     render();
     document.getElementById("purchaseDialog")?.close();
     showToast(`Actualizacion aplicada: ${accepted.length} registros`);
@@ -12342,14 +12513,10 @@ function renderHarvestExport() {
   views.harvestExport.innerHTML = `
     <section class="panel harvest-analytics-panel">
       <div class="panel-header">
-        <div><h2>Exportacion</h2><p>Resumen de exportacion, proceso y calibres por ano.</p></div>
+        <h2>Exportacion</h2>
         <div class="top-actions">${renderHarvestExcelSyncButton("export")}</div>
       </div>
       <div class="harvest-export-filter-panel">
-        <div class="harvest-export-filter-title">
-          <strong>Filtros</strong>
-          <span>${number(rows.length, 0)} de ${number(allRows.length, 0)} registros</span>
-        </div>
         <div class="harvest-export-filter-grid">
           <label>Especie<select data-harvest-export-filter="species">${harvestSelectOptions(species, harvestExportSpeciesFilter)}</select></label>
           <label>Variedad<select data-harvest-export-filter="variety">${harvestSelectOptions(varieties, harvestExportVarietyFilter)}</select></label>
@@ -12567,6 +12734,17 @@ function harvestAnalysisFieldMatchScore(row, field) {
 function harvestAnalysisFieldsForRow(row) {
   const fields = harvestFieldCatalog();
   const blockCandidates = harvestAnalysisBlockCandidates(row);
+  const linkedId = row?.fieldId || row?.campo_id;
+  if (linkedId) {
+    if (harvestAnalysisFieldIndexSource !== fields) {
+      harvestAnalysisFieldIndexSource = fields;
+      harvestAnalysisFieldIndex = new Map(fields.filter((field) => field?.id).map((field) => [String(field.id), field]));
+    }
+    const linkedField = harvestAnalysisFieldIndex.get(String(linkedId));
+    if (linkedField) {
+      if (!blockCandidates.length || harvestAnalysisFieldMatchScore(row, linkedField) > 0) return [linkedField];
+    }
+  }
   const scored = fields
     .map((field) => ({ field, score: harvestAnalysisFieldMatchScore(row, field) }))
     .filter((item) => item.score > 0)
@@ -12575,10 +12753,6 @@ function harvestAnalysisFieldsForRow(row) {
     const bestScore = scored[0].score;
     return scored.filter((item) => item.score === bestScore).map((item) => item.field);
   }
-
-  const linkedId = row?.fieldId || row?.campo_id;
-  const linkedField = linkedId ? fields.find((field) => field.id === linkedId) : null;
-  if (!blockCandidates.length && linkedField) return [linkedField];
 
   if (blockCandidates.length) return [];
   const rowPotrero = harvestAnalysisNormalizeFieldToken(row?.potrero || row?.potrero_normalizado || row?.excelPotrero || row?.potrero_excel, { potrero: true });
@@ -12767,24 +12941,95 @@ function harvestDifferenceLabel(diff, unit, decimals) {
   return `Dif. ${sign}${number(diff.diff, decimals)}${unit}${percent}`;
 }
 
+const HARVEST_ANALYSIS_SECTION_META = {
+  annual: { code: "Σ", title: "Comparacion anual", summary: "Totales por especie, variedad y ano." },
+  progress: { code: "↗", title: "Avance a la fecha", summary: "Compara cada temporada hasta el mismo dia calendario." },
+  start: { code: "01", title: "Inicio de cosecha", summary: "Campana principal, termino y duracion por variedad." },
+  productivity: { code: "ha", title: "Productividad por potrero", summary: "Kg, kg/ha y kg/planta agrupados por especie y variedad." },
+  contractors: { code: "#", title: "Ranking de contratistas", summary: "Los tres mejores primero; el resto queda disponible bajo demanda." }
+};
+
+function harvestAnalysisCacheKey(sectionKey, extra = "") {
+  const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b)).join(",");
+  return [sectionKey, harvestAnalysisSpeciesFilter, harvestAnalysisVarietyFilter, harvestAnalysisPotreroFilter, harvestAnalysisMetric, years, todayChileIso(), extra].join("|");
+}
+
+function harvestAnalysisCachedMarkup(sectionKey, renderer, extra = "") {
+  const source = state.harvestAnalysisRecords || [];
+  const fields = state.harvestFields || state.blocks || [];
+  if (harvestAnalysisRenderCacheSource !== source || harvestAnalysisRenderCacheFields !== fields) {
+    harvestAnalysisRenderCacheSource = source;
+    harvestAnalysisRenderCacheFields = fields;
+    harvestAnalysisRenderCache = new Map();
+  }
+  const key = harvestAnalysisCacheKey(sectionKey, extra);
+  if (harvestAnalysisRenderCache.has(key)) {
+    const cached = harvestAnalysisRenderCache.get(key);
+    harvestAnalysisRenderCache.delete(key);
+    harvestAnalysisRenderCache.set(key, cached);
+    return cached;
+  }
+  const markup = renderer();
+  harvestAnalysisRenderCache.set(key, markup);
+  if (harvestAnalysisRenderCache.size > HARVEST_ANALYSIS_RENDER_CACHE_MAX) {
+    harvestAnalysisRenderCache.delete(harvestAnalysisRenderCache.keys().next().value);
+  }
+  return markup;
+}
+
+function renderHarvestAnalysisSection(sectionKey, renderer, options = {}) {
+  const meta = HARVEST_ANALYSIS_SECTION_META[sectionKey];
+  const open = harvestAnalysisOpenSections.has(sectionKey);
+  if (!open) {
+    return `
+      <article class="panel harvest-full-width harvest-analysis-fold-card" data-harvest-analysis-section="${htmlAttr(sectionKey)}">
+        <button type="button" class="harvest-analysis-fold-trigger" data-action="toggle-harvest-analysis-section" data-section="${htmlAttr(sectionKey)}" aria-expanded="false">
+          <span class="harvest-analysis-fold-code" aria-hidden="true">${escapeHtml(meta.code)}</span>
+          <span class="harvest-analysis-fold-copy"><strong>${escapeHtml(meta.title)}</strong><small>${escapeHtml(meta.summary)}</small></span>
+          <span class="harvest-analysis-fold-state" aria-hidden="true">+</span>
+        </button>
+      </article>`;
+  }
+  const markup = options.cache === false ? renderer() : harvestAnalysisCachedMarkup(sectionKey, renderer, options.cacheExtra || "");
+  return `
+    <div class="harvest-full-width harvest-analysis-open-section" data-harvest-analysis-section="${htmlAttr(sectionKey)}">
+      <button type="button" class="harvest-analysis-collapse-button" data-action="toggle-harvest-analysis-section" data-section="${htmlAttr(sectionKey)}" aria-expanded="true" title="Ocultar ${htmlAttr(meta.title)}">
+        <span aria-hidden="true">−</span><span>Ocultar</span>
+      </button>
+      ${markup}
+    </div>`;
+}
+
 function renderHarvestVarietyYearComparison(title, rows, options = {}) {
   const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b));
-  const varieties = harvestAggregateRows(rows, (row) => row.variety, harvestAnalysisMetricValue).map((row) => row.label);
   const values = new Map();
-  varieties.forEach((variety) => {
-    years.forEach((year) => {
-      const value = rows
-        .filter((row) => row.variety === variety && harvestAnalysisRowInComparison(row, year, options.untilToday))
-        .reduce((sum, row) => sum + harvestAnalysisMetricValue(row), 0);
-      values.set(`${variety}|${year}`, value);
-    });
+  const varietyTotalsBySpecies = new Map();
+  const valueKey = (speciesName, variety, year) => `${speciesName}\u001f${variety}\u001f${year}`;
+  rows.forEach((row) => {
+    const speciesName = harvestCleanValue(row.species, "Sin especie");
+    const variety = harvestCleanValue(row.variety, "Sin variedad");
+    const varietyTotals = varietyTotalsBySpecies.get(speciesName) || new Map();
+    varietyTotals.set(variety, (varietyTotals.get(variety) || 0) + harvestAnalysisMetricValue(row));
+    varietyTotalsBySpecies.set(speciesName, varietyTotals);
+    const year = String(row.year || "");
+    if (!years.includes(year) || !harvestAnalysisRowInComparison(row, year, options.untilToday)) return;
+    const key = valueKey(speciesName, variety, year);
+    values.set(key, (values.get(key) || 0) + harvestAnalysisMetricValue(row));
   });
+  const species = [...varietyTotalsBySpecies.keys()].sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
+  const varietiesBySpecies = new Map(species.map((speciesName) => [
+    speciesName,
+    [...(varietyTotalsBySpecies.get(speciesName) || new Map()).entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "es", { numeric: true, sensitivity: "base" }))
+      .map(([variety]) => variety)
+  ]));
   const max = Math.max(1, ...values.values());
   const decimals = harvestAnalysisMetricDecimals();
   const unit = harvestAnalysisMetricUnit();
   const totalsByYear = years.map((year) => ({
     year,
-    value: varieties.reduce((sum, variety) => sum + (values.get(`${variety}|${year}`) || 0), 0)
+    value: species.reduce((speciesSum, speciesName) => speciesSum + (varietiesBySpecies.get(speciesName) || [])
+      .reduce((sum, variety) => sum + (values.get(valueKey(speciesName, variety, year)) || 0), 0), 0)
   }));
   const selectedTotal = totalsByYear.reduce((sum, row) => sum + row.value, 0);
   const latestYear = years[years.length - 1];
@@ -12809,44 +13054,63 @@ function renderHarvestVarietyYearComparison(title, rows, options = {}) {
       <div class="harvest-variety-year-legend">
         ${years.map((year, index) => `<span><i style="--bar-color:${htmlAttr(harvestYearColor(index))}"></i>${escapeHtml(year)}</span>`).join("")}
       </div>
-      <div class="harvest-variety-year-groups">
-        ${varieties.map((variety) => {
-          const total = years.reduce((sum, year) => sum + (values.get(`${variety}|${year}`) || 0), 0);
-          const latestValue = values.get(`${variety}|${latestYear}`) || 0;
-          const varietyDiff = options.showDifference
-            ? harvestComparisonDifference(latestValue, previousYears.map((year) => values.get(`${variety}|${year}`) || 0))
-            : null;
-          const rankByYear = new Map(years
-            .map((year) => ({ year, value: values.get(`${variety}|${year}`) || 0 }))
-            .filter((item) => item.value > 0)
-            .sort((a, b) => b.value - a.value || Number(a.year) - Number(b.year))
-            .slice(0, 3)
-            .map((item, index) => [item.year, index + 1]));
-          return `<section class="harvest-variety-year-group">
-            <header>
-              <div>
-                <strong>${escapeHtml(variety)}</strong>
-                ${varietyDiff ? `<em class="${harvestDifferenceClass(varietyDiff)}">${escapeHtml(harvestDifferenceLabel(varietyDiff, unit, decimals))}</em>` : ""}
+      <div class="harvest-comparison-species-stack">
+        ${species.map((speciesName) => {
+          const varieties = varietiesBySpecies.get(speciesName) || [];
+          const speciesTotals = years.map((year) => ({
+            year,
+            value: varieties.reduce((sum, variety) => sum + (values.get(valueKey(speciesName, variety, year)) || 0), 0)
+          }));
+          const speciesTotal = speciesTotals.reduce((sum, item) => sum + item.value, 0);
+          return `<section class="harvest-comparison-species">
+            <header class="harvest-comparison-species-head">
+              <div><strong>${escapeHtml(speciesName)}</strong><span>${varieties.length} variedades</span></div>
+              <div class="harvest-comparison-species-totals">
+                ${speciesTotals.map((item) => `<span><b>${escapeHtml(item.year)}</b>${number(item.value, decimals)}${unit}</span>`).join("")}
+                <strong>${number(speciesTotal, decimals)}${unit}</strong>
               </div>
-              <span>${number(total, decimals)}${unit}</span>
             </header>
-            <div class="harvest-variety-year-bars">
-              ${years.map((year, index) => {
-                const value = values.get(`${variety}|${year}`) || 0;
-                const height = value > 0 ? Math.max(4, value / max * 100) : 0;
-                const rank = rankByYear.get(year);
-                return `<div class="harvest-variety-year-bar" title="${htmlAttr(`${variety} ${year}: ${number(value, decimals)}${unit}`)}">
-                  <strong>${number(value, decimals)}</strong>
-                  <div>
-                    ${rank ? `<em class="harvest-bar-medal rank-${rank}" title="${rank === 1 ? "1 dorado" : rank === 2 ? "2 plata" : "3 bronce"}">${rank}</em>` : ""}
-                    <i style="height:${height}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></i>
+            <div class="harvest-variety-year-groups">
+              ${varieties.map((variety) => {
+                const total = years.reduce((sum, year) => sum + (values.get(valueKey(speciesName, variety, year)) || 0), 0);
+                const latestValue = values.get(valueKey(speciesName, variety, latestYear)) || 0;
+                const varietyDiff = options.showDifference
+                  ? harvestComparisonDifference(latestValue, previousYears.map((year) => values.get(valueKey(speciesName, variety, year)) || 0))
+                  : null;
+                const rankByYear = new Map(years
+                  .map((year) => ({ year, value: values.get(valueKey(speciesName, variety, year)) || 0 }))
+                  .filter((item) => item.value > 0)
+                  .sort((a, b) => b.value - a.value || Number(a.year) - Number(b.year))
+                  .slice(0, 3)
+                  .map((item, index) => [item.year, index + 1]));
+                return `<section class="harvest-variety-year-group">
+                  <header>
+                    <div>
+                      <strong>${escapeHtml(variety)}</strong>
+                      ${varietyDiff ? `<em class="${harvestDifferenceClass(varietyDiff)}">${escapeHtml(harvestDifferenceLabel(varietyDiff, unit, decimals))}</em>` : ""}
+                    </div>
+                    <span>${number(total, decimals)}${unit}</span>
+                  </header>
+                  <div class="harvest-variety-year-bars">
+                    ${years.map((year, index) => {
+                      const value = values.get(valueKey(speciesName, variety, year)) || 0;
+                      const height = value > 0 ? Math.max(4, value / max * 100) : 0;
+                      const rank = rankByYear.get(year);
+                      return `<div class="harvest-variety-year-bar" title="${htmlAttr(`${speciesName} - ${variety} - ${year}: ${number(value, decimals)}${unit}`)}">
+                        <strong>${number(value, decimals)}</strong>
+                        <div>
+                          ${rank ? `<em class="harvest-bar-medal rank-${rank}" title="${rank === 1 ? "1 dorado" : rank === 2 ? "2 plata" : "3 bronce"}">${rank}</em>` : ""}
+                          <i style="height:${height}%; --bar-color:${htmlAttr(harvestYearColor(index))}"></i>
+                        </div>
+                        <span>${escapeHtml(year)}</span>
+                      </div>`;
+                    }).join("")}
                   </div>
-                  <span>${escapeHtml(year)}</span>
-                </div>`;
-              }).join("")}
+                </section>`;
+              }).join("") || `<div class="empty">Sin variedades para comparar.</div>`}
             </div>
           </section>`;
-        }).join("") || `<div class="empty">Sin variedades para comparar.</div>`}
+        }).join("") || `<div class="empty">Sin especies para comparar.</div>`}
       </div>
     </article>`;
 }
@@ -12856,15 +13120,197 @@ function harvestUniqueValues(rows, getValue) {
     .sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
 }
 
+function renderHarvestContractorRanking(rows = []) {
+  const visibleLimit = 3;
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const contractor = harvestCleanValue(row.contractor, "Sin contratista");
+    if (contractor === "Sin contratista") return;
+    const species = harvestCleanValue(row.species, "Sin especie");
+    const variety = harvestCleanValue(row.variety, "Sin variedad");
+    const year = String(row.year || "");
+    if (!year) return;
+    const key = `${species}|${variety}|${year}|${contractor}`;
+    const current = grouped.get(key) || { species, variety, year, contractor, kg: 0, bins: 0 };
+    current.kg += harvestNumericValue(row.kgTotal);
+    current.bins += harvestNumericValue(row.totalBins);
+    grouped.set(key, current);
+  });
+
+  const speciesGroups = new Map();
+  [...grouped.values()].forEach((entry) => {
+    const speciesEntry = speciesGroups.get(entry.species) || new Map();
+    const varietyEntry = speciesEntry.get(entry.variety) || new Map();
+    const yearRows = varietyEntry.get(entry.year) || [];
+    yearRows.push(entry);
+    varietyEntry.set(entry.year, yearRows);
+    speciesEntry.set(entry.variety, varietyEntry);
+    speciesGroups.set(entry.species, speciesEntry);
+  });
+
+  const sections = [...speciesGroups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }))
+    .map(([species, varieties]) => `
+      <section class="harvest-contractor-species">
+        <header><div><strong>${escapeHtml(species)}</strong><span>${varieties.size} variedades</span></div></header>
+        <div class="harvest-contractor-variety-grid">
+          ${[...varieties.entries()]
+            .sort(([a], [b]) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }))
+            .map(([variety, years]) => `
+              <article class="harvest-contractor-variety-card">
+                <h3>${escapeHtml(variety)}</h3>
+                <div class="harvest-contractor-years">
+                  ${[...years.entries()]
+                    .sort(([a], [b]) => Number(b) - Number(a))
+                    .map(([year, contractorRows]) => {
+                      const ranked = contractorRows.sort((a, b) => b.kg - a.kg || a.contractor.localeCompare(b.contractor, "es"));
+                      const expandKey = `${species}|${variety}|${year}`;
+                      const expanded = harvestContractorExpandedKeys.has(expandKey);
+                      const hiddenCount = Math.max(0, ranked.length - visibleLimit);
+                      const visibleRows = expanded ? ranked : ranked.slice(0, visibleLimit);
+                      const yearTotal = contractorRows.reduce((sum, item) => sum + item.kg, 0);
+                      const yearMax = Math.max(1, ...ranked.map((item) => item.kg));
+                      return `<section class="harvest-contractor-year">
+                        <header><b>${escapeHtml(year)}</b><span>${number(yearTotal, 0)} kg</span></header>
+                        <div class="harvest-contractor-bars">${visibleRows.map((item, index) => {
+                          const participation = yearTotal ? item.kg / yearTotal * 100 : 0;
+                          const width = item.kg > 0 ? Math.max(2, item.kg / yearMax * 100) : 0;
+                          const color = harvestStablePaletteColor(item.contractor, HARVEST_VARIETY_COLORS);
+                          const rank = index + 1;
+                          return `<div class="harvest-contractor-bar-row" title="${htmlAttr(`${item.contractor}: ${number(item.kg, 0)} kg, ${number(item.bins, 0)} bins, ${number(participation, 1)}%`)}">
+                            <span class="harvest-contractor-position ${rank <= 3 ? `rank-${rank}` : ""}" title="${rank <= 3 ? `Puesto ${rank}` : "Posicion en el ranking"}">${rank}</span>
+                            <strong>${escapeHtml(item.contractor)}</strong>
+                            <span class="harvest-contractor-bar-track"><i style="width:${width}%; --bar-color:${htmlAttr(color)}"></i></span>
+                            <span class="harvest-contractor-bar-value"><b>${number(item.kg, 0)} kg</b><small>${number(item.bins, 0)} bins</small></span>
+                            <em>${number(participation, 1)}%</em>
+                          </div>`;
+                        }).join("")}</div>
+                        ${hiddenCount ? `<button class="harvest-show-more-button" type="button" data-action="toggle-harvest-contractors" data-key="${htmlAttr(expandKey)}">${expanded ? "Mostrar menos" : `Mostrar ${hiddenCount} mas`}</button>` : ""}
+                      </section>`;
+                    }).join("")}
+                </div>
+              </article>`).join("")}
+        </div>
+      </section>`).join("");
+
+  return `
+    <article class="panel harvest-analytics-card harvest-full-width harvest-contractor-ranking-panel">
+      <div class="panel-header"><h2>Contratistas por especie, variedad y ano</h2></div>
+      <div class="harvest-contractor-stack">${sections || `<div class="empty">Sin contratistas para el filtro seleccionado.</div>`}</div>
+    </article>`;
+}
+
 function harvestStartDateKey(year, species, variety) {
   return `${year || ""}|${harvestDisplaySpecies(species)}|${harvestDisplayVariety(variety)}`;
+}
+
+const HARVEST_CONTINUITY_MAX_GAP_DAYS = 10;
+const HARVEST_CONTINUITY_MIN_ACTIVE_DAYS = 3;
+const HARVEST_CONTINUITY_WINDOW_DAYS = 14;
+const HARVEST_CONTINUITY_MIN_ACTIVITY_RATIO = 0.1;
+const HARVEST_CAMPAIGN_MAX_GAP_DAYS = 14;
+
+function harvestDateOrdinal(dateValue) {
+  const match = String(dateValue || "").slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000);
+}
+
+function harvestActivityClusters(days = []) {
+  const clusters = [];
+  days.forEach((day) => {
+    const previous = clusters[clusters.length - 1];
+    const previousDay = previous?.days?.[previous.days.length - 1];
+    const gap = previousDay ? day.ordinal - previousDay.ordinal : null;
+    if (!previous || gap > HARVEST_CONTINUITY_MAX_GAP_DAYS) {
+      clusters.push({ days: [day], kg: day.kg, bins: day.bins });
+      return;
+    }
+    previous.days.push(day);
+    previous.kg += day.kg;
+    previous.bins += day.bins;
+  });
+  return clusters.map((cluster) => ({
+    ...cluster,
+    start: cluster.days[0].date,
+    end: cluster.days[cluster.days.length - 1].date,
+    activeDays: cluster.days.length,
+    spanDays: cluster.days[cluster.days.length - 1].ordinal - cluster.days[0].ordinal + 1,
+    activity: cluster.kg > 0 ? cluster.kg : cluster.bins
+  }));
+}
+
+function harvestSustainedSeason(days = []) {
+  if (!days.length) return null;
+  const clusters = harvestActivityClusters(days);
+  const windows = days.map((day, index) => {
+    const windowDays = [];
+    for (let cursor = index; cursor < days.length; cursor += 1) {
+      if (days[cursor].ordinal - day.ordinal >= HARVEST_CONTINUITY_WINDOW_DAYS) break;
+      windowDays.push(days[cursor]);
+    }
+    const kg = windowDays.reduce((sum, item) => sum + item.kg, 0);
+    const bins = windowDays.reduce((sum, item) => sum + item.bins, 0);
+    return {
+      days: windowDays,
+      activeDays: windowDays.length,
+      activity: kg > 0 ? kg : bins,
+      start: windowDays[0]?.date || "",
+      end: windowDays[windowDays.length - 1]?.date || ""
+    };
+  }).filter((window) => window.activeDays >= HARVEST_CONTINUITY_MIN_ACTIVE_DAYS);
+  const maxWindowActivity = Math.max(1, ...windows.map((window) => window.activity));
+  const sustainedWindows = windows.filter((window) => (
+    window.activity >= maxWindowActivity * HARVEST_CONTINUITY_MIN_ACTIVITY_RATIO
+  ));
+  const fallback = clusters.slice().sort((a, b) => b.activeDays - a.activeDays || b.activity - a.activity || a.start.localeCompare(b.start))[0];
+  const campaigns = [];
+  sustainedWindows.forEach((window) => {
+    const startOrdinal = harvestDateOrdinal(window.start);
+    const endOrdinal = harvestDateOrdinal(window.end);
+    const previous = campaigns[campaigns.length - 1];
+    if (!previous || startOrdinal - previous.endOrdinal > HARVEST_CAMPAIGN_MAX_GAP_DAYS) {
+      campaigns.push({ start: window.start, end: window.end, startOrdinal, endOrdinal });
+      return;
+    }
+    if (endOrdinal > previous.endOrdinal) {
+      previous.end = window.end;
+      previous.endOrdinal = endOrdinal;
+    }
+  });
+  const dominantCampaign = campaigns.map((campaign) => {
+    const campaignDays = days.filter((day) => day.ordinal >= campaign.startOrdinal && day.ordinal <= campaign.endOrdinal);
+    const kg = campaignDays.reduce((sum, day) => sum + day.kg, 0);
+    const bins = campaignDays.reduce((sum, day) => sum + day.bins, 0);
+    return {
+      ...campaign,
+      activeDays: campaignDays.length,
+      activity: kg > 0 ? kg : bins
+    };
+  }).sort((a, b) => b.activity - a.activity || b.activeDays - a.activeDays || b.start.localeCompare(a.start))[0];
+  const start = dominantCampaign?.start || fallback.start;
+  const end = dominantCampaign?.end || fallback.end;
+  const startOrdinal = harvestDateOrdinal(start);
+  const endOrdinal = harvestDateOrdinal(end);
+  const activeDays = days.filter((day) => day.ordinal >= startOrdinal && day.ordinal <= endOrdinal).length;
+  return {
+    start,
+    end,
+    activeDays,
+    consolidated: Boolean(dominantCampaign),
+    ignoredEarlyDays: days.filter((day) => day.ordinal < startOrdinal).length,
+    ignoredLateDays: days.filter((day) => day.ordinal > endOrdinal).length
+  };
 }
 
 function harvestStartDateRows(rows = []) {
   const groups = new Map();
   rows.forEach((row) => {
     const date = String(row.date || "").slice(0, 10);
-    if (!row.year || !row.species || !row.variety || !date) return;
+    const ordinal = harvestDateOrdinal(date);
+    const kg = harvestNumericValue(row.kgTotal);
+    const bins = harvestNumericValue(row.totalBins);
+    if (!row.year || !row.species || !row.variety || ordinal === null || (kg <= 0 && bins <= 0)) return;
     const key = harvestStartDateKey(row.year, row.species, row.variety);
     const entry = groups.get(key) || {
       key,
@@ -12873,17 +13319,36 @@ function harvestStartDateRows(rows = []) {
       variety: row.variety,
       detectedStart: "",
       detectedEnd: "",
+      activeDays: 0,
+      consolidated: false,
+      ignoredEarlyDays: 0,
+      ignoredLateDays: 0,
+      daily: new Map(),
       kg: 0,
       bins: 0
     };
-    entry.detectedStart = !entry.detectedStart || date < entry.detectedStart ? date : entry.detectedStart;
-    entry.detectedEnd = !entry.detectedEnd || date > entry.detectedEnd ? date : entry.detectedEnd;
-    entry.kg += harvestNumericValue(row.kgTotal);
-    entry.bins += harvestNumericValue(row.totalBins);
+    const daily = entry.daily.get(date) || { date, ordinal, kg: 0, bins: 0 };
+    daily.kg += kg;
+    daily.bins += bins;
+    entry.daily.set(date, daily);
+    entry.kg += kg;
+    entry.bins += bins;
     groups.set(key, entry);
   });
 
-  return [...groups.values()].sort((a, b) => {
+  return [...groups.values()].map((entry) => {
+    const season = harvestSustainedSeason([...entry.daily.values()].sort((a, b) => a.ordinal - b.ordinal));
+    return {
+      ...entry,
+      daily: undefined,
+      detectedStart: season?.start || "",
+      detectedEnd: season?.end || "",
+      activeDays: season?.activeDays || 0,
+      consolidated: Boolean(season?.consolidated),
+      ignoredEarlyDays: season?.ignoredEarlyDays || 0,
+      ignoredLateDays: season?.ignoredLateDays || 0
+    };
+  }).sort((a, b) => {
     const yearDiff = Number(b.year) - Number(a.year);
     if (yearDiff) return yearDiff;
     const speciesDiff = a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" });
@@ -12948,12 +13413,7 @@ function renderHarvestStartDatesPanel(rows, allRows, years) {
   const matrixRows = harvestStartDateMatrixRows(startRows);
   return `
     <article class="panel harvest-analytics-card harvest-full-width harvest-start-card">
-      <div class="panel-header">
-        <div>
-          <h2>Inicio de cosecha</h2>
-          <p>Primera fecha registrada por variedad y ano segun Supabase.</p>
-        </div>
-      </div>
+      <div class="panel-header"><h2>Inicio de cosecha</h2></div>
       <div class="harvest-start-matrix-wrap">
         <div class="harvest-start-matrix" style="--harvest-start-years:${Math.max(1, visibleYears.length)}">
           <div class="harvest-start-matrix-head">
@@ -12963,21 +13423,22 @@ function renderHarvestStartDatesPanel(rows, allRows, years) {
           ${matrixRows.map((entry) => `
             <div class="harvest-start-matrix-row">
               <div class="harvest-start-variety">
-                <strong>${escapeHtml(entry.species)}</strong>
-                <span>${escapeHtml(entry.variety)}</span>
+                <div><strong>${escapeHtml(entry.species)}</strong><span>${escapeHtml(entry.variety)}</span></div>
               </div>
               ${visibleYears.map((year) => {
                 const row = entry.years.get(String(year)) || { year, species: entry.species, variety: entry.variety, detectedStart: "" };
                 const displayDate = row.detectedStart || "";
                 const endDate = row.detectedEnd || "";
                 const durationLabel = harvestDurationLabel(displayDate, endDate);
+                const activityLabel = row.activeDays ? `${row.activeDays} ${row.activeDays === 1 ? "jornada" : "jornadas"}` : "";
+                const omittedDays = harvestNumericValue(row.ignoredEarlyDays) + harvestNumericValue(row.ignoredLateDays);
                 const cellTitle = displayDate
-                  ? `${entry.species} ${entry.variety} ${year} | Inicio: ${printDate(displayDate)} | Termino: ${printDate(endDate)} | Duracion: ${durationLabel}`
+                  ? `${entry.species} ${entry.variety} ${year} | Inicio consolidado: ${printDate(displayDate)} | Termino: ${printDate(endDate)} | Duracion: ${durationLabel} | ${activityLabel}${omittedDays ? ` | ${omittedDays} jornadas aisladas omitidas` : ""}${row.consolidated ? "" : " | Tramo disponible con pocos registros"}`
                   : `${entry.species} ${entry.variety} ${year}`;
-                return `<div class="harvest-start-cell ${displayDate ? "is-detected" : "is-empty"}" title="${htmlAttr(cellTitle)}">
+                return `<div class="harvest-start-cell ${displayDate ? "is-detected" : "is-empty"} ${displayDate && !row.consolidated ? "is-estimated" : ""}" title="${htmlAttr(cellTitle)}">
                   <b>${escapeHtml(year)}</b>
                   <strong>${displayDate ? `Fecha de inicio: ${printDate(displayDate)}` : "-"}</strong>
-                  <em>${displayDate ? `Duracion: ${durationLabel}` : ""}</em>
+                  <em>${displayDate ? `Duracion: ${durationLabel}${activityLabel ? ` - ${activityLabel}` : ""}` : ""}</em>
                   <small>${displayDate ? `Termino: ${printDate(endDate)} - ${number(row.kg, 0)} kg` : "Sin registro"}</small>
                 </div>`;
               }).join("")}
@@ -13010,10 +13471,10 @@ function renderHarvestAnalysis() {
   views.harvestAnalysis.innerHTML = `
     <section class="panel harvest-analytics-panel">
       <div class="panel-header">
-        <div><h2>Cosecha Analisis</h2><p>Comparativo historico por especie, variedad, potrero y bloque.</p></div>
+        <h2>Cosecha Analisis</h2>
         <div class="top-actions">${renderHarvestExcelSyncButton("harvest")}</div>
       </div>
-      <div class="program-filters harvest-analytics-filters harvest-analysis-filters">
+      <div class="harvest-filter-shell harvest-analysis-filters">
         <label>Especie<select data-harvest-analysis-filter="species">${harvestSelectOptions(species, harvestAnalysisSpeciesFilter)}</select></label>
         <label>Variedad<select data-harvest-analysis-filter="variety">${harvestSelectOptions(varieties, harvestAnalysisVarietyFilter)}</select></label>
         <label>Potrero<select data-harvest-analysis-filter="potrero">${harvestSelectOptions(potreros, harvestAnalysisPotreroFilter, potreroLabel)}</select></label>
@@ -13027,10 +13488,11 @@ function renderHarvestAnalysis() {
         <button class="secondary-button" type="button" data-action="clear-harvest-analysis-filters">Limpiar</button>
       </div>
       <div class="harvest-analytics-grid">
-        ${renderHarvestStartDatesPanel(rows, allRows, years)}
-        ${renderHarvestVarietyYearComparison(`Comparacion por variedad - total anual - ${harvestAnalysisMetricLabel()}`, rows, { subtitle: "Suma completa de cada ano seleccionado" })}
-        ${renderHarvestVarietyYearComparison(`Comparacion por variedad - avance al ${harvestTodayDayMonthLabel()} - ${harvestAnalysisMetricLabel()}`, rows, { untilToday: true, showDifference: true, subtitle: "Suma hasta la misma fecha calendario de cada ano" })}
-        ${renderHarvestPotreroBlockSummary(rows)}
+        ${renderHarvestAnalysisSection("annual", () => renderHarvestVarietyYearComparison(`Comparacion por variedad - total anual - ${harvestAnalysisMetricLabel()}`, rows, { subtitle: "Suma completa de cada ano seleccionado" }))}
+        ${renderHarvestAnalysisSection("progress", () => renderHarvestVarietyYearComparison(`Comparacion por variedad - avance al ${harvestTodayDayMonthLabel()} - ${harvestAnalysisMetricLabel()}`, rows, { untilToday: true, showDifference: true, subtitle: "Suma hasta la misma fecha calendario de cada ano" }))}
+        ${renderHarvestAnalysisSection("start", () => renderHarvestStartDatesPanel(rows, allRows, years))}
+        ${renderHarvestAnalysisSection("productivity", () => renderHarvestPotreroBlockSummary(rows))}
+        ${renderHarvestAnalysisSection("contractors", () => renderHarvestContractorRanking(rows), { cache: false })}
       </div>
     </section>`;
   wireHarvestAnalysisFilters();
@@ -13078,6 +13540,7 @@ function renderHarvestPotreroBlockSummary(rows) {
         .sort((a, b) => b.total - a.total || a.variety.localeCompare(b.variety, "es", { numeric: true }))
         .map((entry) => {
           const potreros = [...entry.potreros.values()].sort((a, b) => b.total - a.total || comparePotrero(a.potrero, b.potrero));
+          const potreroRanks = new Map(potreros.filter((potrero) => potrero.total > 0).slice(0, 3).map((potrero, index) => [potrero.potrero, index + 1]));
           const max = Math.max(1, ...potreros.flatMap((potrero) => years.map((year) => harvestNumericValue(potrero.years.get(year)?.value))));
           return `
             <section class="harvest-potrero-variety-card harvest-productivity-variety-card">
@@ -13092,7 +13555,7 @@ function renderHarvestPotreroBlockSummary(rows) {
                 ${potreros.map((potrero) => `
                   <div class="harvest-productivity-potrero-row">
                     <div class="harvest-productivity-potrero-head">
-                      <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${escapeHtml(potreroLabel(potrero.potrero))}</strong>
+                      <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${potreroRanks.has(potrero.potrero) ? `<span class="harvest-rank-medal rank-${potreroRanks.get(potrero.potrero)}" aria-label="Puesto ${potreroRanks.get(potrero.potrero)}">${potreroRanks.get(potrero.potrero)}</span>` : ""}${escapeHtml(potreroLabel(potrero.potrero))}</strong>
                       <span>${number(potrero.total, decimals)}${unit}</span>
                     </div>
                     <div class="harvest-productivity-years">
@@ -13874,6 +14337,9 @@ async function loadCloudData(options = {}) {
   const loadCalicatas = wantsModule("calicatas");
   const loadWeather = wantsModule("weather");
   const loadHarvest = wantsModule("harvest");
+  const loadHarvestAnalysis = wantsModule("harvestAnalysis");
+  const loadHarvestExport = wantsModule("harvestExport");
+  const loadHarvestFields = loadHarvestAnalysis || loadHarvestExport;
   const irrigationMonthPrefix = options.irrigationMonthPrefix || "";
   const irrigationDateQuery = loadIrrigation ? irrigationMonthFilterQuery(irrigationMonthPrefix) : "";
 
@@ -13887,7 +14353,7 @@ async function loadCloudData(options = {}) {
       return [];
     }) : Promise.resolve(null),
     loadFields ? sbSelect("campos", "select=*&activo=eq.true&order=potrero.asc,bloque.asc") : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("campos", "select=*&order=potrero.asc,bloque.asc", 5000).catch((error) => {
+    loadHarvestFields ? sbSelectAll("campos", "select=*&order=potrero.asc,bloque.asc", 5000).catch((error) => {
       console.warn("No se pudo cargar campos completos para analisis de cosecha", error);
       return null;
     }) : Promise.resolve(null),
@@ -13989,11 +14455,11 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar jornales de cosecha", error);
       return [];
     }) : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("cosecha_analisis", "select=id,campo_id,fecha,anio,semana,especie,variedad,potrero_excel,bloque_formula,bloque_excel,potrero_normalizado,bloque_normalizado,contratista,cuadrilla,jornales,bins_nac,bins_expo,total_bins,kg_nac,kg_exp,kg_totales,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
+    loadHarvestAnalysis ? sbSelectAll("cosecha_analisis", "select=id,campo_id,fecha,anio,semana,especie,variedad,potrero_excel,bloque_formula,bloque_excel,potrero_normalizado,bloque_normalizado,contratista,cuadrilla,jornales,bins_nac,bins_expo,total_bins,kg_nac,kg_exp,kg_totales,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
       console.warn("No se pudo cargar cosecha_analisis", error);
       return [];
     }) : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("exportacion_analisis", "select=id,campo_ids,fecha,anio,especie,variedad,potrero_excel,potrero_normalizado,cant_bins,enviados_kg,recepcionados_kg,diferencia_kg,bins_por_confirmar,kg_en_proceso,kg_por_procesar,exportados_kg,descarte_kg,precalibre_kg,desecho_kg,merma_kg,x_kg,porcentaje_expo,calibres_kg,calibres_cajas,calibres_kg_total,calibres_cajas_total,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
+    loadHarvestExport ? sbSelectAll("exportacion_analisis", "select=id,campo_ids,fecha,anio,especie,variedad,potrero_excel,potrero_normalizado,cant_bins,enviados_kg,recepcionados_kg,diferencia_kg,bins_por_confirmar,kg_en_proceso,kg_por_procesar,exportados_kg,descarte_kg,precalibre_kg,desecho_kg,merma_kg,x_kg,porcentaje_expo,calibres_kg,calibres_cajas,calibres_kg_total,calibres_cajas_total,archivo_origen,fila_excel&order=fecha.asc,id.asc").catch((error) => {
       console.warn("No se pudo cargar exportacion_analisis", error);
       return [];
     }) : Promise.resolve(null)
@@ -14430,6 +14896,8 @@ async function loadCloudData(options = {}) {
   if (loadIrrigation) loadedModules.push("irrigation");
   if (loadCalicatas) loadedModules.push("calicatas");
   if (loadHarvest) loadedModules.push("harvest");
+  if (loadHarvestAnalysis) loadedModules.push("harvestAnalysis");
+  if (loadHarvestExport) loadedModules.push("harvestExport");
   if (loadIrrigation && irrigationMonthPrefix) irrigationCloudLoadedMonths.add(irrigationMonthPrefix);
   markCloudModulesLoaded(loadedModules);
   if (!isRealtimeLoad) {
@@ -14439,7 +14907,7 @@ async function loadCloudData(options = {}) {
   }
   if (shouldRenderAfterCloudLoad(options)) render();
   if (!isRealtimeLoad) {
-    document.getElementById("authButton").textContent = `${roleLabel(currentProfile?.role) || "Supabase"}: ${currentProfile?.full_name || supabaseSession.user?.email || ""}`;
+    updateAuthenticatedUserUi();
     document.getElementById("storageStatus").textContent = `Supabase conectado ${new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
     setAuthGate(false);
   }
@@ -14476,7 +14944,9 @@ function cloudModulesForRealtimeTable(table = "") {
   if (["riego", "programa_riego", "observaciones_riego", "evaporacion_bandeja"].includes(table)) return ["fields", "irrigation"];
   if (table === "estacion_climatica") return ["weather"];
   if (table === "calicatas") return ["fields", "calicatas"];
-  if (["registros_trazabilidad", "cosecha_analisis", "exportacion_analisis"].includes(table)) return ["harvest"];
+  if (table === "registros_trazabilidad") return ["harvest"];
+  if (table === "cosecha_analisis") return ["harvestAnalysis"];
+  if (table === "exportacion_analisis") return ["harvestExport"];
   if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes"].includes(table)) return ["fertilizers"];
   if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos"].includes(table)) return ["fields", "applications"];
   return cloudModulesForView(currentView);
@@ -15302,6 +15772,7 @@ async function renderGoogleGeoJsonMap(el, layers) {
       tilt: 0
     });
   }
+  dashboardMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
   const bounds = new maps.LatLngBounds();
   const active = activeBlockKeys();
   const activePotreros = activePotreroKeys(active);
@@ -15544,9 +16015,12 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
       streetViewControl: false,
       fullscreenControl: true,
       mapTypeControl: true,
+      gestureHandling: "greedy",
+      scrollwheel: true,
       tilt: 0
     });
   }
+  harvestMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
   harvestMapVisibleRecords = records;
   if (!harvestMapIdleListener) {
     harvestMapIdleListener = maps.event.addListener(harvestMap, "idle", () => scheduleHarvestMapMarkerRender(maps));
@@ -15610,8 +16084,7 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
 }
 
 function harvestCrewMarkerLabel(record) {
-  const label = String(record.crew || "S/C").trim() || "S/C";
-  return label.length > 8 ? `${label.slice(0, 7)}.` : label;
+  return String(record.crew || "S/C").trim() || "S/C";
 }
 
 function renderHarvestBinDetail(record, marker, maps) {
@@ -15685,9 +16158,12 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
         streetViewControl: false,
         fullscreenControl: true,
         mapTypeControl: true,
+        gestureHandling: "greedy",
+        scrollwheel: true,
         tilt: 0
       });
     }
+    irrigationCalicataMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
     const bounds = new maps.LatLngBounds();
     const visibleKeys = new Set(blocks.map((block) => `${block.potrero}:${block.block}`));
     const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
@@ -19039,6 +19515,7 @@ document.addEventListener("touchcancel", () => {
 });
 
 document.addEventListener("click", async (event) => {
+  if (!event.target.closest?.(".user-menu")) setUserMenuOpen(false);
   const actionTarget = event.target.closest?.("[data-action]") || event.target;
   const viewTarget = event.target.closest?.("[data-view]");
   if (viewTarget && !viewTarget.classList.contains("nav-item") && !viewTarget.dataset?.action) {
@@ -19054,6 +19531,15 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "gate-tab") {
     showGateTab(actionTarget.dataset.tab);
+  }
+  if (action === "open-account-info") {
+    openAuthDialog();
+  }
+  if (action === "save-account-profile") {
+    await saveAccountProfile();
+  }
+  if (action === "save-account-password") {
+    await saveAccountPassword();
   }
   if (action === "open-weather-station-import") {
     openWeatherStationImportDialog();
@@ -19123,6 +19609,18 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "select-harvest-analysis-species") {
     harvestAnalysisSelectedSpecies = actionTarget.dataset.value || "Todas";
+    renderHarvestAnalysis();
+  }
+  if (action === "toggle-harvest-analysis-section") {
+    const section = actionTarget.dataset.section || "";
+    if (harvestAnalysisOpenSections.has(section)) harvestAnalysisOpenSections.delete(section);
+    else harvestAnalysisOpenSections.add(section);
+    renderHarvestAnalysis();
+  }
+  if (action === "toggle-harvest-contractors") {
+    const key = actionTarget.dataset.key || "";
+    if (harvestContractorExpandedKeys.has(key)) harvestContractorExpandedKeys.delete(key);
+    else harvestContractorExpandedKeys.add(key);
     renderHarvestAnalysis();
   }
   if (action === "select-gantt-order") {
@@ -19484,7 +19982,10 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 });
 
 document.getElementById("newOrderTop").addEventListener("click", () => openOrderDialog());
-document.getElementById("authButton").addEventListener("click", openAuthDialog);
+document.getElementById("authButton").addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleUserMenu();
+});
 document.getElementById("gateLoginButton").addEventListener("click", loginSupabase);
 document.getElementById("gateRegisterButton").addEventListener("click", registerSupabase);
 document.getElementById("gateRecoverButton").addEventListener("click", recoverSupabasePassword);
