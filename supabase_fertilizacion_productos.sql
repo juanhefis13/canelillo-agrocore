@@ -20,11 +20,17 @@ create table if not exists public.fertilizante_productos (
   af numeric(12, 4) not null default 0,
   disolucion numeric(12, 4) not null default 0,
   kg_ha_recomendado numeric(12, 3) null,
+  kg_ha_palto numeric(12, 3) null,
+  kg_ha_mandarina numeric(12, 3) null,
+  kg_ha_naranja numeric(12, 3) null,
   activo boolean not null default true,
   creado_en timestamptz not null default now(),
   actualizado_en timestamptz not null default now(),
   constraint fertilizante_productos_unidad_chk check (unidad in ('KG', 'LT')),
-  constraint fertilizante_productos_kg_ha_recomendado_chk check (kg_ha_recomendado is null or kg_ha_recomendado >= 0)
+  constraint fertilizante_productos_kg_ha_recomendado_chk check (kg_ha_recomendado is null or kg_ha_recomendado >= 0),
+  constraint fertilizante_productos_kg_ha_palto_chk check (kg_ha_palto is null or kg_ha_palto >= 0),
+  constraint fertilizante_productos_kg_ha_mandarina_chk check (kg_ha_mandarina is null or kg_ha_mandarina >= 0),
+  constraint fertilizante_productos_kg_ha_naranja_chk check (kg_ha_naranja is null or kg_ha_naranja >= 0)
 );
 
 alter table if exists public.fertilizante_preparaciones
@@ -92,12 +98,19 @@ create policy fertilizante_productos_actualizacion
   for update
   to authenticated
   using (true)
-  with check (kg_ha_recomendado is null or kg_ha_recomendado >= 0);
+  with check (
+    (kg_ha_recomendado is null or kg_ha_recomendado >= 0)
+    and (kg_ha_palto is null or kg_ha_palto >= 0)
+    and (kg_ha_mandarina is null or kg_ha_mandarina >= 0)
+    and (kg_ha_naranja is null or kg_ha_naranja >= 0)
+  );
 
-grant update (kg_ha_recomendado, actualizado_en) on public.fertilizante_productos to authenticated;
+grant update (kg_ha_recomendado, kg_ha_palto, kg_ha_mandarina, kg_ha_naranja, actualizado_en)
+on public.fertilizante_productos to authenticated;
 
 commit;
 
-select nombre_comercial, unidad, n, p, k, b, zn, mg, ca, ah, af, disolucion, kg_ha_recomendado
+select nombre_comercial, unidad, n, p, k, b, zn, mg, ca, ah, af, disolucion,
+  kg_ha_recomendado, kg_ha_palto, kg_ha_mandarina, kg_ha_naranja
 from public.fertilizante_productos
 order by nombre_comercial;

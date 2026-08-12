@@ -3362,6 +3362,34 @@ td span,
   overflow: auto;
 }
 
+.fertilizer-dose-species-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 460px);
+  margin-inline: auto;
+}
+
+.fertilizer-dose-species-tabs button {
+  min-height: 36px;
+  color: #315d4d;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.fertilizer-dose-species-tabs button.active {
+  background: #087a55;
+  color: #fff;
+}
+
+.fertilizer-dose-panels,
+.fertilizer-dose-species-panel {
+  min-height: 0;
+}
+
+.fertilizer-dose-species-panel[hidden] {
+  display: none;
+}
+
 .fertilizer-dose-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 172px;
@@ -3495,7 +3523,7 @@ td span,
 
 .fertilizer-recommendation-row {
   display: grid;
-  grid-template-columns: 72px minmax(150px, 1fr) 82px 112px;
+  grid-template-columns: 66px minmax(155px, 1fr) 76px 78px 108px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
@@ -3516,6 +3544,15 @@ td span,
 .fertilizer-recommendation-row b {
   color: #08704e;
   text-align: right;
+}
+
+.fertilizer-recommendation-row > span small {
+  display: block;
+  margin-bottom: 1px;
+  color: #688078;
+  font-size: 0.61rem;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .fertilizer-formula-note {
@@ -3616,10 +3653,10 @@ td span,
   }
 
   .fertilizer-recommendation-row {
-    grid-template-columns: 48px minmax(100px, 1fr) 62px 86px;
+    grid-template-columns: 42px minmax(92px, 1fr) 53px 58px 72px;
     gap: 5px;
     padding-inline: 7px;
-    font-size: 0.68rem;
+    font-size: 0.64rem;
   }
 
   .fertilizer-formula-note {

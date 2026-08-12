@@ -1,5 +1,5 @@
-const CACHE = "canelillo-agrocore-v262-fertilizer-recommended-dose";
-const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=262-fertilizer-recommended-dose", "./app.js?v=262-fertilizer-recommended-dose", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
+const CACHE = "canelillo-agrocore-v263-fertilizer-dose-by-species";
+const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=263-fertilizer-dose-by-species", "./app.js?v=263-fertilizer-dose-by-species", "./manifest.json", "./data/programa_fitosanitario.json", "./data/canelillo_limites.geojson", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

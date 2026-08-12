@@ -8692,15 +8692,24 @@ function normalizeFertilizerTankRow(row) {
 }
 
 function normalizeFertilizerProduct(row) {
+  const nullableNumber = (value, fallback = null) => value === null || value === undefined || value === ""
+    ? fallback
+    : Number(value);
+  const legacyRecommendedKgHa = nullableNumber(row.kg_ha_recomendado);
+  const hasSpeciesDoseColumns = ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"]
+    .every((column) => Object.prototype.hasOwnProperty.call(row, column));
   return {
     id: row.id,
     name: row.nombre_comercial || row.nombre_normalizado || "Producto",
     key: fertilizerReportKey(row.nombre_normalizado || row.nombre_comercial),
     unit: String(row.unidad || "").toUpperCase() || "KG",
     dissolution: Number(row.disolucion) || 0,
-    recommendedKgHa: row.kg_ha_recomendado === null || row.kg_ha_recomendado === undefined
-      ? null
-      : Number(row.kg_ha_recomendado)
+    recommendedKgHa: legacyRecommendedKgHa,
+    recommendedKgHaBySpecies: {
+      PALTO: nullableNumber(row.kg_ha_palto, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa),
+      MANDARINA: nullableNumber(row.kg_ha_mandarina, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa),
+      NARANJA: nullableNumber(row.kg_ha_naranja, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa)
+    }
   };
 }
 
@@ -8815,9 +8824,12 @@ async function loadFertilizerRowsFromSupabase() {
       "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
       1000
     ),
-    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
-      if (!isMissingSupabaseColumn(error, ["kg_ha_recomendado"])) return [];
-      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion&activo=eq.true&order=nombre_comercial.asc", 1000);
+    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
+      if (!isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])) return [];
+      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
+        if (!isMissingSupabaseColumn(legacyError, ["kg_ha_recomendado"])) return [];
+        return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion&activo=eq.true&order=nombre_comercial.asc", 1000);
+      });
     }),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
     sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true&order=numero_estanque.asc,fip.asc", 1000).catch(() => []),
@@ -9618,34 +9630,77 @@ function fertilizerRecommendedLiters(recommendedKgHa, hectares, dissolution) {
   return dose * area / ratio;
 }
 
+const FERTILIZER_DOSE_SPECIES = [
+  { key: "PALTO", label: "Palto", column: "kg_ha_palto" },
+  { key: "MANDARINA", label: "Mandarina", column: "kg_ha_mandarina" },
+  { key: "NARANJA", label: "Naranja", column: "kg_ha_naranja" }
+];
+
+function normalizeFertilizerDoseSpecies(value) {
+  const normalized = fertilizerReportKey(value);
+  if (normalized.includes("PALTO") || normalized.includes("PALTA")) return "PALTO";
+  if (normalized.includes("MANDARIN")) return "MANDARINA";
+  if (normalized.includes("NARANJ")) return "NARANJA";
+  return "";
+}
+
+function fertilizerDoseSpeciesMeta(species) {
+  const key = normalizeFertilizerDoseSpecies(species);
+  return FERTILIZER_DOSE_SPECIES.find((item) => item.key === key) || null;
+}
+
+function fertilizerRecommendedDoseForProduct(product, species) {
+  const meta = fertilizerDoseSpeciesMeta(species);
+  if (!product || !meta) return null;
+  const value = product.recommendedKgHaBySpecies?.[meta.key];
+  return value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
+}
+
+function renderFertilizerSpeciesDosePanel(species, activeSpecies) {
+  return `
+    <div class="fertilizer-dose-species-panel" data-dose-species-panel="${species.key}" ${species.key === activeSpecies ? "" : "hidden"}>
+      <div class="fertilizer-dose-list" role="list">
+        ${(fertilizerProducts || []).map((product) => {
+          const value = fertilizerRecommendedDoseForProduct(product, species.key);
+          return `
+            <label class="fertilizer-dose-row" role="listitem">
+              <span>
+                <strong>${escapeHtml(product.name)}</strong>
+                <small>${escapeHtml(product.unit)} · Disolucion base ${number(product.dissolution, 4)}</small>
+              </span>
+              <span class="fertilizer-dose-input">
+                <input type="number" min="0" step="0.001" inputmode="decimal" data-product-dose="${htmlAttr(product.id)}" data-dose-species="${species.key}" value="${value === null ? "" : htmlAttr(value)}" placeholder="Sin definir" aria-label="Kg por hectarea de ${htmlAttr(product.name)} para ${species.label}">
+                <b>kg/ha</b>
+              </span>
+            </label>
+          `;
+        }).join("") || `<div class="empty-state compact"><strong>Sin productos activos.</strong></div>`}
+      </div>
+    </div>
+  `;
+}
+
 function openFertilizerRecommendedKgHaDialog() {
   if (!supabaseSession?.access_token) {
     showToast("Inicia sesion para actualizar las dosis recomendadas");
     return;
   }
+  const activeSpecies = FERTILIZER_DOSE_SPECIES[0].key;
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <form method="dialog" class="modal-body fertilizer-dose-dialog" id="fertilizerDoseForm">
       <div class="modal-head">
         <div>
           <h2>Actualizar kg/ha recomendados</h2>
-          <p>Dosis maestra utilizada para calcular los litros recomendados por bloque.</p>
+          <p>Define una dosis diferente para cada producto y especie.</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="fertilizer-dose-list" role="list">
-        ${(fertilizerProducts || []).map((product) => `
-          <label class="fertilizer-dose-row" role="listitem">
-            <span>
-              <strong>${escapeHtml(product.name)}</strong>
-              <small>${escapeHtml(product.unit)} · Disolucion base ${number(product.dissolution, 4)}</small>
-            </span>
-            <span class="fertilizer-dose-input">
-              <input type="number" min="0" step="0.001" inputmode="decimal" data-product-dose="${htmlAttr(product.id)}" value="${product.recommendedKgHa === null ? "" : htmlAttr(product.recommendedKgHa)}" placeholder="Sin definir" aria-label="Kg por hectarea recomendado para ${htmlAttr(product.name)}">
-              <b>kg/ha</b>
-            </span>
-          </label>
-        `).join("") || `<div class="empty-state compact"><strong>Sin productos activos.</strong></div>`}
+      <div class="fertilizer-dose-species-tabs segmented-control" role="tablist" aria-label="Especie para dosis recomendada">
+        ${FERTILIZER_DOSE_SPECIES.map((species) => `<button type="button" role="tab" data-dose-species-tab="${species.key}" aria-selected="${species.key === activeSpecies}" class="${species.key === activeSpecies ? "active" : ""}">${species.label}</button>`).join("")}
+      </div>
+      <div class="fertilizer-dose-panels">
+        ${FERTILIZER_DOSE_SPECIES.map((species) => renderFertilizerSpeciesDosePanel(species, activeSpecies)).join("")}
       </div>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
@@ -9654,6 +9709,20 @@ function openFertilizerRecommendedKgHaDialog() {
     </form>
   `;
   dialog.showModal();
+  const form = document.getElementById("fertilizerDoseForm");
+  form?.querySelectorAll("[data-dose-species-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const species = button.dataset.doseSpeciesTab;
+      form.querySelectorAll("[data-dose-species-tab]").forEach((item) => {
+        const active = item.dataset.doseSpeciesTab === species;
+        item.classList.toggle("active", active);
+        item.setAttribute("aria-selected", String(active));
+      });
+      form.querySelectorAll("[data-dose-species-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.doseSpeciesPanel !== species;
+      });
+    });
+  });
   document.getElementById("saveFertilizerRecommendedKgHa")?.addEventListener("click", saveFertilizerRecommendedKgHa);
 }
 
@@ -9661,37 +9730,46 @@ async function saveFertilizerRecommendedKgHa() {
   const form = document.getElementById("fertilizerDoseForm");
   const button = document.getElementById("saveFertilizerRecommendedKgHa");
   if (!form || !button || !form.reportValidity()) return;
-  const changes = [...form.querySelectorAll("[data-product-dose]")].map((input) => {
+  const changesByProduct = new Map();
+  let changedDoseCount = 0;
+  [...form.querySelectorAll("[data-product-dose]")].forEach((input) => {
     const product = fertilizerProductById(input.dataset.productDose);
+    const species = input.dataset.doseSpecies;
+    const speciesMeta = fertilizerDoseSpeciesMeta(species);
     const raw = String(input.value || "").trim();
     const value = raw === "" ? null : Number(raw);
-    return { product, value };
-  }).filter(({ product, value }) => product && value !== product.recommendedKgHa);
+    const currentValue = fertilizerRecommendedDoseForProduct(product, species);
+    if (!product || !speciesMeta || value === currentValue) return;
+    if (!changesByProduct.has(product.id)) changesByProduct.set(product.id, { product, payload: {} });
+    changesByProduct.get(product.id).payload[speciesMeta.column] = value;
+    changedDoseCount += 1;
+  });
+  const changes = [...changesByProduct.values()];
   if (!changes.length) {
     showToast("No hay cambios en los kg/ha recomendados");
     return;
   }
-  if (changes.some(({ value }) => value !== null && (!Number.isFinite(value) || value < 0))) {
+  if (changes.some(({ payload }) => Object.values(payload).some((value) => value !== null && (!Number.isFinite(value) || value < 0)))) {
     showToast("Los kg/ha deben ser numeros positivos");
     return;
   }
   button.disabled = true;
   button.textContent = "Guardando...";
   try {
-    await Promise.all(changes.map(({ product, value }) => sbFetch(`/rest/v1/fertilizante_productos?id=eq.${encodeURIComponent(product.id)}`, {
+    await Promise.all(changes.map(({ product, payload }) => sbFetch(`/rest/v1/fertilizante_productos?id=eq.${encodeURIComponent(product.id)}`, {
       method: "PATCH",
       prefer: "return=minimal",
-      body: JSON.stringify({ kg_ha_recomendado: value, actualizado_en: new Date().toISOString() })
+      body: JSON.stringify({ ...payload, actualizado_en: new Date().toISOString() })
     })));
     resetFertilizerLoadedState();
     document.getElementById("purchaseDialog")?.close();
     await loadFertilizerRows();
     if (currentView === "fertilizers") renderFertilizers();
-    showToast(`${changes.length} dosis recomendada${changes.length === 1 ? "" : "s"} actualizada${changes.length === 1 ? "" : "s"}`);
+    showToast(`${changedDoseCount} dosis por especie actualizada${changedDoseCount === 1 ? "" : "s"}`);
   } catch (error) {
     button.disabled = false;
     button.textContent = "Guardar cambios";
-    const migrationHint = isMissingSupabaseColumn(error, ["kg_ha_recomendado"])
+    const migrationHint = isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])
       ? " Ejecuta supabase_fertilizante_kg_ha_recomendado.sql en Supabase."
       : "";
     showToast(`No se guardaron los kg/ha: ${error.message}.${migrationHint}`);
@@ -9705,17 +9783,36 @@ function openFertilizerTankRecommendationDialog(tankId) {
     return;
   }
   const { preparation, product, dissolution, dissolutionSource } = fertilizerRecommendationContext(tank);
-  const recommendedKgHa = product?.recommendedKgHa;
   const fields = fertilizerFieldsForTank(tank);
   const groups = new Map();
   fields.forEach((field) => {
     if (!groups.has(field.potrero)) groups.set(field.potrero, []);
     groups.get(field.potrero).push(field);
   });
-  const canCalculate = Boolean(product) && Number.isFinite(recommendedKgHa) && recommendedKgHa >= 0 && dissolution > 0;
+  const fieldRecommendations = fields.map((field) => {
+    const species = fertilizerDoseSpeciesMeta(field.crop);
+    const dose = fertilizerRecommendedDoseForProduct(product, field.crop);
+    const hasDose = dose !== null && Number.isFinite(dose) && dose >= 0;
+    return {
+      field,
+      species,
+      dose,
+      hasDose,
+      liters: hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0
+    };
+  });
+  const calculableFields = fieldRecommendations.filter((entry) => entry.hasDose && dissolution > 0);
+  const missingSpecies = [...new Set(fieldRecommendations
+    .filter((entry) => !entry.hasDose)
+    .map((entry) => entry.species?.label || entry.field.crop || "Sin especie"))];
+  const usedSpecies = [...new Set(fieldRecommendations.map((entry) => entry.species?.key).filter(Boolean))];
+  const canCalculate = Boolean(product) && dissolution > 0 && calculableFields.length > 0;
   const totalLiters = canCalculate
-    ? fields.reduce((sum, field) => sum + fertilizerRecommendedLiters(recommendedKgHa, field.hectares, dissolution), 0)
+    ? calculableFields.reduce((sum, entry) => sum + entry.liters, 0)
     : 0;
+  const doseSummary = usedSpecies.length === 1
+    ? fertilizerRecommendedDoseForProduct(product, usedSpecies[0])
+    : null;
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <div class="modal-body fertilizer-recommendation-dialog">
@@ -9728,18 +9825,19 @@ function openFertilizerTankRecommendationDialog(tankId) {
       </div>
       <div class="fertilizer-recommendation-summary">
         <span><small>Producto</small><strong>${escapeHtml(product?.name || "Sin preparacion registrada")}</strong></span>
-        <span><small>Kg/ha recomendado</small><strong>${recommendedKgHa === null || recommendedKgHa === undefined ? "Sin definir" : `${number(recommendedKgHa)} kg/ha`}</strong></span>
+        <span><small>Kg/ha por especie</small><strong>${usedSpecies.length > 1 ? "Segun especie" : doseSummary === null ? "Sin definir" : `${number(doseSummary)} kg/ha`}</strong></span>
         <span><small>Disolucion utilizada</small><strong>${dissolution > 0 ? number(dissolution, 4) : "Sin definir"}</strong><em>${escapeHtml(dissolutionSource)}</em></span>
-        <span><small>Total recomendado</small><strong>${canCalculate ? `${number(totalLiters, 1)} L` : "Pendiente"}</strong></span>
+        <span><small>Total recomendado</small><strong>${canCalculate ? `${number(totalLiters, 1)} L${missingSpecies.length ? " parciales" : ""}` : "Pendiente"}</strong></span>
       </div>
       ${tank.litrosActuales <= 0 && preparation ? `<div class="fertilizer-recommendation-warning">El estanque esta vacio. El calculo usa su ultima preparacion registrada.</div>` : ""}
       ${!product ? `<div class="empty-state compact"><strong>Este estanque no tiene una preparacion con producto.</strong><p>Registra una preparacion para identificar el producto y calcular la recomendacion.</p></div>` : ""}
-      ${product && (recommendedKgHa === null || recommendedKgHa === undefined) ? `<div class="empty-state compact"><strong>Falta definir el kg/ha de ${escapeHtml(product.name)}.</strong><p>Usa el boton Actualizar kg/ha del modulo Fertirriego.</p></div>` : ""}
+      ${product && missingSpecies.length ? `<div class="fertilizer-recommendation-warning">Falta definir ${escapeHtml(product.name)} para: ${missingSpecies.map(escapeHtml).join(", ")}.</div>` : ""}
       ${product && dissolution <= 0 ? `<div class="empty-state compact"><strong>No hay una disolucion valida.</strong><p>Registra cantidad de producto y litros de agua en la preparacion del estanque.</p></div>` : ""}
-      ${canCalculate && groups.size ? `
+      ${product && dissolution > 0 && groups.size ? `
         <div class="fertilizer-recommendation-groups">
           ${[...groups.entries()].map(([potrero, potreroFields]) => {
-            const potreroLiters = potreroFields.reduce((sum, field) => sum + fertilizerRecommendedLiters(recommendedKgHa, field.hectares, dissolution), 0);
+            const potreroEntries = potreroFields.map((field) => fieldRecommendations.find((entry) => entry.field.id === field.id));
+            const potreroLiters = potreroEntries.reduce((sum, entry) => sum + (entry?.liters || 0), 0);
             return `
               <section class="fertilizer-recommendation-group">
                 <div class="fertilizer-recommendation-group-head">
@@ -9747,10 +9845,10 @@ function openFertilizerTankRecommendationDialog(tankId) {
                   <span>${number(potreroLiters, 1)} L recomendados</span>
                 </div>
                 <div class="fertilizer-recommendation-table">
-                  <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Variedad</span><span>Ha</span><span>Recomendado</span></div>
-                  ${potreroFields.map((field) => {
-                    const liters = fertilizerRecommendedLiters(recommendedKgHa, field.hectares, dissolution);
-                    return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span>${escapeHtml(field.variety || field.crop || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><b>${number(liters, 1)} L</b></div>`;
+                  <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
+                  ${potreroEntries.map((entry) => {
+                    const field = entry.field;
+                    return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
                   }).join("")}
                 </div>
               </section>
@@ -9758,8 +9856,8 @@ function openFertilizerTankRecommendationDialog(tankId) {
           }).join("")}
         </div>
       ` : ""}
-      ${canCalculate && !groups.size ? `<div class="empty-state compact"><strong>El estanque no tiene potreros asociados.</strong><p>Asocia sus sectores antes de calcular los bloques.</p></div>` : ""}
-      <div class="fertilizer-formula-note"><span>Formula</span><strong>(kg/ha recomendado × hectareas del bloque) ÷ disolucion</strong></div>
+      ${product && dissolution > 0 && !groups.size ? `<div class="empty-state compact"><strong>El estanque no tiene potreros asociados.</strong><p>Asocia sus sectores antes de calcular los bloques.</p></div>` : ""}
+      <div class="fertilizer-formula-note"><span>Formula</span><strong>(kg/ha de la especie × hectareas del bloque) ÷ disolucion</strong></div>
       <div class="modal-actions"><button class="primary-button" type="button" data-action="close-dialog">Cerrar</button></div>
     </div>
   `;
