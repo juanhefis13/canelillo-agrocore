@@ -632,7 +632,14 @@ createServer(async (req, res) => {
   }
   try {
     const body = await readFile(filePath);
-    res.writeHead(200, { "Content-Type": types[extname(filePath)] || "application/octet-stream" });
+    const extension = extname(filePath);
+    const cacheControl = [".html", ".js", ".css"].includes(extension) || filePath.endsWith("sw.js")
+      ? "no-store, no-cache, must-revalidate"
+      : "public, max-age=3600";
+    res.writeHead(200, {
+      "Content-Type": types[extension] || "application/octet-stream",
+      "Cache-Control": cacheControl
+    });
     res.end(body);
   } catch {
     res.writeHead(404);

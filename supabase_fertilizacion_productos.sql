@@ -19,10 +19,12 @@ create table if not exists public.fertilizante_productos (
   ah numeric(12, 4) not null default 0,
   af numeric(12, 4) not null default 0,
   disolucion numeric(12, 4) not null default 0,
+  kg_ha_recomendado numeric(12, 3) null,
   activo boolean not null default true,
   creado_en timestamptz not null default now(),
   actualizado_en timestamptz not null default now(),
-  constraint fertilizante_productos_unidad_chk check (unidad in ('KG', 'LT'))
+  constraint fertilizante_productos_unidad_chk check (unidad in ('KG', 'LT')),
+  constraint fertilizante_productos_kg_ha_recomendado_chk check (kg_ha_recomendado is null or kg_ha_recomendado >= 0)
 );
 
 alter table if exists public.fertilizante_preparaciones
@@ -84,8 +86,18 @@ create policy fertilizante_productos_lectura
 
 grant select on public.fertilizante_productos to authenticated;
 
+drop policy if exists fertilizante_productos_actualizacion on public.fertilizante_productos;
+create policy fertilizante_productos_actualizacion
+  on public.fertilizante_productos
+  for update
+  to authenticated
+  using (true)
+  with check (kg_ha_recomendado is null or kg_ha_recomendado >= 0);
+
+grant update (kg_ha_recomendado, actualizado_en) on public.fertilizante_productos to authenticated;
+
 commit;
 
-select nombre_comercial, unidad, n, p, k, b, zn, mg, ca, ah, af, disolucion
+select nombre_comercial, unidad, n, p, k, b, zn, mg, ca, ah, af, disolucion, kg_ha_recomendado
 from public.fertilizante_productos
 order by nombre_comercial;
