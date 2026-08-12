@@ -594,6 +594,7 @@ let fertilizerStorageView = "estanques";
 let fertilizerStockRows = [];
 let fertilizerStockLots = [];
 let fertilizerProducts = [];
+let fertilizerSpeciesDoseColumnsAvailable = true;
 let fertilizerCasetas = [];
 let fertilizerTanks = [];
 let fertilizerFields = [];
@@ -8698,6 +8699,14 @@ function normalizeFertilizerProduct(row) {
   const legacyRecommendedKgHa = nullableNumber(row.kg_ha_recomendado);
   const hasSpeciesDoseColumns = ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"]
     .every((column) => Object.prototype.hasOwnProperty.call(row, column));
+  const speciesDoseValues = {
+    PALTO: nullableNumber(row.kg_ha_palto),
+    MANDARINA: nullableNumber(row.kg_ha_mandarina),
+    NARANJA: nullableNumber(row.kg_ha_naranja)
+  };
+  const duplicatedLegacySpeciesDose = hasSpeciesDoseColumns
+    && legacyRecommendedKgHa !== null
+    && Object.values(speciesDoseValues).every((value) => value === legacyRecommendedKgHa);
   return {
     id: row.id,
     name: row.nombre_comercial || row.nombre_normalizado || "Producto",
@@ -8705,11 +8714,10 @@ function normalizeFertilizerProduct(row) {
     unit: String(row.unidad || "").toUpperCase() || "KG",
     dissolution: Number(row.disolucion) || 0,
     recommendedKgHa: legacyRecommendedKgHa,
-    recommendedKgHaBySpecies: {
-      PALTO: nullableNumber(row.kg_ha_palto, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa),
-      MANDARINA: nullableNumber(row.kg_ha_mandarina, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa),
-      NARANJA: nullableNumber(row.kg_ha_naranja, hasSpeciesDoseColumns ? null : legacyRecommendedKgHa)
-    }
+    recommendedKgHaBySpecies: duplicatedLegacySpeciesDose || !hasSpeciesDoseColumns
+      ? { PALTO: null, MANDARINA: null, NARANJA: legacyRecommendedKgHa }
+      : speciesDoseValues,
+    duplicatedLegacySpeciesDose
   };
 }
 
@@ -8817,6 +8825,7 @@ async function loadFertilizerUserNamesForHistory(rows = []) {
 async function loadFertilizerRowsFromSupabase() {
   fertilizerStockError = "";
   fertilizerHistoryLoadError = "";
+  fertilizerSpeciesDoseColumnsAvailable = true;
   const historyErrors = [];
   const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, applicationsRaw, lotsRaw] = await Promise.all([
     sbSelectAll(
@@ -8826,6 +8835,7 @@ async function loadFertilizerRowsFromSupabase() {
     ),
     sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
       if (!isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])) return [];
+      fertilizerSpeciesDoseColumnsAvailable = false;
       return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
         if (!isMissingSupabaseColumn(legacyError, ["kg_ha_recomendado"])) return [];
         return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion&activo=eq.true&order=nombre_comercial.asc", 1000);
@@ -9699,12 +9709,13 @@ function openFertilizerRecommendedKgHaDialog() {
       <div class="fertilizer-dose-species-tabs segmented-control" role="tablist" aria-label="Especie para dosis recomendada">
         ${FERTILIZER_DOSE_SPECIES.map((species) => `<button type="button" role="tab" data-dose-species-tab="${species.key}" aria-selected="${species.key === activeSpecies}" class="${species.key === activeSpecies ? "active" : ""}">${species.label}</button>`).join("")}
       </div>
+      ${fertilizerSpeciesDoseColumnsAvailable ? "" : `<div class="fertilizer-recommendation-warning">Faltan las columnas por especie en Supabase. Ejecuta supabase_fertilizante_kg_ha_recomendado.sql y vuelve a cargar.</div>`}
       <div class="fertilizer-dose-panels">
         ${FERTILIZER_DOSE_SPECIES.map((species) => renderFertilizerSpeciesDosePanel(species, activeSpecies)).join("")}
       </div>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
-        <button class="primary-button" type="button" id="saveFertilizerRecommendedKgHa">Guardar cambios</button>
+        <button class="primary-button" type="button" id="saveFertilizerRecommendedKgHa" ${fertilizerSpeciesDoseColumnsAvailable ? "" : "disabled"}>Guardar cambios</button>
       </div>
     </form>
   `;
@@ -9730,8 +9741,20 @@ async function saveFertilizerRecommendedKgHa() {
   const form = document.getElementById("fertilizerDoseForm");
   const button = document.getElementById("saveFertilizerRecommendedKgHa");
   if (!form || !button || !form.reportValidity()) return;
+  if (!fertilizerSpeciesDoseColumnsAvailable) {
+    showToast("Ejecuta supabase_fertilizante_kg_ha_recomendado.sql antes de guardar");
+    return;
+  }
   const changesByProduct = new Map();
   let changedDoseCount = 0;
+  let repairedProductCount = 0;
+  (fertilizerProducts || []).filter((product) => product.duplicatedLegacySpeciesDose).forEach((product) => {
+    changesByProduct.set(product.id, {
+      product,
+      payload: { kg_ha_palto: null, kg_ha_mandarina: null, kg_ha_naranja: product.recommendedKgHa }
+    });
+    repairedProductCount += 1;
+  });
   [...form.querySelectorAll("[data-product-dose]")].forEach((input) => {
     const product = fertilizerProductById(input.dataset.productDose);
     const species = input.dataset.doseSpecies;
@@ -9765,7 +9788,10 @@ async function saveFertilizerRecommendedKgHa() {
     document.getElementById("purchaseDialog")?.close();
     await loadFertilizerRows();
     if (currentView === "fertilizers") renderFertilizers();
-    showToast(`${changedDoseCount} dosis por especie actualizada${changedDoseCount === 1 ? "" : "s"}`);
+    const updateMessage = changedDoseCount
+      ? `${changedDoseCount} dosis por especie actualizada${changedDoseCount === 1 ? "" : "s"}`
+      : "Dosis por especie corregidas";
+    showToast(`${updateMessage}${repairedProductCount ? ` · ${repairedProductCount} duplicacion${repairedProductCount === 1 ? "" : "es"} reparada${repairedProductCount === 1 ? "" : "s"}` : ""}`);
   } catch (error) {
     button.disabled = false;
     button.textContent = "Guardar cambios";

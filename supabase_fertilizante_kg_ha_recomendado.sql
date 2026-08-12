@@ -9,13 +9,27 @@ alter table public.fertilizante_productos
   add column if not exists kg_ha_mandarina numeric(12, 3) null,
   add column if not exists kg_ha_naranja numeric(12, 3) null;
 
--- Conserva cualquier dosis general ingresada previamente como punto de partida.
+-- Los valores historicos generales pertenecen a Naranja. En una instalacion
+-- nueva de estas columnas se conservan ahi, sin duplicarlos en otras especies.
+update public.fertilizante_productos
+set kg_ha_naranja = kg_ha_recomendado
+where kg_ha_recomendado is not null
+  and kg_ha_palto is null
+  and kg_ha_mandarina is null
+  and kg_ha_naranja is null;
+
+-- Repara la version anterior de esta migracion, que copiaba el valor general
+-- en las tres especies. El valor historico se conserva en Naranja y en
+-- kg_ha_recomendado; Palto y Mandarina quedan disponibles para su dosis real.
 update public.fertilizante_productos
 set
-  kg_ha_palto = coalesce(kg_ha_palto, kg_ha_recomendado),
-  kg_ha_mandarina = coalesce(kg_ha_mandarina, kg_ha_recomendado),
-  kg_ha_naranja = coalesce(kg_ha_naranja, kg_ha_recomendado)
-where kg_ha_recomendado is not null;
+  kg_ha_palto = null,
+  kg_ha_mandarina = null,
+  kg_ha_naranja = kg_ha_recomendado
+where kg_ha_recomendado is not null
+  and kg_ha_palto is not distinct from kg_ha_recomendado
+  and kg_ha_mandarina is not distinct from kg_ha_recomendado
+  and kg_ha_naranja is not distinct from kg_ha_recomendado;
 
 alter table public.fertilizante_productos
   drop constraint if exists fertilizante_productos_kg_ha_recomendado_chk;
