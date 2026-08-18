@@ -1,0 +1,22 @@
+<svg width="96" height="96" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="pulgon-shadow"><feDropShadow dx="1" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.4"/></filter>
+        <linearGradient id="pulgon-body" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#81C784"/>
+          <stop offset="100%" stop-color="#43A047"/>
+        </linearGradient>
+      </defs>
+      <!-- Cuerpo 3D -->
+      <path d="M10 8 Q8 10, 8 12 Q8 16, 10 18 Q12 20, 14 18 Q16 16, 16 12 Q16 10, 14 8 Q12 6, 10 8" fill="url(#pulgon-body)" stroke="#2E7D32" stroke-width="1.6" filter="url(#pulgon-shadow)"/>
+      <!-- Cornículos 3D -->
+      <path d="M10 18 L8.5 21 M14 18 L15.5 21" stroke="#1B5E20" stroke-width="1.4" stroke-linecap="round"/>
+      <ellipse cx="9.2" cy="19.8" rx="0.6" ry="1" fill="#2E7D32" opacity="0.7"/>
+      <!-- Antenas 3D -->
+      <path d="M10 8 Q7 5, 6 7 Q5.5 8.5, 6.5 10" stroke="#1B5E20" stroke-width="1.2" fill="none"/>
+      <path d="M14 8 Q17 5, 18 7 Q18.5 8.5, 17.5 10" stroke="#1B5E20" stroke-width="1.2" fill="none"/>
+      <!-- Ojos 3D -->
+      <circle cx="11" cy="9" r="0.9" fill="#1B5E20"/>
+      <circle cx="11" cy="8.7" r="0.4" fill="#FFF" opacity="0.6"/>
+      <circle cx="13" cy="9" r="0.9" fill="#1B5E20"/>
+      <circle cx="13" cy="8.7" r="0.4" fill="#FFF" opacity="0.6"/>
+    </svg>

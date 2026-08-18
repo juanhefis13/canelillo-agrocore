@@ -1,0 +1,16 @@
+<svg width="96" height="96" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="escama-shadow"><feDropShadow dx="2" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.5"/></filter>
+        <radialGradient id="escama-body">
+          <stop offset="0%" stop-color="#BCAAA4"/>
+          <stop offset="100%" stop-color="#6D4C41"/>
+        </radialGradient>
+      </defs>
+      <!-- Caparazón 3D -->
+      <ellipse cx="12" cy="12" rx="6.8" ry="5.8" fill="url(#escama-body)" stroke="#4E342E" stroke-width="2.2" filter="url(#escama-shadow)"/>
+      <!-- Anillos 3D -->
+      <ellipse cx="12" cy="12" rx="5.2" ry="4.4" fill="none" stroke="#8D6E63" stroke-width="1.2"/>
+      <ellipse cx="12" cy="12" rx="3.8" ry="3.2" fill="none" stroke="#A1887F" stroke-width="1"/>
+      <!-- Reflejo -->
+      <ellipse cx="12" cy="9" rx="3" ry="1.5" fill="#FFFFFF" opacity="0.3"/>
+    </svg>

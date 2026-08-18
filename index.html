@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-  <link rel="stylesheet" href="styles.css?v=264-fertilizer-species-values-fix">
+  <link rel="stylesheet" href="styles.css?v=291-fertilizer-trace">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -81,7 +81,11 @@
             <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="satellite" title="NDVI e indices satelitales"><span class="nav-label">NDVI</span></button>
             <button class="nav-item" data-view="calicatas" title="Calicatas"><span class="nav-label">Calicatas</span></button>
           </div>
-          <button class="nav-item" data-view="fertilizers" title="Fertilizantes"><span class="nav-label">Fertilizantes</span></button>
+          <button class="nav-group-toggle" type="button" data-action="toggle-fertilizers-menu" aria-expanded="false"><span class="nav-label">Fertilizantes</span></button>
+          <div class="nav-group" id="fertilizersMenu">
+            <button class="nav-item" data-view="fertilizers" title="Fertirriego"><span class="nav-label">Estanques y bodega</span></button>
+            <button class="nav-item" data-view="fertilizerAnalysis" title="Fertilizante analisis"><span class="nav-label">Fertilizante analisis</span></button>
+          </div>
           <button class="nav-item" data-view="pestMonitoring" title="Monitoreo de plagas"><span class="nav-label">Monitoreo de plagas</span></button>
           <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false"><span class="nav-label">Aplicaciones</span></button>
           <div class="nav-group" id="applicationsMenu">
@@ -133,6 +137,7 @@
         <section id="irrigation" class="view"></section>
         <section id="calicatas" class="view"></section>
         <section id="fertilizers" class="view"></section>
+        <section id="fertilizerAnalysis" class="view"></section>
         <section id="pestMonitoring" class="view"></section>
         <section id="applicationDashboard" class="view"></section>
         <section id="program" class="view"></section>
@@ -171,6 +176,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="vendor/xlsx.full.min.js"></script>
     <script src="vendor/pdf-lib.min.js"></script>
-  <script src="app.js?v=264-fertilizer-species-values-fix"></script>
+  <script src="app.js?v=291-fertilizer-trace"></script>
   </body>
 </html>

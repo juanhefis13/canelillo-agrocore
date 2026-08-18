@@ -1,0 +1,21 @@
+<svg width="96" height="96" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="aranita-shadow"><feDropShadow dx="1.5" dy="2.5" stdDeviation="3" flood-color="#000" flood-opacity="0.5"/></filter>
+        <radialGradient id="aranita-body">
+          <stop offset="0%" stop-color="#E53935"/>
+          <stop offset="100%" stop-color="#B71C1C"/>
+        </radialGradient>
+      </defs>
+      <!-- Cuerpo 3D -->
+      <ellipse cx="12" cy="12" rx="4.5" ry="5.5" fill="url(#aranita-body)" stroke="#8B0000" stroke-width="2" filter="url(#aranita-shadow)"/>
+      <!-- Cefalotórax -->
+      <ellipse cx="12" cy="9" rx="3.3" ry="2.7" fill="#D32F2F" stroke="#B71C1C" stroke-width="1.5"/>
+      <!-- Patas 3D articuladas -->
+      <path d="M8 9 Q5 6, 3 8 Q2 10, 3 12 M8 11 Q4 11, 2 12 M8 13 Q4 14, 2 14 M8 15 Q5 18, 3 16" stroke="#8B0000" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <path d="M16 9 Q19 6, 21 8 Q22 10, 21 12 M16 11 Q20 11, 22 12 M16 13 Q20 14, 22 14 M16 15 Q19 18, 21 16" stroke="#8B0000" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <!-- Ojos 3D -->
+      <circle cx="10.5" cy="8.5" r="1" fill="#000"/>
+      <circle cx="10.5" cy="8.2" r="0.4" fill="#FFF" opacity="0.7"/>
+      <circle cx="13.5" cy="8.5" r="1" fill="#000"/>
+      <circle cx="13.5" cy="8.2" r="0.4" fill="#FFF" opacity="0.7"/>
+    </svg>

@@ -1,0 +1,18 @@
+<svg width="96" height="96" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="mosca-shadow"><feDropShadow dx="1" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter>
+      </defs>
+      <!-- Cuerpo 3D -->
+      <ellipse cx="12" cy="13" rx="2.8" ry="4.5" fill="#FFF59D" stroke="#FFEB3B" stroke-width="1.8" filter="url(#mosca-shadow)"/>
+      <!-- Alas 3D -->
+      <path d="M9 10 L3 5 L1 10 Z" fill="#FFFFFF" stroke="#FFF176" stroke-width="1.8"/>
+      <path d="M15 10 L21 5 L23 10 Z" fill="#FFFFFF" stroke="#FFF176" stroke-width="1.8"/>
+      <!-- Polvo 3D -->
+      <circle cx="5" cy="7" r="0.8" fill="#FFFFFF" opacity="0.8"/>
+      <circle cx="19" cy="7" r="0.8" fill="#FFFFFF" opacity="0.8"/>
+      <!-- Ojos 3D -->
+      <circle cx="11" cy="12" r="0.8" fill="#212121"/>
+      <circle cx="11" cy="11.7" r="0.3" fill="#FFF" opacity="0.6"/>
+      <circle cx="13" cy="12" r="0.8" fill="#212121"/>
+      <circle cx="13" cy="11.7" r="0.3" fill="#FFF" opacity="0.6"/>
+    </svg>

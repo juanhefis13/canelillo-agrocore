@@ -582,10 +582,32 @@ let pestMonitoringHeatOverlay = null;
 let pestMonitoringInfoWindow = null;
 let pestMonitoringMapRenderVersion = 0;
 let pestMonitoringCurrentSummaries = new Map();
+let pestMonitoringTrees = null;
+let pestMonitoringTreeLoadPromise = null;
+let pestMonitoringTreeLoadError = "";
+let pestMonitoringTreeDataSource = "";
+let pestMonitoringTreesVisible = true;
+let pestMonitoringTreeMarkers = new Map();
+let pestMonitoringTreeInfoWindow = null;
+let pestMonitoringNeedsFit = true;
 let fertilizerRows = null;
 let fertilizerLoadPromise = null;
 let fertilizerLoadError = "";
 let fertilizerDataSource = "";
+let fertilizerProgramRows = null;
+let fertilizerProgramLoadPromise = null;
+let fertilizerProgramLoadError = "";
+let fertilizerProgramDataSource = "";
+let fertilizerProgramBackupPromise = null;
+let fertilizerProgramNutrientsByProduct = new Map();
+let fertilizerAnalysisSeasonFilter = "2026-2027";
+let fertilizerAnalysisSpeciesFilter = "Todas";
+let fertilizerAnalysisPotreroFilter = "Todos";
+let fertilizerAnalysisCasetaFilter = "Todas";
+let fertilizerAnalysisProductFilter = "Todos";
+let fertilizerAnalysisMonthlyMetric = "perHa";
+let fertilizerAnalysisExpandedMonths = new Set();
+let fertilizerAnalysisExpandedDays = new Set();
 let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
@@ -600,6 +622,8 @@ let fertilizerTanks = [];
 let fertilizerFields = [];
 let fertilizerPreparationHistory = [];
 let fertilizerApplicationHistory = [];
+let fertilizerApplicationConsumptions = [];
+let fertilizerConsumptionTraceAvailable = false;
 let fertilizerUserNames = new Map();
 let fertilizerHistoryLoadError = "";
 let fertilizerStockError = "";
@@ -620,6 +644,7 @@ const CLOUD_MODULE_CACHE_META_KEY = "agrocore.cloud.module-cache.v1";
 const CLOUD_MODULE_TTL_MS = {
   weather: 5 * 60 * 1000,
   fields: 24 * 60 * 60 * 1000,
+  fertilizers: 5 * 60 * 1000,
   applications: 5 * 60 * 1000,
   irrigation: 2 * 60 * 1000,
   calicatas: 5 * 60 * 1000,
@@ -660,6 +685,7 @@ const views = {
   irrigation: document.getElementById("irrigation"),
   calicatas: document.getElementById("calicatas"),
   fertilizers: document.getElementById("fertilizers"),
+  fertilizerAnalysis: document.getElementById("fertilizerAnalysis"),
   pestMonitoring: document.getElementById("pestMonitoring"),
   applicationDashboard: document.getElementById("applicationDashboard"),
   program: document.getElementById("program"),
@@ -682,6 +708,7 @@ const titles = {
   irrigation: "Riegos",
   calicatas: "Calicatas",
   fertilizers: "Fertilizantes",
+  fertilizerAnalysis: "Fertilizante analisis",
   pestMonitoring: "Monitoreo de plagas",
   applicationDashboard: "Panel principal de aplicaciones",
   program: "Programa de aplicaciones",
@@ -850,6 +877,7 @@ function cloudModuleHasUsableState(module) {
   if (module === "harvest") return Boolean(state.harvestRecords?.length || state.harvestCrewSchedule?.length || state.harvestJornales?.length);
   if (module === "harvestAnalysis") return Boolean(state.harvestAnalysisRecords?.length && (state.harvestFields?.length || state.blocks?.length));
   if (module === "harvestExport") return Boolean(state.harvestExportRecords?.length && (state.harvestFields?.length || state.blocks?.length));
+  if (module === "fertilizers") return Boolean(fertilizerRows?.length);
   return false;
 }
 
@@ -916,6 +944,7 @@ function cloudModulesForView(view) {
   if (view === "harvestMap" || view === "harvestInfo") return ["harvest"];
   if (view === "harvestAnalysis") return ["harvestAnalysis"];
   if (view === "harvestExport") return ["harvestExport"];
+  if (view === "fertilizers" || view === "fertilizerAnalysis") return ["fields", "fertilizers"];
   if (["applicationDashboard", "program", "manager", "warehouse", "orders", "execution", "inventory", "prices", "reports", "masters"].includes(view)) {
     return ["fields", "applications"];
   }
@@ -1249,11 +1278,11 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
-    bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return (permissions[normalized] || []).includes(view);
 }
@@ -1268,11 +1297,11 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
-    bodeguero: ["dashboard", "fertilizers", "warehouse", "inventory", "prices"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return new Set(viewsByRole[normalized] || [defaultViewForRole(normalized)]);
 }
@@ -6727,6 +6756,7 @@ function render() {
     irrigation: renderIrrigation,
     calicatas: renderCalicatas,
     fertilizers: renderFertilizers,
+    fertilizerAnalysis: renderFertilizerAnalysis,
     pestMonitoring: renderPestMonitoring,
     applicationDashboard: renderApplicationDashboard,
     program: renderProgram,
@@ -8713,6 +8743,7 @@ function normalizeFertilizerProduct(row) {
     key: fertilizerReportKey(row.nombre_normalizado || row.nombre_comercial),
     unit: String(row.unidad || "").toUpperCase() || "KG",
     dissolution: Number(row.disolucion) || 0,
+    nutrients: Object.fromEntries(FERTILIZER_NUTRIENTS.map((nutrient) => [nutrient, Number(row[nutrient]) || 0])),
     recommendedKgHa: legacyRecommendedKgHa,
     recommendedKgHaBySpecies: duplicatedLegacySpeciesDose || !hasSpeciesDoseColumns
       ? { PALTO: null, MANDARINA: null, NARANJA: legacyRecommendedKgHa }
@@ -8733,7 +8764,7 @@ function fertilizerStockKey(casetaId, productId) {
   return `${casetaId || ""}|${productId || ""}`;
 }
 
-function computeFertilizerStockRows({ lots = [], preparations = [], products = [], casetas = [], tanks = [] } = {}) {
+function computeFertilizerStockRows({ lots = [], preparations = [], consumptions = [], products = [], casetas = [], tanks = [], traceAvailable = false } = {}) {
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsByKey = new Map(products.map((product) => [product.key, product]));
   const casetasById = new Map(casetas.map((caseta) => [caseta.id, caseta]));
@@ -8772,7 +8803,16 @@ function computeFertilizerStockRows({ lots = [], preparations = [], products = [
     if (lot.folio) row.folios.push(String(lot.folio));
   });
 
-  preparations.forEach((preparation) => {
+  const preparationsById = new Map(preparations.map((preparation) => [preparation.id, preparation]));
+  const stockMovements = traceAvailable
+    ? consumptions.map((consumption) => ({
+      preparation: preparationsById.get(consumption.preparacion_id),
+      quantity: Number(consumption.producto_consumido) || 0
+    }))
+    : preparations.map((preparation) => ({ preparation, quantity: Number(preparation.producto_cantidad) || 0 }));
+
+  stockMovements.forEach(({ preparation, quantity }) => {
+    if (!preparation) return;
     const tank = tanksById.get(preparation.estanque_id);
     const casetaId = tank?.caseta_id || "";
     if (!casetaId) return;
@@ -8780,7 +8820,7 @@ function computeFertilizerStockRows({ lots = [], preparations = [], products = [
     if (!product) product = productsByKey.get(fertilizerReportKey(preparation.producto || preparation.producto_nombre || preparation.nombre_producto));
     if (!product?.id) return;
     const row = ensureRow(casetaId, product.id);
-    row.consumed += Number(preparation.producto_cantidad) || 0;
+    row.consumed += quantity;
   });
 
   return [...rows.values()].map((row) => ({
@@ -8794,12 +8834,142 @@ function computeFertilizerStockRows({ lots = [], preparations = [], products = [
   );
 }
 
+function fertilizerFolioRows() {
+  const productsById = new Map((fertilizerProducts || []).map((product) => [product.id, product]));
+  const casetasById = new Map((fertilizerCasetas || []).map((caseta) => [caseta.id, caseta]));
+  const tanksById = new Map((fertilizerRows || []).map((tank) => [tank.id, tank]));
+  const preparationsByLot = new Map();
+  const consumptionsByPreparation = new Map();
+  const applicationsById = new Map((fertilizerApplicationHistory || []).map((application) => [application.id, application]));
+  (fertilizerPreparationHistory || []).forEach((preparation) => {
+    if (!preparation.lote_id) return;
+    if (!preparationsByLot.has(preparation.lote_id)) preparationsByLot.set(preparation.lote_id, []);
+    preparationsByLot.get(preparation.lote_id).push(preparation);
+  });
+  (fertilizerApplicationConsumptions || []).forEach((consumption) => {
+    if (!consumptionsByPreparation.has(consumption.preparacion_id)) consumptionsByPreparation.set(consumption.preparacion_id, []);
+    consumptionsByPreparation.get(consumption.preparacion_id).push(consumption);
+  });
+  return (fertilizerStockLots || []).map((lot) => {
+    const product = productsById.get(lot.producto_id);
+    const caseta = casetasById.get(lot.caseta_id);
+    const preparations = [...(preparationsByLot.get(lot.id) || [])]
+      .sort((a, b) => fertilizerPreparationTime(b) - fertilizerPreparationTime(a))
+      .map((preparation) => {
+        const consumptions = consumptionsByPreparation.get(preparation.id) || [];
+        const litersApplied = consumptions.reduce((sum, consumption) => sum + (Number(consumption.litros_consumidos) || 0), 0);
+        const productApplied = consumptions.reduce((sum, consumption) => sum + (Number(consumption.producto_consumido) || 0), 0);
+        return {
+          ...preparation,
+          consumptions,
+          litersApplied,
+          productApplied,
+          litersRemaining: Math.max(0, (Number(preparation.cantidad_litros) || 0) - litersApplied),
+          productRemaining: Math.max(0, (Number(preparation.producto_cantidad) || 0) - productApplied)
+        };
+      });
+    const prepared = preparations.reduce((sum, preparation) => sum + (Number(preparation.producto_cantidad) || 0), 0);
+    const consumed = preparations.reduce((sum, preparation) => sum + preparation.productApplied, 0);
+    const initial = Number(lot.cantidad_total) || 0;
+    const available = initial - consumed;
+    const availableToPrepare = initial - prepared;
+    const inPreparations = Math.max(0, prepared - consumed);
+    const movements = preparations.flatMap((preparation) => preparation.consumptions.map((consumption) => ({
+      ...consumption,
+      preparation,
+      application: applicationsById.get(consumption.aplicacion_id) || null
+    }))).sort((a, b) => fertilizerApplicationTime(b.application || b) - fertilizerApplicationTime(a.application || a));
+    const casetaTanks = (fertilizerRows || []).filter((tank) => tank.caseta === caseta?.name);
+    const usedTanks = [...new Set(preparations.map((preparation) => preparation.estanque_id).filter(Boolean))]
+      .map((id) => tanksById.get(id))
+      .filter(Boolean);
+    const relevantTanks = usedTanks.length ? usedTanks : casetaTanks;
+    return {
+      ...lot,
+      caseta: caseta?.name || "Sin caseta",
+      product: product?.name || "Producto sin maestro",
+      unit: String(lot.unidad || product?.unit || "KG").toUpperCase(),
+      initial,
+      prepared,
+      consumed,
+      inPreparations,
+      available,
+      availableToPrepare,
+      preparations,
+      movements,
+      applicationCount: new Set(movements.map((movement) => movement.aplicacion_id).filter(Boolean)).size,
+      tanks: relevantTanks,
+      potreros: [...new Set(relevantTanks.flatMap((tank) => tank.potreros || []).filter(Boolean))].sort(comparePotrero),
+      lastPreparation: preparations[0]?.fecha || preparations[0]?.creado_en || "",
+      lastApplication: movements[0]?.application?.fecha || movements[0]?.application?.creado_en || ""
+    };
+  }).sort((a, b) =>
+    a.caseta.localeCompare(b.caseta, "es", { numeric: true })
+    || String(b.fecha || b.creado_en || "").localeCompare(String(a.fecha || a.creado_en || ""))
+    || String(a.folio || "").localeCompare(String(b.folio || ""), "es", { numeric: true })
+  );
+}
+
+function fertilizerFolioById(id) {
+  return fertilizerFolioRows().find((row) => row.id === id) || null;
+}
+
+function fertilizerAvailableFolioRows(caseta, productId) {
+  return fertilizerFolioRows().filter((row) =>
+    row.caseta === caseta
+    && row.producto_id === productId
+    && row.availableToPrepare > 0
+  );
+}
+
+function renderFertilizerFolioOptions(caseta, productId, selectedId = "") {
+  const rows = fertilizerAvailableFolioRows(caseta, productId);
+  return `<option value="">${rows.length ? "Seleccionar folio" : "Sin folios con saldo"}</option>${rows.map((row) => `
+    <option value="${htmlAttr(row.id)}" ${row.id === selectedId ? "selected" : ""}>${escapeHtml(`Folio ${row.folio} · lote ${row.lote || "-"} · ${number(row.availableToPrepare)} ${row.unit} para preparar`)}</option>
+  `).join("")}`;
+}
+
+function fertilizerUnassignedPreparations() {
+  return (fertilizerPreparationHistory || []).filter((preparation) =>
+    !preparation.lote_id && Number(preparation.producto_cantidad) > 0
+  );
+}
+
+function fertilizerUntracedApplications() {
+  const tracedIds = new Set((fertilizerApplicationConsumptions || []).map((consumption) => consumption.aplicacion_id));
+  return (fertilizerApplicationHistory || []).filter((application) => !tracedIds.has(application.id));
+}
+
+function fertilizerPreparationBalancesForTank(tankId, applicationDate = "") {
+  const applicationTime = applicationDate ? fertilizerApplicationTime({ fecha: applicationDate }) : Number.POSITIVE_INFINITY;
+  const consumedByPreparation = new Map();
+  (fertilizerApplicationConsumptions || []).forEach((consumption) => {
+    const current = consumedByPreparation.get(consumption.preparacion_id) || 0;
+    consumedByPreparation.set(consumption.preparacion_id, current + (Number(consumption.litros_consumidos) || 0));
+  });
+  return (fertilizerPreparationHistory || [])
+    .filter((preparation) => preparation.estanque_id === tankId
+      && preparation.lote_id
+      && fertilizerPreparationTime(preparation) <= applicationTime)
+    .map((preparation) => {
+      const preparedLiters = Number(preparation.cantidad_litros) || 0;
+      const appliedLiters = consumedByPreparation.get(preparation.id) || 0;
+      return { ...preparation, preparedLiters, appliedLiters, availableLiters: Math.max(0, preparedLiters - appliedLiters) };
+    })
+    .filter((preparation) => preparation.availableLiters > 0)
+    .sort((a, b) => fertilizerPreparationTime(a) - fertilizerPreparationTime(b));
+}
+
 async function loadFertilizerPreparationsForModule() {
   return sbSelectAll("fertilizante_preparaciones", "select=*&order=fecha.desc,creado_en.desc", 5000);
 }
 
 async function loadFertilizerApplicationsForModule() {
   return sbSelectAll("fertilizante_aplicaciones", "select=*&order=fecha.desc,creado_en.desc", 5000);
+}
+
+async function loadFertilizerApplicationConsumptionsForModule() {
+  return sbSelectAll("fertilizante_aplicacion_consumos", "select=*&order=creado_en.desc", 5000);
 }
 
 async function loadFertilizerUserNamesForHistory(rows = []) {
@@ -8826,19 +8996,20 @@ async function loadFertilizerRowsFromSupabase() {
   fertilizerStockError = "";
   fertilizerHistoryLoadError = "";
   fertilizerSpeciesDoseColumnsAvailable = true;
+  fertilizerConsumptionTraceAvailable = true;
   const historyErrors = [];
-  const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, applicationsRaw, lotsRaw] = await Promise.all([
+  const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, applicationsRaw, consumptionsRaw, lotsRaw] = await Promise.all([
     sbSelectAll(
       "v_fertilizante_estado_estanques",
       "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
       1000
     ),
-    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
+    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
       if (!isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])) return [];
       fertilizerSpeciesDoseColumnsAvailable = false;
-      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
+      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
         if (!isMissingSupabaseColumn(legacyError, ["kg_ha_recomendado"])) return [];
-        return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion&activo=eq.true&order=nombre_comercial.asc", 1000);
+        return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af&activo=eq.true&order=nombre_comercial.asc", 1000);
       });
     }),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
@@ -8854,7 +9025,13 @@ async function loadFertilizerRowsFromSupabase() {
       historyErrors.push(`Aplicaciones: ${error.message || "error de lectura"}`);
       return [];
     }),
-    sbSelectAll("fertilizante_lotes", "select=id,caseta_id,producto_id,fecha,folio,lote,unidad,cantidad_total,observacion,creado_en&activo=eq.true&order=fecha.desc,creado_en.desc", 5000).catch((error) => {
+    loadFertilizerApplicationConsumptionsForModule().catch((error) => {
+      if (!isMissingSupabaseRelation(error, ["fertilizante_aplicacion_consumos"])) throw error;
+      fertilizerConsumptionTraceAvailable = false;
+      historyErrors.push("Trazabilidad por folio pendiente: ejecuta supabase_fertilizacion_folios.sql");
+      return [];
+    }),
+    sbSelectAll("fertilizante_lotes", "select=*&activo=eq.true&order=fecha.desc,creado_en.desc", 5000).catch((error) => {
       if (!isMissingSupabaseRelation(error, ["fertilizante_lotes"])) throw error;
       fertilizerStockError = "Ejecuta supabase_fertilizacion_lotes.sql para activar el inventario por caseta.";
       return [];
@@ -8875,14 +9052,17 @@ async function loadFertilizerRowsFromSupabase() {
   fertilizerStockLots = lotsRaw;
   fertilizerPreparationHistory = preparationsRaw;
   fertilizerApplicationHistory = applicationsRaw;
+  fertilizerApplicationConsumptions = consumptionsRaw;
   fertilizerHistoryLoadError = historyErrors.join(" | ");
   fertilizerUserNames = await loadFertilizerUserNamesForHistory([...preparationsRaw, ...applicationsRaw]);
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
     preparations: preparationsRaw,
+    consumptions: consumptionsRaw,
     products: fertilizerProducts,
     casetas: fertilizerCasetas,
-    tanks: tanksRaw
+    tanks: tanksRaw,
+    traceAvailable: fertilizerConsumptionTraceAvailable
   });
   fertilizerDataSource = "Supabase";
   return rows.map(normalizeFertilizerTankRow);
@@ -8900,6 +9080,8 @@ async function loadFertilizerRowsFromLocalBackup() {
   fertilizerFields = [];
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
+  fertilizerApplicationConsumptions = [];
+  fertilizerConsumptionTraceAvailable = false;
   fertilizerUserNames = new Map();
   fertilizerHistoryLoadError = "El historial requiere conexion con Supabase.";
   fertilizerStockError = "Inventario por caseta disponible solo con Supabase.";
@@ -8993,10 +9175,11 @@ function formatFertilizerReportSheet(sheet) {
   }
   const formats = {
     "LITROS AGUA PREPARACION": "0.###",
-    "CANTIDAD PRODUCTO APLICADO": "0.###",
+    "CANTIDAD PRODUCTO PREPARACION": "0.###",
     "DISOLUCION": "0.####",
     "HECTAREAS": "0.0",
     "LITROS APLICADOS": "0.###",
+    "PRODUCTO DESCONTADO FOLIO": "0.###",
     "KG APLICADOS": "0.###",
     "KG/HA APLICADOS": "0.###",
     ...Object.fromEntries(FERTILIZER_NUTRIENTS.map((nutrient) => [`APORTE ${nutrient.toUpperCase()}`, "0.###"]))
@@ -9049,13 +9232,15 @@ async function loadFertilizerReportRows() {
   const visibleTankKeys = new Set(visibleRows.map((row) =>
     `${fertilizerReportKey(row.caseta)}|${fertilizerReportKey(row.numeroEstanque)}|${fertilizerReportKey(row.fip)}|${Number(row.volumenMaximoLitros) || 0}`
   ));
-  const [applications, preparations, products, tanks, casetas, campos] = await Promise.all([
+  const [applications, preparations, consumptions, products, tanks, casetas, campos, lots] = await Promise.all([
     sbSelectAll("fertilizante_aplicaciones", "select=*&order=fecha.desc", 5000),
     sbSelectAll("fertilizante_preparaciones", "select=*&order=fecha.asc", 5000),
+    sbSelectAll("fertilizante_aplicacion_consumos", "select=*&order=creado_en.asc", 10000).catch(() => []),
     sbSelectAll("fertilizante_productos", "select=*&activo=eq.true&order=nombre_comercial.asc", 1000),
     sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true", 1000),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true", 1000),
-    sbSelectAll("campos", "select=id,potrero,bloque,hectareas", 5000)
+    sbSelectAll("campos", "select=id,potrero,bloque,hectareas", 5000),
+    sbSelectAll("fertilizante_lotes", "select=*&activo=eq.true", 5000).catch(() => [])
   ]);
 
   const tanksById = new Map(tanks.map((tank) => [tank.id, tank]));
@@ -9064,12 +9249,19 @@ async function loadFertilizerReportRows() {
   const productsByKey = new Map(products.map((product) => [fertilizerReportKey(product.nombre_normalizado || product.nombre_comercial), product]));
   const camposById = new Map(campos.map((campo) => [campo.id, campo]));
   const camposByPotreroBloque = new Map(campos.map((campo) => [`${fertilizerReportKey(campo.potrero)}|${fertilizerReportKey(campo.bloque)}`, campo]));
+  const lotsById = new Map(lots.map((lot) => [lot.id, lot]));
+  const preparationsById = new Map(preparations.map((preparation) => [preparation.id, preparation]));
+  const consumptionsByApplication = new Map();
   const preparationsByTank = new Map();
   preparations.forEach((prep) => {
     if (!preparationsByTank.has(prep.estanque_id)) preparationsByTank.set(prep.estanque_id, []);
     preparationsByTank.get(prep.estanque_id).push(prep);
   });
   preparationsByTank.forEach((items) => items.sort((a, b) => fertilizerPreparationTime(a) - fertilizerPreparationTime(b)));
+  consumptions.forEach((consumption) => {
+    if (!consumptionsByApplication.has(consumption.aplicacion_id)) consumptionsByApplication.set(consumption.aplicacion_id, []);
+    consumptionsByApplication.get(consumption.aplicacion_id).push(consumption);
+  });
 
   const tankVisibleByApplication = (application) => {
     if (!activeFilter) return true;
@@ -9087,13 +9279,25 @@ async function loadFertilizerReportRows() {
     const campo = camposById.get(application.campo_id)
       || camposByPotreroBloque.get(`${fertilizerReportKey(application.potrero)}|${fertilizerReportKey(application.bloque)}`)
       || {};
-    const batch = fertilizerPreparationBatch(application, preparationsByTank.get(application.estanque_id));
-    const lines = batch.length ? batch : [null];
-    const appliedLiters = Number(application.cantidad_litros) || 0;
+    const applicationLiters = Number(application.cantidad_litros) || 0;
+    const exactConsumptions = consumptionsByApplication.get(application.id) || [];
+    const batch = exactConsumptions.length ? [] : fertilizerPreparationBatch(application, preparationsByTank.get(application.estanque_id));
+    const lines = exactConsumptions.length
+      ? exactConsumptions.map((consumption) => ({
+        preparation: preparationsById.get(consumption.preparacion_id),
+        appliedLiters: Number(consumption.litros_consumidos) || 0,
+        productDiscounted: Number(consumption.producto_consumido) || 0
+      }))
+      : (batch.length ? batch : [null]).map((preparation) => ({
+        preparation,
+        appliedLiters: applicationLiters,
+        productDiscounted: null
+      }));
     const hectares = Number(campo.hectareas ?? application.hectareas) || 0;
 
-    lines.forEach((preparation) => {
+    lines.forEach(({ preparation, appliedLiters, productDiscounted }) => {
       const product = fertilizerProductForRecord(preparation, productsById, productsByKey);
+      const lot = lotsById.get(preparation?.lote_id) || {};
       const preparationWater = Number(preparation?.cantidad_litros) || 0;
       const productApplied = Number(preparation?.producto_cantidad) || 0;
       const dissolution = preparationWater > 0 ? productApplied / preparationWater : 0;
@@ -9106,14 +9310,17 @@ async function loadFertilizerReportRows() {
         "CASETA": caseta.nombre || "",
         "NRO ESTANQUE": tank.numero_estanque || "",
         "PRODUCTO": product?.nombre_comercial || preparation?.producto || "",
+        "FOLIO": lot.folio || "",
+        "LOTE": lot.lote || "",
         "LITROS AGUA PREPARACION": fertilizerReportNumber(preparationWater),
-        "CANTIDAD PRODUCTO APLICADO": fertilizerReportNumber(productApplied),
+        "CANTIDAD PRODUCTO PREPARACION": fertilizerReportNumber(productApplied),
         "UNIDAD": unit,
         "DISOLUCION": fertilizerReportNumber(dissolution, 4),
         "POTRERO": application.potrero || campo.potrero || "",
         "BLOQUE": application.bloque || campo.bloque || "",
         "HECTAREAS": fertilizerReportNumber(hectares, 1),
         "LITROS APLICADOS": fertilizerReportNumber(appliedLiters),
+        "PRODUCTO DESCONTADO FOLIO": fertilizerReportNumber(productDiscounted ?? kgApplied),
         "KG APLICADOS": fertilizerReportNumber(kgApplied),
         "KG/HA APLICADOS": fertilizerReportNumber(kgHaApplied),
         "OBSERVACION PREPARACION": preparation?.observacion || ""
@@ -9137,20 +9344,27 @@ async function exportFertilizerReportWorkbook() {
   if (currentView === "fertilizers") renderFertilizers();
   try {
     const rows = await loadFertilizerReportRows();
-    if (!rows.length) {
-      showToast("No hay aplicaciones de fertilizante para exportar");
+    const folioRows = fertilizerFolioReportRows();
+    if (!rows.length && !folioRows.length) {
+      showToast("No hay aplicaciones ni folios de fertilizante para exportar");
       return;
     }
     const workbook = window.XLSX.utils.book_new();
-    const sheet = window.XLSX.utils.json_to_sheet(rows);
-    formatFertilizerReportSheet(sheet);
-    sheet["!cols"] = [
-      { wch: 22 }, { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 30 }, { wch: 22 },
-      { wch: 24 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
-      { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 30 },
-      ...FERTILIZER_NUTRIENTS.map(() => ({ wch: 12 }))
-    ];
-    window.XLSX.utils.book_append_sheet(workbook, sheet, "Aplicaciones");
+    if (rows.length) {
+      const sheet = window.XLSX.utils.json_to_sheet(rows);
+      formatFertilizerReportSheet(sheet);
+      applyFertilizerApplicationFormulas(sheet, rows.length);
+      sheet["!autofilter"] = { ref: sheet["!ref"] };
+      sheet["!cols"] = Object.keys(rows[0]).map((header) => ({ wch: Math.min(32, Math.max(12, header.length + 2)) }));
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Aplicaciones");
+    }
+    if (folioRows.length) {
+      const folioSheet = window.XLSX.utils.json_to_sheet(folioRows);
+      formatFertilizerFolioSheet(folioSheet, folioRows.length);
+      folioSheet["!autofilter"] = { ref: folioSheet["!ref"] };
+      folioSheet["!cols"] = Object.keys(folioRows[0]).map((header) => ({ wch: Math.min(34, Math.max(12, header.length + 2)) }));
+      window.XLSX.utils.book_append_sheet(workbook, folioSheet, "Folios");
+    }
     window.XLSX.writeFile(workbook, `informe-fertilizantes-${new Date().toISOString().slice(0, 10)}.xlsx`);
     showToast("Informe de fertilizantes descargado");
   } catch (error) {
@@ -9182,6 +9396,141 @@ function fertilizerStockPanelRows() {
   });
 }
 
+function fertilizerSheetHeaderColumns(sheet) {
+  const columns = new Map();
+  if (!sheet?.["!ref"] || !window.XLSX?.utils?.decode_range) return columns;
+  const range = window.XLSX.utils.decode_range(sheet["!ref"]);
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    const address = window.XLSX.utils.encode_cell({ r: 0, c: column });
+    const value = sheet[address]?.v;
+    if (value) columns.set(String(value), column);
+  }
+  return columns;
+}
+
+function fertilizerExcelColumn(column) {
+  return window.XLSX.utils.encode_col(column);
+}
+
+function applyFertilizerApplicationFormulas(sheet, rowCount) {
+  const columns = fertilizerSheetHeaderColumns(sheet);
+  const waterColumn = columns.get("LITROS AGUA PREPARACION");
+  const productColumn = columns.get("CANTIDAD PRODUCTO PREPARACION");
+  const dissolutionColumn = columns.get("DISOLUCION");
+  const hectaresColumn = columns.get("HECTAREAS");
+  const litersColumn = columns.get("LITROS APLICADOS");
+  const discountedColumn = columns.get("PRODUCTO DESCONTADO FOLIO");
+  const kgColumn = columns.get("KG APLICADOS");
+  const kgHaColumn = columns.get("KG/HA APLICADOS");
+  if ([waterColumn, productColumn, dissolutionColumn, hectaresColumn, litersColumn, discountedColumn, kgColumn, kgHaColumn].some((column) => column === undefined)) return;
+  for (let index = 0; index < rowCount; index += 1) {
+    const row = index + 2;
+    const dissolutionAddress = `${fertilizerExcelColumn(dissolutionColumn)}${row}`;
+    const kgAddress = `${fertilizerExcelColumn(kgColumn)}${row}`;
+    const discountedAddress = `${fertilizerExcelColumn(discountedColumn)}${row}`;
+    const kgHaAddress = `${fertilizerExcelColumn(kgHaColumn)}${row}`;
+    sheet[dissolutionAddress] = {
+      t: "n",
+      v: Number(sheet[dissolutionAddress]?.v) || 0,
+      f: `IFERROR(${fertilizerExcelColumn(productColumn)}${row}/${fertilizerExcelColumn(waterColumn)}${row},0)`,
+      z: "0.####"
+    };
+    sheet[kgAddress] = {
+      t: "n",
+      v: Number(sheet[kgAddress]?.v) || 0,
+      f: `${fertilizerExcelColumn(litersColumn)}${row}*${dissolutionAddress}`,
+      z: "0.###"
+    };
+    sheet[discountedAddress] = {
+      t: "n",
+      v: Number(sheet[discountedAddress]?.v) || 0,
+      f: `${fertilizerExcelColumn(litersColumn)}${row}*${dissolutionAddress}`,
+      z: "0.###"
+    };
+    sheet[kgHaAddress] = {
+      t: "n",
+      v: Number(sheet[kgHaAddress]?.v) || 0,
+      f: `IFERROR(${kgAddress}/${fertilizerExcelColumn(hectaresColumn)}${row},0)`,
+      z: "0.###"
+    };
+  }
+}
+
+function fertilizerFolioReportRows() {
+  return fertilizerFolioRows().filter((row) => {
+    if (fertilizerCasetaFilter !== "Todas" && row.caseta !== fertilizerCasetaFilter) return false;
+    if (fertilizerPotreroFilter !== "Todos" && !row.potreros.includes(fertilizerPotreroFilter)) return false;
+    return true;
+  }).map((row) => ({
+    "FECHA INGRESO": String(row.fecha || "").slice(0, 10),
+    "CASETA": row.caseta,
+    "FOLIO": row.folio || "",
+    "LOTE": row.lote || "",
+    "PRODUCTO": row.product,
+    "UNIDAD": row.unit,
+    "CANTIDAD INGRESADA": fertilizerReportNumber(row.initial),
+    "CANTIDAD PREPARADA": fertilizerReportNumber(row.prepared),
+    "CANTIDAD EN ESTANQUES": fertilizerReportNumber(row.inPreparations),
+    "DISPONIBLE PARA PREPARAR": fertilizerReportNumber(row.availableToPrepare),
+    "CANTIDAD APLICADA": fertilizerReportNumber(row.consumed),
+    "SALDO NO APLICADO": fertilizerReportNumber(row.available),
+    "PORCENTAJE NO APLICADO": row.initial > 0 ? fertilizerReportNumber(row.available / row.initial, 4) : 0,
+    "PREPARACIONES": row.preparations.length,
+    "APLICACIONES": row.applicationCount,
+    "AGUA PREPARADA L": fertilizerReportNumber(row.preparations.reduce((sum, preparation) => sum + (Number(preparation.cantidad_litros) || 0), 0)),
+    "AGUA APLICADA L": fertilizerReportNumber(row.movements.reduce((sum, movement) => sum + (Number(movement.litros_consumidos) || 0), 0)),
+    "ULTIMA PREPARACION": fertilizerReportDateTime(row.lastPreparation),
+    "ULTIMA APLICACION": fertilizerReportDateTime(row.lastApplication),
+    "ESTANQUES": [...new Set(row.preparations.map((preparation) => fertilizerTankById(preparation.estanque_id)?.numeroEstanque).filter(Boolean))].join(", "),
+    "POTREROS": row.potreros.map(potreroLabel).join(", "),
+    "RESPONSABLES": [...new Set(row.preparations.map(fertilizerHistoryUser).filter(Boolean))].join(", "),
+    "INGRESADO POR": row.creado_por_nombre || ""
+  }));
+}
+
+function formatFertilizerFolioSheet(sheet, rowCount) {
+  const columns = fertilizerSheetHeaderColumns(sheet);
+  const initialColumn = columns.get("CANTIDAD INGRESADA");
+  const preparedColumn = columns.get("CANTIDAD PREPARADA");
+  const inTanksColumn = columns.get("CANTIDAD EN ESTANQUES");
+  const availablePrepareColumn = columns.get("DISPONIBLE PARA PREPARAR");
+  const consumedColumn = columns.get("CANTIDAD APLICADA");
+  const balanceColumn = columns.get("SALDO NO APLICADO");
+  const percentageColumn = columns.get("PORCENTAJE NO APLICADO");
+  if ([initialColumn, preparedColumn, inTanksColumn, availablePrepareColumn, consumedColumn, balanceColumn, percentageColumn].some((column) => column === undefined)) return;
+  for (let index = 0; index < rowCount; index += 1) {
+    const row = index + 2;
+    const balanceAddress = `${fertilizerExcelColumn(balanceColumn)}${row}`;
+    const percentageAddress = `${fertilizerExcelColumn(percentageColumn)}${row}`;
+    const inTanksAddress = `${fertilizerExcelColumn(inTanksColumn)}${row}`;
+    const availablePrepareAddress = `${fertilizerExcelColumn(availablePrepareColumn)}${row}`;
+    sheet[inTanksAddress] = {
+      t: "n",
+      v: Number(sheet[inTanksAddress]?.v) || 0,
+      f: `${fertilizerExcelColumn(preparedColumn)}${row}-${fertilizerExcelColumn(consumedColumn)}${row}`,
+      z: "0.###"
+    };
+    sheet[availablePrepareAddress] = {
+      t: "n",
+      v: Number(sheet[availablePrepareAddress]?.v) || 0,
+      f: `${fertilizerExcelColumn(initialColumn)}${row}-${fertilizerExcelColumn(preparedColumn)}${row}`,
+      z: "0.###"
+    };
+    sheet[balanceAddress] = {
+      t: "n",
+      v: Number(sheet[balanceAddress]?.v) || 0,
+      f: `${fertilizerExcelColumn(initialColumn)}${row}-${fertilizerExcelColumn(consumedColumn)}${row}`,
+      z: "0.###"
+    };
+    sheet[percentageAddress] = {
+      t: "n",
+      v: Number(sheet[percentageAddress]?.v) || 0,
+      f: `IFERROR(${balanceAddress}/${fertilizerExcelColumn(initialColumn)}${row},0)`,
+      z: "0.0%"
+    };
+  }
+}
+
 function renderFertilizerStockPanel() {
   const rows = fertilizerStockPanelRows();
   const totalInitial = rows.reduce((sum, row) => sum + Math.max(0, Number(row.initial) || 0), 0);
@@ -9191,7 +9540,7 @@ function renderFertilizerStockPanel() {
       <div class="panel-header fertilizer-stock-header">
         <div>
           <h2>Ingresar kilos/litros totales del lote</h2>
-          <p>Stock disponible por caseta y producto. Las preparaciones descuentan automaticamente la cantidad de producto usada.</p>
+          <p>Stock por caseta y producto. Las aplicaciones descuentan la proporción usada desde su preparación y folio.</p>
         </div>
         <div class="fertilizer-stock-actions">
           <div>
@@ -9345,6 +9694,8 @@ function resetFertilizerLoadedState() {
   fertilizerStockLots = [];
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
+  fertilizerApplicationConsumptions = [];
+  fertilizerConsumptionTraceAvailable = false;
   fertilizerUserNames = new Map();
   fertilizerHistoryLoadError = "";
   fertilizerStockError = "";
@@ -9972,7 +10323,7 @@ function renderFertilizerWarehouseUnits(row) {
     return `<span class="fertilizer-stock-unit ${state}" aria-hidden="true"><i></i></span>`;
   }).join("");
   return `
-    <div class="fertilizer-stock-visual stock-${unit === "LT" ? "can" : "sack"}" role="img" aria-label="${number(available)} ${unit} disponibles y ${number(consumed)} ${unit} usados">
+    <div class="fertilizer-stock-visual stock-${unit === "LT" ? "can" : "sack"}" role="img" aria-label="${number(available)} ${unit} no aplicados y ${number(consumed)} ${unit} aplicados">
       <div class="fertilizer-stock-unit-stack">${icons}</div>
       <span class="fertilizer-stock-unit-label">${unit === "LT" ? "Bidones" : "Sacos"} · ${unit}</span>
     </div>
@@ -10000,7 +10351,7 @@ function renderFertilizerWarehouseProductCard(row) {
             <strong>${number(Math.max(0, available))} ${escapeHtml(unit)}</strong>
           </div>
           <div class="used">
-            <span>Usado</span>
+            <span>Aplicado</span>
             <strong>${number(Math.max(0, consumed))} ${escapeHtml(unit)}</strong>
           </div>
         </div>
@@ -10036,7 +10387,7 @@ function renderFertilizerWarehouseGroup(caseta, rows) {
             <div>
               <span>${escapeHtml(unit)} disponibles</span>
               <strong>${number(values.available)} ${escapeHtml(unit)}</strong>
-              <small>${number(values.consumed)} ${escapeHtml(unit)} usados</small>
+              <small>${number(values.consumed)} ${escapeHtml(unit)} aplicados</small>
             </div>
           `).join("") || `<div><span>Inventario</span><strong>0</strong><small>Sin movimientos</small></div>`}
         </div>
@@ -10058,12 +10409,122 @@ function renderFertilizerWarehouseGroups(rows) {
     || `<div class="empty-state"><strong>Sin productos en bodega para el filtro.</strong></div>`;
 }
 
+function fertilizerFolioStatus(row) {
+  const ratio = row.initial > 0 ? row.available / row.initial : 0;
+  if (row.available <= 0) return "empty";
+  if (ratio <= 0.2) return "low";
+  return "active";
+}
+
+function renderFertilizerFolioPreparation(preparation) {
+  const tank = fertilizerTankById(preparation.estanque_id) || {};
+  return `
+    <tr>
+      <td>${escapeHtml(fertilizerReportDateTime(preparation.fecha || preparation.creado_en))}</td>
+      <td>${escapeHtml(tank.numeroEstanque || "-")}<br><small>${escapeHtml(tank.fip || "")}</small></td>
+      <td>${number(preparation.producto_cantidad)} ${escapeHtml(preparation.producto_unidad || "")}</td>
+      <td>${number(preparation.cantidad_litros, 0)} L</td>
+      <td>${number(preparation.litersApplied, 0)} L</td>
+      <td><strong>${number(preparation.litersRemaining, 0)} L</strong></td>
+      <td>${escapeHtml(fertilizerHistoryUser(preparation))}</td>
+    </tr>
+  `;
+}
+
+function renderFertilizerFolioMovement(movement) {
+  const application = movement.application || {};
+  const preparation = movement.preparation || {};
+  const tank = fertilizerTankById(preparation.estanque_id || application.estanque_id) || {};
+  return `
+    <tr>
+      <td>${escapeHtml(fertilizerReportDateTime(application.fecha || application.creado_en || movement.creado_en))}</td>
+      <td>${escapeHtml(tank.numeroEstanque || "-")}<br><small>${escapeHtml(tank.fip || "")}</small></td>
+      <td>${escapeHtml(potreroLabel(application.potrero || "-"))}<br><small>Bloque ${escapeHtml(application.bloque || "-")}</small></td>
+      <td>${number(movement.litros_consumidos, 0)} L</td>
+      <td><strong>${number(movement.producto_consumido)} ${escapeHtml(preparation.producto_unidad || "")}</strong></td>
+      <td>${escapeHtml(fertilizerHistoryUser(application))}</td>
+    </tr>
+  `;
+}
+
+function renderFertilizerFolioCard(row) {
+  const status = fertilizerFolioStatus(row);
+  const usedPercent = row.initial > 0 ? Math.max(0, Math.min(100, row.consumed / row.initial * 100)) : 0;
+  return `
+    <details class="fertilizer-folio-card status-${status}">
+      <summary>
+        <div class="fertilizer-folio-identity">
+          <span>Folio</span>
+          <strong>${escapeHtml(row.folio || "Sin folio")}</strong>
+          <small>Lote ${escapeHtml(row.lote || "-")} · ${escapeHtml(row.product)}</small>
+        </div>
+        <div class="fertilizer-folio-balance">
+          <span>Saldo no aplicado</span>
+          <strong>${number(Math.max(0, row.available))} ${escapeHtml(row.unit)}</strong>
+          <small>${number(row.inPreparations)} en estanques · ${number(row.consumed)} aplicados</small>
+        </div>
+        <div class="fertilizer-folio-progress" title="${number(usedPercent, 1)}% utilizado"><i style="--folio-used:${usedPercent}%"></i></div>
+        <span class="fertilizer-folio-expand" aria-hidden="true">+</span>
+      </summary>
+      <div class="fertilizer-folio-detail">
+        <div class="fertilizer-folio-metadata">
+          <div><span>Fecha ingreso</span><strong>${escapeHtml(String(row.fecha || "-").slice(0, 10))}</strong></div>
+          <div><span>Caseta</span><strong>${escapeHtml(row.caseta)}</strong></div>
+          <div><span>Producto</span><strong>${escapeHtml(row.product)}</strong></div>
+          <div><span>Ingresado</span><strong>${number(row.initial)} ${escapeHtml(row.unit)}</strong></div>
+          <div><span>Preparado</span><strong>${number(row.prepared)} ${escapeHtml(row.unit)}</strong></div>
+          <div><span>En estanques</span><strong>${number(row.inPreparations)} ${escapeHtml(row.unit)}</strong></div>
+          <div><span>Aplicado / descontado</span><strong>${number(row.consumed)} ${escapeHtml(row.unit)}</strong></div>
+          <div><span>Disponible para preparar</span><strong>${number(row.availableToPrepare)} ${escapeHtml(row.unit)}</strong></div>
+          <div><span>Saldo no aplicado</span><strong>${number(row.available)} ${escapeHtml(row.unit)}</strong></div>
+          <div class="wide"><span>Potreros asociados</span><strong>${row.potreros.map((potrero) => escapeHtml(potreroLabel(potrero))).join(" · ") || "-"}</strong></div>
+          <div><span>Ultima aplicación</span><strong>${row.lastApplication ? escapeHtml(fertilizerReportDateTime(row.lastApplication)) : "Sin aplicaciones"}</strong></div>
+        </div>
+        <div class="fertilizer-table-wrap fertilizer-folio-movements">
+          <table class="fertilizer-table">
+            <thead><tr><th>Fecha preparación</th><th>Estanque</th><th>Producto preparado</th><th>Agua preparada</th><th>Agua aplicada</th><th>Saldo preparado</th><th>Usuario</th></tr></thead>
+            <tbody>${row.preparations.map(renderFertilizerFolioPreparation).join("") || `<tr><td colspan="7">Sin preparaciones vinculadas a este folio.</td></tr>`}</tbody>
+          </table>
+        </div>
+        <div class="fertilizer-table-wrap fertilizer-folio-movements">
+          <table class="fertilizer-table">
+            <thead><tr><th>Fecha aplicación</th><th>Estanque</th><th>Destino</th><th>Litros aplicados</th><th>Descuento folio</th><th>Usuario</th></tr></thead>
+            <tbody>${row.movements.map(renderFertilizerFolioMovement).join("") || `<tr><td colspan="6">Todavia no se ha aplicado producto de este folio.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function renderFertilizerFolioGroups(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
+    grouped.get(row.caseta).push(row);
+  });
+  const unassigned = fertilizerUnassignedPreparations();
+  const untraced = fertilizerUntracedApplications();
+  return `
+    ${!fertilizerConsumptionTraceAvailable ? `<div class="inline-warning fertilizer-folio-warning"><strong>Falta activar la trazabilidad aplicación → preparación → folio.</strong><span>Ejecuta supabase_fertilizacion_folios.sql en Supabase.</span></div>` : ""}
+    ${unassigned.length ? `<div class="inline-warning fertilizer-folio-warning"><strong>${number(unassigned.length, 0)} preparaciones anteriores sin folio.</strong><span>Estas preparaciones no pueden descontar un folio hasta ser relacionadas.</span></div>` : ""}
+    ${fertilizerConsumptionTraceAvailable && untraced.length ? `<div class="inline-warning fertilizer-folio-warning"><strong>${number(untraced.length, 0)} aplicaciones históricas sin preparación asociada.</strong><span>La migración no encontró volumen preparado suficiente para asignarlas.</span></div>` : ""}
+    ${[...grouped.entries()].map(([caseta, items]) => {
+      const active = items.filter((row) => row.available > 0).length;
+      return `<section class="panel fertilizer-caseta-card fertilizer-folio-group">
+        <div class="panel-header fertilizer-caseta-header"><div><h2>${escapeHtml(caseta)}</h2><p>${items.length} folios · ${active} con saldo</p></div></div>
+        <div class="fertilizer-folio-list">${items.map(renderFertilizerFolioCard).join("")}</div>
+      </section>`;
+    }).join("") || `<div class="empty-state"><strong>Sin folios para los filtros seleccionados.</strong><span>Ingresa un lote para comenzar la trazabilidad.</span></div>`}
+  `;
+}
+
 function renderFertilizerWarehouseDetailTable(rows) {
   if (!rows.length) return `<div class="empty-state compact"><strong>Sin productos de bodega para el filtro.</strong></div>`;
   return `
     <div class="fertilizer-table-wrap">
       <table class="fertilizer-table">
-        <thead><tr><th>Caseta</th><th>Producto</th><th>Unidad</th><th>Ingresado</th><th>Preparado</th><th>Disponible</th><th>Folio</th><th>Lote</th></tr></thead>
+        <thead><tr><th>Caseta</th><th>Producto</th><th>Unidad</th><th>Ingresado</th><th>Aplicado</th><th>No aplicado</th><th>Folio</th><th>Lote</th></tr></thead>
         <tbody>
           ${rows.map((row) => `
             <tr>
@@ -10130,9 +10591,19 @@ function renderFertilizers() {
   const potreros = [...new Set(fertilizerRows.flatMap((row) => row.potreros))].sort(comparePotrero);
   if (fertilizerCasetaFilter !== "Todas" && !casetas.includes(fertilizerCasetaFilter)) fertilizerCasetaFilter = "Todas";
   if (fertilizerPotreroFilter !== "Todos" && !potreros.includes(fertilizerPotreroFilter)) fertilizerPotreroFilter = "Todos";
-  if (!["estanques", "bodega"].includes(fertilizerStorageView)) fertilizerStorageView = "estanques";
+  if (!["estanques", "bodega", "folios"].includes(fertilizerStorageView)) fertilizerStorageView = "estanques";
   const rows = fertilizerFilteredRows();
   const warehouseRows = fertilizerStockPanelRows();
+  const folioRows = fertilizerFolioRows().filter((row) => {
+    if (fertilizerCasetaFilter !== "Todas" && row.caseta !== fertilizerCasetaFilter) return false;
+    if (fertilizerPotreroFilter !== "Todos" && !row.potreros.includes(fertilizerPotreroFilter)) return false;
+    return true;
+  });
+  const storageViewCopy = {
+    estanques: { title: "Estanques", description: "Estado actual de casetas, FIP y litros preparados disponibles." },
+    bodega: { title: "Bodega", description: "Kilos y litros almacenados por caseta y producto." },
+    folios: { title: "Folios", description: "Ingreso, preparación, aplicación y saldo trazable de cada folio." }
+  }[fertilizerStorageView];
   const grouped = new Map();
   rows.forEach((row) => {
     if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
@@ -10146,14 +10617,14 @@ function renderFertilizers() {
           <div class="fertilizer-filters">
             <label>Caseta<select data-fertilizer-filter="caseta"><option>Todas</option>${casetas.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerCasetaFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
             <label>Potrero<select data-fertilizer-filter="potrero"><option>Todos</option>${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}</select></label>
-            <label>Estado<select data-fertilizer-filter="status">
+            ${fertilizerStorageView === "estanques" ? `<label>Estado<select data-fertilizer-filter="status">
               <option value="Todos" ${fertilizerStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
               <option value="vacio" ${fertilizerStatusFilter === "vacio" ? "selected" : ""}>Vacio</option>
               <option value="critico" ${fertilizerStatusFilter === "critico" ? "selected" : ""}>Critico</option>
               <option value="bajo" ${fertilizerStatusFilter === "bajo" ? "selected" : ""}>Bajo</option>
               <option value="operativo" ${fertilizerStatusFilter === "operativo" ? "selected" : ""}>Operativo</option>
               <option value="lleno" ${fertilizerStatusFilter === "lleno" ? "selected" : ""}>Lleno</option>
-            </select></label>
+            </select></label>` : ""}
           </div>
           <div class="fertilizer-actions">
             <button class="fertilizer-action-button action-refresh" type="button" data-action="reload-fertilizers">Actualizar</button>
@@ -10174,18 +10645,21 @@ function renderFertilizers() {
         <div class="fertilizer-main-column">
           <div class="section-title fertilizer-section-title">
             <div>
-              <h2>${fertilizerStorageView === "bodega" ? "Bodega" : "Estanques"}</h2>
-              <p>${fertilizerStorageView === "bodega" ? "Kilos y litros almacenados por caseta y producto." : "Estado actual de casetas, FIP y litros preparados disponibles."}</p>
+              <h2>${storageViewCopy.title}</h2>
+              <p>${storageViewCopy.description}</p>
             </div>
             <div class="segmented-control fertilizer-storage-toggle" role="tablist" aria-label="Vista fertilizante">
               <button type="button" role="tab" aria-selected="${fertilizerStorageView === "estanques"}" data-action="set-fertilizer-storage-view" data-view-mode="estanques" class="${fertilizerStorageView === "estanques" ? "active" : ""}">Estanques</button>
               <button type="button" role="tab" aria-selected="${fertilizerStorageView === "bodega"}" data-action="set-fertilizer-storage-view" data-view-mode="bodega" class="${fertilizerStorageView === "bodega" ? "active" : ""}">Bodega</button>
+              <button type="button" role="tab" aria-selected="${fertilizerStorageView === "folios"}" data-action="set-fertilizer-storage-view" data-view-mode="folios" class="${fertilizerStorageView === "folios" ? "active" : ""}">Folios</button>
             </div>
           </div>
           <div class="fertilizer-caseta-grid">
             ${fertilizerStorageView === "bodega"
               ? renderFertilizerWarehouseGroups(warehouseRows)
-              : [...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
+              : fertilizerStorageView === "folios"
+                ? renderFertilizerFolioGroups(folioRows)
+                : [...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
           </div>
         </div>
         ${renderFertilizerAlertsPanel(rows)}
@@ -10199,6 +10673,547 @@ function renderFertilizers() {
       if (filter === "potrero") fertilizerPotreroFilter = control.value;
       if (filter === "status") fertilizerStatusFilter = control.value;
       renderFertilizers();
+    });
+  });
+}
+
+function normalizeFertilizerProgramRow(row = {}) {
+  const nutrients = Object.fromEntries(FERTILIZER_NUTRIENTS.map((nutrient) => [nutrient, Number(row[nutrient]) || 0]));
+  return {
+    id: row.id || "",
+    campoId: row.campo_id || "",
+    casetaId: row.caseta_id || "",
+    productoId: row.producto_id || "",
+    month: String(row.mes || "").slice(0, 7),
+    season: row.temporada || "2026-2027",
+    doseHa: Number(row.dosis_por_ha) || 0,
+    programmed: Number(row.cantidad_programada) || 0,
+    programmedHectares: Number(row.hectareas_programadas) || Number(row.hectareas) || 0,
+    potrero: String(row.potrero || ""),
+    block: String(row.bloque || ""),
+    species: String(row.especie || ""),
+    variety: String(row.variedad || ""),
+    caseta: String(row.caseta || ""),
+    product: String(row.producto || row.nombre_comercial || ""),
+    unit: String(row.unidad || "KG").toUpperCase(),
+    nutrients
+  };
+}
+
+async function loadFertilizerProgramBackup() {
+  if (fertilizerProgramBackupPromise) return fertilizerProgramBackupPromise;
+  fertilizerProgramBackupPromise = fetch("data/programa_fertilizante.json?v=3", { cache: "force-cache" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`No se pudo cargar el respaldo del programa (${response.status})`);
+      return response.json();
+    })
+    .then((payload) => {
+      const nutrientMap = new Map();
+      (payload.records || []).forEach((row) => {
+        const key = fertilizerAnalysisProductKey(row.producto);
+        const nutrients = Object.fromEntries(FERTILIZER_NUTRIENTS.map((nutrient) => [nutrient, Number(row[nutrient]) || 0]));
+        const factor = FERTILIZER_NUTRIENTS.reduce((sum, nutrient) => sum + nutrients[nutrient], 0);
+        if (key && factor > 0 && !nutrientMap.has(key)) nutrientMap.set(key, nutrients);
+      });
+      fertilizerProgramNutrientsByProduct = nutrientMap;
+      return payload;
+    });
+  return fertilizerProgramBackupPromise;
+}
+
+async function loadFertilizerProgramRows() {
+  if (fertilizerProgramRows) return fertilizerProgramRows;
+  if (fertilizerProgramLoadPromise) return fertilizerProgramLoadPromise;
+  fertilizerProgramLoadPromise = (async () => {
+    try {
+      const rows = await sbSelectAll(
+        "v_programa_fertilizante_analisis",
+        "select=*&order=mes.asc,potrero.asc,bloque.asc,producto.asc",
+        1000
+      );
+      if (!rows.length) throw new Error("El programa de fertilizantes aun no tiene registros");
+      fertilizerProgramRows = rows.map(normalizeFertilizerProgramRow);
+      fertilizerProgramDataSource = "Supabase";
+      await loadFertilizerProgramBackup().catch((backupError) => {
+        console.warn("No se pudo enriquecer la composicion nutritiva del programa", backupError);
+      });
+    } catch (error) {
+      console.warn("Programa de fertilizantes usa respaldo del Excel", error);
+      const payload = await loadFertilizerProgramBackup();
+      fertilizerProgramRows = (payload.records || []).map(normalizeFertilizerProgramRow);
+      fertilizerProgramDataSource = "Respaldo Excel";
+    }
+    fertilizerProgramLoadError = "";
+    return fertilizerProgramRows;
+  })().catch((error) => {
+    fertilizerProgramLoadError = error.message || "No se pudo cargar el programa";
+    throw error;
+  }).finally(() => { fertilizerProgramLoadPromise = null; });
+  return fertilizerProgramLoadPromise;
+}
+
+function fertilizerAnalysisProductKey(value = "") {
+  const key = fertilizerReportKey(value);
+  return key === "HIBER HUMUS" ? "HIBER HUMUS 90PS" : key;
+}
+
+function fertilizerAnalysisKey(row) {
+  return [
+    row.month,
+    fertilizerReportKey(row.potrero),
+    fertilizerReportKey(row.block),
+    fertilizerReportKey(row.caseta),
+    fertilizerAnalysisProductKey(row.product)
+  ].join("|");
+}
+
+function fertilizerActualAnalysisRows() {
+  const tanksById = new Map(fertilizerTanks.map((row) => [row.id, row]));
+  const casetasById = new Map(fertilizerCasetas.map((row) => [row.id, row]));
+  const productsById = new Map(fertilizerProducts.map((row) => [row.id, row]));
+  const productsByKey = new Map(fertilizerProducts.map((row) => [fertilizerAnalysisProductKey(row.key || row.name), row]));
+  const fieldsById = new Map(fertilizerFields.map((row) => [row.id, row]));
+  const fieldsByKey = new Map(fertilizerFields.map((row) => [`${fertilizerReportKey(row.potrero)}|${fertilizerReportKey(row.block)}`, row]));
+  const preparationsByTank = new Map();
+  const preparationsById = new Map(fertilizerPreparationHistory.map((preparation) => [preparation.id, preparation]));
+  const consumptionsByApplication = new Map();
+  fertilizerPreparationHistory.forEach((preparation) => {
+    if (!preparationsByTank.has(preparation.estanque_id)) preparationsByTank.set(preparation.estanque_id, []);
+    preparationsByTank.get(preparation.estanque_id).push(preparation);
+  });
+  preparationsByTank.forEach((rows) => rows.sort((a, b) => fertilizerPreparationTime(a) - fertilizerPreparationTime(b)));
+  fertilizerApplicationConsumptions.forEach((consumption) => {
+    if (!consumptionsByApplication.has(consumption.aplicacion_id)) consumptionsByApplication.set(consumption.aplicacion_id, []);
+    consumptionsByApplication.get(consumption.aplicacion_id).push(consumption);
+  });
+  const result = [];
+  fertilizerApplicationHistory.forEach((application) => {
+    const tank = tanksById.get(application.estanque_id) || {};
+    const caseta = casetasById.get(tank.caseta_id) || {};
+    const field = fieldsById.get(application.campo_id)
+      || fieldsByKey.get(`${fertilizerReportKey(application.potrero)}|${fertilizerReportKey(application.bloque)}`)
+      || {};
+    const appliedLiters = Number(application.cantidad_litros) || 0;
+    const exactConsumptions = consumptionsByApplication.get(application.id) || [];
+    const batch = exactConsumptions.length ? [] : fertilizerPreparationBatch(application, preparationsByTank.get(application.estanque_id) || []);
+    const lines = exactConsumptions.length
+      ? exactConsumptions.map((consumption) => ({
+        preparation: preparationsById.get(consumption.preparacion_id),
+        liters: Number(consumption.litros_consumidos) || 0,
+        productApplied: Number(consumption.producto_consumido) || 0
+      }))
+      : batch.map((preparation) => {
+        const water = Number(preparation.cantidad_litros) || 0;
+        const productQuantity = Number(preparation.producto_cantidad) || 0;
+        return { preparation, liters: appliedLiters, productApplied: water > 0 ? appliedLiters * productQuantity / water : 0 };
+      });
+    if (!lines.length) return;
+    lines.forEach(({ preparation, liters, productApplied }) => {
+      if (!preparation) return;
+      const product = productsById.get(preparation.producto_id)
+        || productsByKey.get(fertilizerAnalysisProductKey(preparation.producto || preparation.producto_nombre));
+      const water = Number(preparation.cantidad_litros) || 0;
+      const productQuantity = Number(preparation.producto_cantidad) || 0;
+      if (!product || water <= 0 || productQuantity <= 0 || liters <= 0) return;
+      const nutrients = product.nutrients || {};
+      const nutrientFactor = FERTILIZER_NUTRIENTS.reduce((sum, nutrient) => sum + (Number(nutrients[nutrient]) || 0), 0);
+      const actual = productApplied;
+      result.push({
+        date: String(application.fecha || application.creado_en || "").slice(0, 10),
+        month: String(application.fecha || application.creado_en || "").slice(0, 7),
+        campoId: field.id || application.campo_id || "",
+        casetaId: tank.caseta_id || "",
+        productoId: product.id || "",
+        potrero: field.potrero || application.potrero || "",
+        block: field.block || application.bloque || "",
+        species: field.crop || "",
+        variety: field.variety || "",
+        caseta: caseta.name || "",
+        product: product.name || preparation.producto || "",
+        unit: String(preparation.producto_unidad || product.unit || "KG").toUpperCase(),
+        nutrients,
+        actual,
+        actualUnits: actual * nutrientFactor,
+        hectares: Number(field.hectares) || 0
+      });
+    });
+  });
+  return result;
+}
+
+function fertilizerAnalysisMergedRows() {
+  const rows = new Map();
+  const fieldsById = new Map(fertilizerFields.map((field) => [field.id, field]));
+  const fieldsByKey = new Map(fertilizerFields.map((field) => [`${fertilizerReportKey(field.potrero)}|${fertilizerReportKey(field.block)}`, field]));
+  (fertilizerProgramRows || []).forEach((program) => {
+    const key = fertilizerAnalysisKey(program);
+    const current = rows.get(key) || { ...program, programmed: 0, actual: 0 };
+    current.programmed += Number(program.programmed) || 0;
+    current.doseHa = Number(program.doseHa) || current.doseHa || 0;
+    current.programmedHectares = Number(program.programmedHectares) || current.programmedHectares || 0;
+    rows.set(key, current);
+  });
+  fertilizerActualAnalysisRows().forEach((actual) => {
+    const key = fertilizerAnalysisKey(actual);
+    const current = rows.get(key) || {
+      ...actual,
+      season: "Sin programa",
+      programmed: 0,
+      programmedHectares: Number(actual.hectares) || 0,
+      doseHa: 0,
+      actual: 0
+    };
+    current.actual += Number(actual.actual) || 0;
+    rows.set(key, current);
+  });
+  return [...rows.values()].map((row) => {
+    const field = fieldsById.get(row.campoId)
+      || fieldsByKey.get(`${fertilizerReportKey(row.potrero)}|${fertilizerReportKey(row.block)}`)
+      || {};
+    const product = fertilizerProducts.find((item) => fertilizerAnalysisProductKey(item.key || item.name) === fertilizerAnalysisProductKey(row.product));
+    const productKey = fertilizerAnalysisProductKey(row.product);
+    const nutrientCandidates = [
+      row.nutrients,
+      product?.nutrients,
+      fertilizerProgramNutrientsByProduct.get(productKey)
+    ];
+    const nutrients = nutrientCandidates.find((candidate) => candidate
+      && FERTILIZER_NUTRIENTS.some((nutrient) => Number(candidate[nutrient]) > 0))
+      || {};
+    const nutrientFactor = FERTILIZER_NUTRIENTS.reduce((sum, nutrient) => sum + (Number(nutrients[nutrient]) || 0), 0);
+    return {
+      ...row,
+      campoId: row.campoId || field.id || "",
+      species: row.species || field.crop || "",
+      variety: row.variety || field.variety || "",
+      programmedHectares: Number(row.programmedHectares) || Number(field.hectares) || 0,
+      nutrients,
+      programmedUnits: row.programmed * nutrientFactor,
+      actualUnits: row.actual * nutrientFactor
+    };
+  });
+}
+
+function fertilizerAnalysisFilteredRows(rows) {
+  return rows.filter((row) => {
+    if (fertilizerAnalysisSeasonFilter !== "Todas" && row.season !== fertilizerAnalysisSeasonFilter) return false;
+    if (fertilizerAnalysisSpeciesFilter !== "Todas" && row.species !== fertilizerAnalysisSpeciesFilter) return false;
+    if (fertilizerAnalysisPotreroFilter !== "Todos" && row.potrero !== fertilizerAnalysisPotreroFilter) return false;
+    if (fertilizerAnalysisCasetaFilter !== "Todas" && row.caseta !== fertilizerAnalysisCasetaFilter) return false;
+    if (fertilizerAnalysisProductFilter !== "Todos" && row.product !== fertilizerAnalysisProductFilter) return false;
+    return true;
+  });
+}
+
+function fertilizerAnalysisRowHectares(row = {}) {
+  return Number(row.programmedHectares) || Number(row.actualHectares) || Number(row.hectares) || 0;
+}
+
+function fertilizerAnalysisArea(rows = []) {
+  const fields = new Map();
+  rows.forEach((row) => {
+    const hectares = fertilizerAnalysisRowHectares(row);
+    if (hectares <= 0) return;
+    const key = row.campoId || `${fertilizerReportKey(row.potrero)}|${fertilizerReportKey(row.block)}`;
+    fields.set(key, Math.max(fields.get(key) || 0, hectares));
+  });
+  return [...fields.values()].reduce((sum, hectares) => sum + hectares, 0);
+}
+
+function fertilizerAnalysisPerHectareTotals(rows = []) {
+  const hectares = fertilizerAnalysisArea(rows);
+  const divisor = hectares > 0 ? hectares : 1;
+  const programmedKg = rows.reduce((sum, row) => sum + (Number(row.programmed) || 0), 0);
+  const actualKg = rows.reduce((sum, row) => sum + (Number(row.actual) || 0), 0);
+  const programmedUnits = rows.reduce((sum, row) => sum + (Number(row.programmedUnits) || 0), 0);
+  const actualUnits = rows.reduce((sum, row) => sum + (Number(row.actualUnits) || 0), 0);
+  return {
+    hectares,
+    programmedKg,
+    actualKg,
+    programmedUnits,
+    actualUnits,
+    programmedKgHa: hectares > 0 ? programmedKg / divisor : 0,
+    actualKgHa: hectares > 0 ? actualKg / divisor : 0,
+    programmedUnitsHa: hectares > 0 ? programmedUnits / divisor : 0,
+    actualUnitsHa: hectares > 0 ? actualUnits / divisor : 0
+  };
+}
+
+function fertilizerAnalysisGap(programmed, actual) {
+  const difference = (Number(programmed) || 0) - (Number(actual) || 0);
+  return {
+    label: difference >= 0 ? "Faltante" : "Exceso",
+    value: Math.abs(difference),
+    className: difference >= 0 ? "is-pending" : "is-excess"
+  };
+}
+
+function fertilizerAnalysisMonthLabel(month) {
+  if (!/^\d{4}-\d{2}$/.test(month || "")) return month || "Sin mes";
+  const date = new Date(`${month}-01T12:00:00`);
+  return date.toLocaleDateString("es-CL", { month: "short", year: "numeric" }).replace(" de ", " ");
+}
+
+function fertilizerAnalysisDateLabel(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return value || "Sin fecha";
+  return new Date(`${value}T12:00:00`).toLocaleDateString("es-CL", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short"
+  }).replaceAll(".", "");
+}
+
+function fertilizerAnalysisOption(values, selected, allLabel) {
+  return `<option value="${htmlAttr(allLabel)}">${escapeHtml(allLabel)}</option>${values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}`;
+}
+
+function renderFertilizerAnalysis() {
+  if (!fertilizerRows || !fertilizerProgramRows) {
+    views.fertilizerAnalysis.innerHTML = `
+      <section class="panel fertilizer-analysis-loading">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <strong>${fertilizerProgramLoadError ? "No se pudo cargar el analisis" : "Cargando programa y aplicaciones"}</strong>
+        <span>${escapeHtml(fertilizerProgramLoadError || "Relacionando casetas, potreros, bloques y productos")}</span>
+        ${fertilizerProgramLoadError ? `<button class="secondary-button" type="button" data-action="retry-fertilizer-analysis">Reintentar</button>` : ""}
+      </section>`;
+    if (!fertilizerProgramLoadError) Promise.all([loadFertilizerRows(), loadFertilizerProgramRows()]).then(() => {
+      if (currentView === "fertilizerAnalysis") renderFertilizerAnalysis();
+    }).catch(() => {
+      if (currentView === "fertilizerAnalysis") renderFertilizerAnalysis();
+    });
+    return;
+  }
+  const merged = fertilizerAnalysisMergedRows();
+  const valid = (value, values, fallback) => value === fallback || values.includes(value) ? value : fallback;
+  const uniqueFrom = (rows, key, sorter = (a, b) => a.localeCompare(b, "es", { numeric: true })) => [...new Set(rows.map((row) => row[key]).filter(Boolean))].sort(sorter);
+  const matches = (rows, key, value, fallback) => value === fallback ? rows : rows.filter((row) => row[key] === value);
+  const seasons = uniqueFrom(merged, "season").filter((value) => value !== "Sin programa");
+  fertilizerAnalysisSeasonFilter = valid(fertilizerAnalysisSeasonFilter, seasons, "Todas");
+  const seasonRows = matches(merged, "season", fertilizerAnalysisSeasonFilter, "Todas");
+  const species = uniqueFrom(seasonRows, "species");
+  fertilizerAnalysisSpeciesFilter = valid(fertilizerAnalysisSpeciesFilter, species, "Todas");
+  const speciesRows = matches(seasonRows, "species", fertilizerAnalysisSpeciesFilter, "Todas");
+  const potreros = uniqueFrom(speciesRows, "potrero", comparePotrero);
+  fertilizerAnalysisPotreroFilter = valid(fertilizerAnalysisPotreroFilter, potreros, "Todos");
+  const potreroRows = matches(speciesRows, "potrero", fertilizerAnalysisPotreroFilter, "Todos");
+  const casetas = uniqueFrom(potreroRows, "caseta");
+  fertilizerAnalysisCasetaFilter = valid(fertilizerAnalysisCasetaFilter, casetas, "Todas");
+  const casetaRows = matches(potreroRows, "caseta", fertilizerAnalysisCasetaFilter, "Todas");
+  const products = uniqueFrom(casetaRows, "product");
+  fertilizerAnalysisProductFilter = valid(fertilizerAnalysisProductFilter, products, "Todos");
+  const filtered = fertilizerAnalysisFilteredRows(merged);
+  const analysisTotals = fertilizerAnalysisPerHectareTotals(filtered);
+  const totalKgGap = fertilizerAnalysisGap(analysisTotals.programmedKg, analysisTotals.actualKg);
+  const totalUnitsGap = fertilizerAnalysisGap(analysisTotals.programmedUnits, analysisTotals.actualUnits);
+  const compliance = analysisTotals.programmedKg > 0 ? analysisTotals.actualKg / analysisTotals.programmedKg * 100 : 0;
+  const fields = new Set(filtered.map((row) => `${row.potrero}|${row.block}`));
+  const groupedRows = (key) => {
+    const groups = new Map();
+    filtered.forEach((row) => {
+      const name = row[key] || "Sin dato";
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(row);
+    });
+    return [...groups.entries()].map(([name, rows]) => {
+      const totals = fertilizerAnalysisPerHectareTotals(rows);
+      return { name, rows, ...totals };
+    });
+  };
+  const productTotals = groupedRows("product").map((product) => ({
+    ...product,
+    firstMonth: product.rows.map((row) => row.month).filter(Boolean).sort()[0] || "9999-12"
+  })).sort((a, b) => a.firstMonth.localeCompare(b.firstMonth)
+    || b.programmedKgHa - a.programmedKgHa
+    || b.actualKgHa - a.actualKgHa
+    || a.name.localeCompare(b.name, "es"));
+  const monthlyMetricOptions = {
+    perHa: {
+      label: "Kg/ha + unid./ha",
+      metrics: [
+        { label: "kg/ha", programmed: "programmedKgHa", actual: "actualKgHa", decimals: 1 },
+        { label: "unid./ha", programmed: "programmedUnitsHa", actual: "actualUnitsHa", decimals: 1 }
+      ]
+    },
+    totals: {
+      label: "Kg + unidades totales",
+      metrics: [
+        { label: "kg total", programmed: "programmedKg", actual: "actualKg", decimals: 0 },
+        { label: "unid. total", programmed: "programmedUnits", actual: "actualUnits", decimals: 1 }
+      ]
+    }
+  };
+  if (!monthlyMetricOptions[fertilizerAnalysisMonthlyMetric]) fertilizerAnalysisMonthlyMetric = "perHa";
+  const monthlyMetric = monthlyMetricOptions[fertilizerAnalysisMonthlyMetric];
+  const monthlyMetricValues = (row, metric) => {
+    const programmed = Number(row?.[metric.programmed]) || 0;
+    const actual = Number(row?.[metric.actual]) || 0;
+    return { programmed, actual, gap: fertilizerAnalysisGap(programmed, actual) };
+  };
+  const monthTotals = groupedRows("month").sort((a, b) => a.name.localeCompare(b.name));
+  const visibleMonths = new Set(monthTotals.map((row) => row.name));
+  const actualDayRows = fertilizerActualAnalysisRows().filter((row) => {
+    if (!visibleMonths.has(row.month)) return false;
+    if (fertilizerAnalysisSpeciesFilter !== "Todas" && row.species !== fertilizerAnalysisSpeciesFilter) return false;
+    if (fertilizerAnalysisPotreroFilter !== "Todos" && row.potrero !== fertilizerAnalysisPotreroFilter) return false;
+    if (fertilizerAnalysisCasetaFilter !== "Todas" && row.caseta !== fertilizerAnalysisCasetaFilter) return false;
+    if (fertilizerAnalysisProductFilter !== "Todos" && row.product !== fertilizerAnalysisProductFilter) return false;
+    return true;
+  });
+  const monthSummaries = monthTotals.map((month) => {
+    const kgGap = fertilizerAnalysisGap(month.programmedKgHa, month.actualKgHa);
+    const unitsGap = fertilizerAnalysisGap(month.programmedUnitsHa, month.actualUnitsHa);
+    const actualMonthRows = actualDayRows.filter((row) => row.month === month.name);
+    const productNames = [...new Set([
+      ...month.rows.map((row) => row.product),
+      ...actualMonthRows.map((row) => row.product)
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+    const productGroups = productNames.map((product) => {
+      const mergedProductRows = month.rows.filter((row) => row.product === product);
+      const actualProductRows = actualMonthRows.filter((row) => row.product === product);
+      const productRows = mergedProductRows.length ? mergedProductRows : actualProductRows;
+      const totals = fertilizerAnalysisPerHectareTotals(productRows);
+      const productKgGap = fertilizerAnalysisGap(totals.programmedKgHa, totals.actualKgHa);
+      const productUnitsGap = fertilizerAnalysisGap(totals.programmedUnitsHa, totals.actualUnitsHa);
+      const days = new Map();
+      actualProductRows.forEach((row) => {
+        if (!days.has(row.date)) days.set(row.date, []);
+        days.get(row.date).push(row);
+      });
+      return {
+        name: product,
+        ...totals,
+        kgGap: productKgGap,
+        unitsGap: productUnitsGap,
+        days: [...days.entries()].map(([date, rows]) => ({
+          date,
+          ...fertilizerAnalysisPerHectareTotals(rows)
+        })).sort((a, b) => a.date.localeCompare(b.date))
+      };
+    }).sort((a, b) => b.programmedKgHa - a.programmedKgHa || b.actualKgHa - a.actualKgHa || a.name.localeCompare(b.name, "es"));
+    const days = new Map();
+    actualMonthRows.forEach((row) => {
+      if (!days.has(row.date)) days.set(row.date, []);
+      days.get(row.date).push(row);
+    });
+    const dayGroups = [...days.entries()].map(([date, rows]) => {
+      const dayProductGroups = new Map();
+      rows.forEach((row) => {
+        if (!dayProductGroups.has(row.product)) dayProductGroups.set(row.product, []);
+        dayProductGroups.get(row.product).push(row);
+      });
+      return {
+        date,
+        ...fertilizerAnalysisPerHectareTotals(rows),
+        products: [...dayProductGroups.entries()].map(([name, productRows]) => ({
+          name,
+          ...fertilizerAnalysisPerHectareTotals(productRows)
+        })).sort((a, b) => b.actualKgHa - a.actualKgHa || a.name.localeCompare(b.name, "es"))
+      };
+    }).sort((a, b) => a.date.localeCompare(b.date));
+    return {
+      ...month,
+      kgGap,
+      unitsGap,
+      completion: Number(month[monthlyMetric.metrics[0].programmed]) > 0
+        ? Number(month[monthlyMetric.metrics[0].actual]) / Number(month[monthlyMetric.metrics[0].programmed]) * 100
+        : 0,
+      products: productGroups,
+      days: dayGroups
+    };
+  });
+  const sourceWarning = fertilizerProgramDataSource === "Respaldo Excel"
+    ? `<div class="fertilizer-analysis-warning">Vista previa local. Ejecuta los SQL de programa fertilizante para activar Supabase y Realtime.</div>`
+    : "";
+  fertilizerAnalysisExpandedMonths = new Set([...fertilizerAnalysisExpandedMonths].filter((month) => visibleMonths.has(month)));
+  const validDayKeys = new Set(monthSummaries.flatMap((month) => month.days.map((day) => `${month.name}|${day.date}`)));
+  fertilizerAnalysisExpandedDays = new Set([...fertilizerAnalysisExpandedDays].filter((key) => validDayKeys.has(key)));
+  views.fertilizerAnalysis.innerHTML = `
+    <section class="fertilizer-analysis-shell">
+      <div class="fertilizer-analysis-toolbar">
+        <div><h2>Programa fertilizante vs real</h2><span>${escapeHtml(fertilizerProgramDataSource)} · valores por hectarea y totales</span></div>
+        <div class="fertilizer-analysis-filters">
+          <label>Temporada<select data-fertilizer-analysis-filter="season">${fertilizerAnalysisOption(seasons, fertilizerAnalysisSeasonFilter, "Todas")}</select></label>
+          <label>Especie<select data-fertilizer-analysis-filter="species">${fertilizerAnalysisOption(species, fertilizerAnalysisSpeciesFilter, "Todas")}</select></label>
+          <label>Potrero<select data-fertilizer-analysis-filter="potrero"><option value="Todos">Todos</option>${potreros.map((value) => `<option value="${htmlAttr(value)}" ${value === fertilizerAnalysisPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(value))}</option>`).join("")}</select></label>
+          <label>Caseta<select data-fertilizer-analysis-filter="caseta">${fertilizerAnalysisOption(casetas, fertilizerAnalysisCasetaFilter, "Todas")}</select></label>
+          <label>Producto<select data-fertilizer-analysis-filter="product">${fertilizerAnalysisOption(products, fertilizerAnalysisProductFilter, "Todos")}</select></label>
+          <button class="secondary-button" type="button" data-action="clear-fertilizer-analysis-filters">Limpiar</button>
+        </div>
+      </div>
+      ${sourceWarning}
+      <div class="fertilizer-analysis-legend"><span class="is-programmed">Programa</span><span class="is-actual">Real aplicado</span></div>
+      <div class="fertilizer-season-total-heading"><div><h3>Total temporada</h3><span>${escapeHtml(fertilizerAnalysisSeasonFilter === "Todas" ? "Todas las temporadas" : fertilizerAnalysisSeasonFilter)}</span></div><strong>${number(analysisTotals.hectares, 1)} ha</strong></div>
+      <div class="fertilizer-kpi-groups">
+        <section class="fertilizer-kpi-group"><header><strong>Kilos totales</strong></header><div>
+          <article class="programmed-kpi"><span>Programa</span><strong>${number(analysisTotals.programmedKg, 0)}</strong><small>kg</small></article>
+          <article class="actual-kpi"><span>Real</span><strong>${number(analysisTotals.actualKg, 0)}</strong><small>kg</small></article>
+          <article class="${totalKgGap.className}"><span>${totalKgGap.label}</span><strong>${number(totalKgGap.value, 0)}</strong><small>kg</small></article>
+        </div></section>
+        <section class="fertilizer-kpi-group"><header><strong>Unidades totales</strong></header><div>
+          <article class="programmed-kpi"><span>Programa</span><strong>${number(analysisTotals.programmedUnits, 1)}</strong><small>unidades</small></article>
+          <article class="actual-kpi"><span>Real</span><strong>${number(analysisTotals.actualUnits, 1)}</strong><small>unidades</small></article>
+          <article class="${totalUnitsGap.className}"><span>${totalUnitsGap.label}</span><strong>${number(totalUnitsGap.value, 1)}</strong><small>unidades</small></article>
+        </div></section>
+        <section class="fertilizer-kpi-group fertilizer-kpi-status"><header><strong>Avance general</strong></header><div>
+          <article class="${compliance >= 90 ? "is-good" : compliance >= 60 ? "is-warning" : "is-low"}"><span>Cumplimiento</span><strong>${number(compliance, 1)}%</strong></article>
+          <article><span>Sectores</span><strong>${number(fields.size, 0)}</strong></article>
+        </div></section>
+      </div>
+      <article class="fertilizer-analysis-panel fertilizer-month-panel">
+        <header class="fertilizer-month-panel-header"><div><h3>Resumen mensual por producto</h3><span>Meses en filas · productos en columnas · usa + para abrir los dias</span></div><div class="fertilizer-month-metric" role="group" aria-label="Medida del resumen mensual">
+          ${Object.entries(monthlyMetricOptions).map(([value, option]) => `<button type="button" data-action="set-fertilizer-analysis-monthly-metric" data-metric="${value}" class="${fertilizerAnalysisMonthlyMetric === value ? "active" : ""}" aria-pressed="${fertilizerAnalysisMonthlyMetric === value}">${escapeHtml(option.label)}</button>`).join("")}
+        </div></header>
+        <div class="fertilizer-month-matrix-wrap">
+          <table class="fertilizer-month-matrix">
+            <thead><tr><th class="fertilizer-month-axis">Mes / avance</th>${productTotals.map((product) => `<th title="${htmlAttr(product.name)}">${escapeHtml(product.name)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${monthSummaries.map((month) => {
+                const expanded = fertilizerAnalysisExpandedMonths.has(month.name);
+                const completionClass = month.completion >= 90 ? "is-good" : month.completion >= 60 ? "is-warning" : "is-low";
+                return `<tr class="fertilizer-month-matrix-row ${expanded ? "is-expanded" : ""}">
+                  <td class="fertilizer-month-axis">
+                    <div class="fertilizer-month-axis-heading"><button type="button" data-action="toggle-fertilizer-analysis-month" data-month="${htmlAttr(month.name)}" aria-expanded="${expanded}" title="${expanded ? "Ocultar dias" : "Ver dias de aplicacion"}">${expanded ? "−" : "+"}</button><div><strong>${escapeHtml(fertilizerAnalysisMonthLabel(month.name))}</strong><small>${number(month.hectares, 1)} ha</small></div></div>
+                    <div class="fertilizer-month-completion ${completionClass}"><span style="--completion:${Math.min(100, month.completion)}%"></span><b>${number(month.completion, 1)}%</b><small>real / programa</small></div>
+                  </td>
+                  ${productTotals.map((productColumn) => {
+                    const product = month.products.find((item) => item.name === productColumn.name);
+                    if (!product) return `<td class="fertilizer-month-product-cell is-empty">—</td>`;
+                    return `<td class="fertilizer-month-product-cell">
+                      ${monthlyMetric.metrics.map((metric) => {
+                        const values = monthlyMetricValues(product, metric);
+                        return `<div><span>${escapeHtml(metric.label)}</span><b class="is-programmed" title="Programa">P ${number(values.programmed, metric.decimals)}</b><b class="is-actual" title="Real">R ${number(values.actual, metric.decimals)}</b><b class="${values.gap.className}" title="${values.gap.label}">F ${number(values.gap.value, metric.decimals)}</b></div>`;
+                      }).join("")}
+                    </td>`;
+                  }).join("")}
+                </tr>${expanded ? `<tr class="fertilizer-month-detail-row"><td colspan="${productTotals.length + 1}">
+                  <div class="fertilizer-day-accordion-list">
+                    ${month.days.map((day) => {
+                      const dayKey = `${month.name}|${day.date}`;
+                      const dayExpanded = fertilizerAnalysisExpandedDays.has(dayKey);
+                      const dayValues = monthlyMetric.metrics.map((metric) => ({ metric, values: monthlyMetricValues(day, metric) }));
+                      return `<section class="fertilizer-day-accordion ${dayExpanded ? "is-expanded" : ""}">
+                        <header><button type="button" data-action="toggle-fertilizer-analysis-day" data-month="${htmlAttr(month.name)}" data-date="${htmlAttr(day.date)}" aria-expanded="${dayExpanded}" title="${dayExpanded ? "Ocultar detalle" : "Ver detalle del dia"}">${dayExpanded ? "−" : "+"}</button><div><strong>${escapeHtml(fertilizerAnalysisDateLabel(day.date))}</strong><small>${number(day.hectares, 1)} ha tratadas</small></div>${dayValues.map(({ metric, values }) => `<span><b>${number(values.actual, metric.decimals)}</b> ${escapeHtml(metric.label)}</span>`).join("")}</header>
+                        ${dayExpanded ? `<div class="fertilizer-day-products">${day.products.map((product) => `<div><strong>${escapeHtml(product.name)}</strong>${monthlyMetric.metrics.map((metric) => { const values = monthlyMetricValues(product, metric); return `<span>${number(values.actual, metric.decimals)} ${escapeHtml(metric.label)}</span>`; }).join("")}<small>${number(product.hectares, 1)} ha</small></div>`).join("")}</div>` : ""}
+                      </section>`;
+                    }).join("") || `<div class="fertilizer-month-no-days">Sin aplicaciones reales registradas.</div>`}
+                  </div>
+                </td></tr>` : ""}`;
+              }).join("") || `<tr><td colspan="${productTotals.length + 1}">Sin datos mensuales.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>`;
+  views.fertilizerAnalysis.querySelectorAll("[data-fertilizer-analysis-filter]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const filter = control.dataset.fertilizerAnalysisFilter;
+      if (filter === "season") fertilizerAnalysisSeasonFilter = control.value;
+      if (filter === "species") fertilizerAnalysisSpeciesFilter = control.value;
+      if (filter === "potrero") fertilizerAnalysisPotreroFilter = control.value;
+      if (filter === "caseta") fertilizerAnalysisCasetaFilter = control.value;
+      if (filter === "product") fertilizerAnalysisProductFilter = control.value;
+      renderFertilizerAnalysis();
     });
   });
 }
@@ -10362,6 +11377,91 @@ async function loadPestMonitoringRecords() {
   return pestMonitoringLoadPromise;
 }
 
+function mapPestMonitoringTree(row) {
+  const normalized = Boolean(row.campo_normalizado ?? row.normalized);
+  const sourcePotrero = String(row.potrero_origen || row.sourcePotrero || "").trim();
+  const sourceBlock = String(row.bloque_origen || row.sourceBlock || "").trim();
+  const pendingField = geoJsonFeatureField({
+    properties: {
+      Potrero: sourcePotrero || row.potrero,
+      Bloque: sourceBlock || row.bloque || row.block
+    }
+  });
+  return {
+    id: String(row.id || row.origen_fid || ""),
+    sourceFid: Number(row.origen_fid) || null,
+    date: String(row.fecha_referencia || row.date || "").slice(0, 10),
+    tree: String(row.numero_arbol ?? row.tree ?? "").trim(),
+    row: String(row.hilera ?? row.row ?? "").trim(),
+    monitoringSector: String(row.sector_monitoreo ?? row.monitoringSector ?? "").trim(),
+    potrero: normalized ? String(row.potrero || "Sin potrero").trim() : pendingField.potrero,
+    block: normalized ? String(row.bloque || row.block || "").trim() : pendingField.block,
+    species: String(row.especie || row.species || "").trim(),
+    variety: String(row.variedad || row.variety || "").trim(),
+    normalized,
+    sourcePotrero,
+    sourceBlock,
+    longitude: Number(row.longitud ?? row.longitude),
+    latitude: Number(row.latitud ?? row.latitude)
+  };
+}
+
+async function loadPestMonitoringTreesFromSupabase() {
+  if (!supabaseSession) throw new Error("Se requiere una sesion de Supabase");
+  const select = [
+    "id", "origen_fid", "fecha_referencia", "numero_arbol", "hilera", "sector_monitoreo",
+    "potrero", "bloque", "especie", "variedad", "campo_normalizado", "potrero_origen",
+    "bloque_origen", "longitud", "latitud"
+  ].join(",");
+  const rows = await sbSelectAll(
+    "v_monitoreo_arboles",
+    `select=${select}&activo=eq.true&order=potrero.asc,bloque.asc,numero_arbol.asc`,
+    1000
+  );
+  if (!rows.length) throw new Error("La tabla monitoreo_arboles aun no contiene registros");
+  pestMonitoringTreeDataSource = "Supabase";
+  return rows.map(mapPestMonitoringTree);
+}
+
+async function loadPestMonitoringTreesFromLocalBackup() {
+  const response = await fetch("outputs/monitoreo_arboles.json?v=1", { cache: "force-cache" });
+  if (!response.ok) throw new Error(`No se pudo cargar el respaldo de arboles (${response.status})`);
+  const collection = await response.json();
+  pestMonitoringTreeDataSource = "Respaldo local";
+  return (collection.records || []).map(mapPestMonitoringTree);
+}
+
+async function loadPestMonitoringTrees() {
+  if (pestMonitoringTrees) return pestMonitoringTrees;
+  if (pestMonitoringTreeLoadPromise) return pestMonitoringTreeLoadPromise;
+  pestMonitoringTreeLoadPromise = (async () => {
+    try {
+      pestMonitoringTrees = await loadPestMonitoringTreesFromSupabase();
+    } catch (error) {
+      console.warn("Arboles de monitoreo usan respaldo local", error);
+      pestMonitoringTrees = await loadPestMonitoringTreesFromLocalBackup();
+    }
+    pestMonitoringTrees = pestMonitoringTrees.filter((tree) =>
+      tree.id && tree.tree && Number.isFinite(tree.latitude) && Number.isFinite(tree.longitude)
+    );
+    pestMonitoringTreeLoadError = "";
+    return pestMonitoringTrees;
+  })().catch((error) => {
+    pestMonitoringTreeLoadError = error.message || "No se pudieron cargar los arboles";
+    throw error;
+  }).finally(() => { pestMonitoringTreeLoadPromise = null; });
+  return pestMonitoringTreeLoadPromise;
+}
+
+function pestMonitoringFilteredTrees() {
+  return (pestMonitoringTrees || []).filter((tree) => {
+    if (pestMonitoringSpecies !== "Todas" && tree.species !== pestMonitoringSpecies) return false;
+    if (pestMonitoringPotrero !== "Todos" && tree.potrero !== pestMonitoringPotrero) return false;
+    if (pestMonitoringBlock !== "Todos" && tree.block !== pestMonitoringBlock) return false;
+    return true;
+  });
+}
+
 function pestMonitoringEggNymphTotal(record) {
   return (Number(record.eggs) || 0)
     + (Number(record.nymph1) || 0)
@@ -10443,22 +11543,17 @@ function pestMonitoringBlockSummaries(records) {
 
 const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#d9362b"];
 
-function pestMonitoringQuantile(sortedValues, ratio) {
-  if (!sortedValues.length) return 0;
-  const position = (sortedValues.length - 1) * ratio;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  if (lower === upper) return sortedValues[lower];
-  return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (position - lower);
-}
-
 function pestMonitoringRiskScale(records) {
   const positives = records
     .map(pestMonitoringObservedTotal)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
+  const bounds = [0.2, 0.4, 0.6, 0.8, 1]
+    .map((ratio) => positives[Math.max(0, Math.ceil(positives.length * ratio) - 1)] || 0)
+    .filter((value, index, values) => value > 0 && (index === 0 || value > values[index - 1]));
   return {
-    thresholds: [0.2, 0.4, 0.6, 0.8].map((ratio) => pestMonitoringQuantile(positives, ratio)),
+    bounds,
+    thresholds: bounds.slice(0, -1),
     minimum: positives[0] || 0,
     maximum: positives.at(-1) || 0,
     positives: positives.length
@@ -10467,12 +11562,11 @@ function pestMonitoringRiskScale(records) {
 
 function pestMonitoringRiskLevel(value, scale) {
   if (value <= 0) return 0;
-  const [veryLow, low, medium, high] = scale.thresholds;
-  if (value <= veryLow) return 1;
-  if (value <= low) return 2;
-  if (value <= medium) return 3;
-  if (value <= high) return 4;
-  return 5;
+  const bounds = scale.bounds?.length ? scale.bounds : [scale.maximum || value];
+  const matchingIndex = bounds.findIndex((bound) => value <= bound);
+  const classIndex = matchingIndex >= 0 ? matchingIndex : bounds.length - 1;
+  if (bounds.length === 1) return 1;
+  return 1 + Math.round(classIndex * 4 / (bounds.length - 1));
 }
 
 function pestMonitoringRiskColor(value, scale) {
@@ -10483,15 +11577,17 @@ function pestMonitoringLegend(scale) {
   if (!scale.positives) {
     return `<strong>${escapeHtml(pestMonitoringPest)} · sin presencia</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin individuos</div>`;
   }
-  const [veryLow, low, medium, high] = scale.thresholds;
-  const items = [
-    [PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"],
-    [PEST_RISK_COLORS[1], `Muy baja · ${number(scale.minimum, 1)} a ${number(veryLow, 1)}`],
-    [PEST_RISK_COLORS[2], `Baja · ${number(veryLow, 1)} a ${number(low, 1)}`],
-    [PEST_RISK_COLORS[3], `Media · ${number(low, 1)} a ${number(medium, 1)}`],
-    [PEST_RISK_COLORS[4], `Alta · ${number(medium, 1)} a ${number(high, 1)}`],
-    [PEST_RISK_COLORS[5], `Muy alta · ${number(high, 1)} a ${number(scale.maximum, 1)}`]
-  ];
+  const levelNames = ["", "Muy baja", "Baja", "Media", "Alta", "Muy alta"];
+  const bounds = scale.bounds?.length ? scale.bounds : [scale.maximum];
+  const items = [[PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"]];
+  bounds.forEach((upper, index) => {
+    const level = bounds.length === 1 ? 1 : 1 + Math.round(index * 4 / (bounds.length - 1));
+    const previous = index ? bounds[index - 1] : null;
+    const range = previous === null
+      ? (scale.minimum === upper ? number(upper, 1) : `${number(scale.minimum, 1)} a ${number(upper, 1)}`)
+      : `>${number(previous, 1)} a ${number(upper, 1)}`;
+    items.push([PEST_RISK_COLORS[level], `${levelNames[level]} · ${range}`]);
+  });
   return `<strong>${escapeHtml(pestMonitoringPest)} · mín. ${number(scale.minimum, 1)} · máx. ${number(scale.maximum, 1)}</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
 }
 
@@ -10511,16 +11607,20 @@ function pestMonitoringHeatColor(ratio) {
   return stops[lower].map((channel, index) => Math.round(channel + (stops[upper][index] - channel) * amount));
 }
 
-function createPestMonitoringHeatOverlay(maps, map, maskRings = []) {
+function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
   class PestCanvasHeatOverlay extends maps.OverlayView {
     constructor() {
       super();
       this.container = null;
       this.canvas = null;
+      this.bufferCanvas = null;
       this.points = [];
-      this.maskRings = maskRings;
-      this.scale = { thresholds: [0, 0, 0, 0], minimum: 0, maximum: 0, positives: 0 };
+      this.blockMasks = blockMasks;
+      this.scale = { bounds: [], thresholds: [], minimum: 0, maximum: 0, positives: 0 };
       this.frame = 0;
+      this.paintTimer = 0;
+      this.hasPainted = false;
+      this.renderBounds = null;
       this.setMap(map);
     }
 
@@ -10528,24 +11628,58 @@ function createPestMonitoringHeatOverlay(maps, map, maskRings = []) {
       this.container = document.createElement("div");
       this.container.className = "pest-heat-overlay";
       this.canvas = document.createElement("canvas");
+      this.bufferCanvas = document.createElement("canvas");
       this.container.appendChild(this.canvas);
-      this.getPanes().overlayLayer.appendChild(this.container);
+      const layer = this.getPanes().overlayLayer;
+      layer.insertBefore(this.container, layer.firstChild);
     }
 
     setData(points, scale) {
       this.points = points;
       this.scale = scale;
-      this.draw();
+      this.queuePaint(0);
     }
 
     draw() {
+      if (this.hasPainted) this.positionCurrentCanvas();
+      this.queuePaint(this.hasPainted ? 80 : 0);
+    }
+
+    positionCurrentCanvas() {
+      if (!this.container || !this.canvas || !this.renderBounds || !this.getProjection()) return;
+      const projection = this.getProjection();
+      const northEast = projection.fromLatLngToDivPixel(new maps.LatLng(
+        this.renderBounds.northEast.lat,
+        this.renderBounds.northEast.lng
+      ));
+      const southWest = projection.fromLatLngToDivPixel(new maps.LatLng(
+        this.renderBounds.southWest.lat,
+        this.renderBounds.southWest.lng
+      ));
+      const width = Math.max(1, northEast.x - southWest.x);
+      const height = Math.max(1, southWest.y - northEast.y);
+      this.container.style.left = `${southWest.x}px`;
+      this.container.style.top = `${northEast.y}px`;
+      this.container.style.width = `${width}px`;
+      this.container.style.height = `${height}px`;
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+    }
+
+    queuePaint(delay = 0) {
+      if (this.paintTimer) clearTimeout(this.paintTimer);
       if (this.frame) cancelAnimationFrame(this.frame);
-      this.frame = requestAnimationFrame(() => this.paint());
+      const requestPaint = () => {
+        this.paintTimer = 0;
+        this.frame = requestAnimationFrame(() => this.paint());
+      };
+      if (delay > 0) this.paintTimer = window.setTimeout(requestPaint, delay);
+      else requestPaint();
     }
 
     paint() {
       this.frame = 0;
-      if (!this.container || !this.canvas || !this.getProjection()) return;
+      if (!this.container || !this.canvas || !this.bufferCanvas || !this.getProjection()) return;
       const bounds = map.getBounds();
       if (!bounds) return;
       const projection = this.getProjection();
@@ -10553,86 +11687,102 @@ function createPestMonitoringHeatOverlay(maps, map, maskRings = []) {
       const southWest = projection.fromLatLngToDivPixel(bounds.getSouthWest());
       const width = Math.max(1, Math.round(northEast.x - southWest.x));
       const height = Math.max(1, Math.round(southWest.y - northEast.y));
-      this.container.style.left = `${southWest.x}px`;
-      this.container.style.top = `${northEast.y}px`;
-      this.container.style.width = `${width}px`;
-      this.container.style.height = `${height}px`;
       const pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
-      this.canvas.width = Math.round(width * pixelRatio);
-      this.canvas.height = Math.round(height * pixelRatio);
-      this.canvas.style.width = `${width}px`;
-      this.canvas.style.height = `${height}px`;
-      const context = this.canvas.getContext("2d");
+      const renderCanvas = this.bufferCanvas;
+      renderCanvas.width = Math.round(width * pixelRatio);
+      renderCanvas.height = Math.round(height * pixelRatio);
+      const context = renderCanvas.getContext("2d");
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, width, height);
 
-      const gridSize = 7;
+      const zoom = map.getZoom() || 16;
+      const gridSize = zoom >= 20 ? 1 : zoom >= 19 ? 2 : zoom >= 18 ? 3 : zoom >= 17 ? 4 : zoom >= 15 ? 5 : 7;
       const gridWidth = Math.max(1, Math.ceil(width / gridSize));
       const gridHeight = Math.max(1, Math.ceil(height / gridSize));
-      const density = new Float32Array(gridWidth * gridHeight);
-      const radiusPixels = Math.max(54, Math.min(92, width / 13));
-      const radius = Math.ceil(radiusPixels / gridSize);
-      const sigma = radius / 2.15;
-      const scaleRange = Math.max(1, this.scale.maximum - this.scale.minimum);
-      const sources = new Map();
+      const centerLatitude = map.getCenter()?.lat?.() || -32.8;
+      const metersPerPixel = 156543.03392 * Math.cos(centerLatitude * Math.PI / 180) / (2 ** zoom);
+      const smoothingMeters = zoom >= 20 ? 2.5 : zoom >= 19 ? 4 : zoom >= 18 ? 7 : zoom >= 17 ? 12 : zoom >= 16 ? 20 : 30;
+      const smoothingRadius = Math.max(0.9, smoothingMeters / Math.max(0.01, metersPerPixel) / gridSize);
+      const distancePower = zoom >= 20 ? 2.25 : zoom >= 19 ? 2 : zoom >= 18 ? 1.75 : zoom >= 17 ? 1.5 : zoom >= 16 ? 1.3 : 1.15;
+      const sourcesByBlock = new Map();
       this.points.forEach((point) => {
+        if (!point.key || !this.blockMasks.has(point.key)) return;
         const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(point.lat, point.lng));
         const x = pixel.x - southWest.x;
         const y = pixel.y - northEast.y;
-        if (x < -radiusPixels || x > width + radiusPixels || y < -radiusPixels || y > height + radiusPixels) return;
         const centerX = Math.round(x / gridSize);
         const centerY = Math.round(y / gridSize);
-        const normalizedWeight = point.weight <= 0
-          ? 0.07
-          : 0.28 + 0.72 * Math.max(0, Math.min(1, (point.weight - this.scale.minimum) / scaleRange));
+        const risk = pestMonitoringRiskLevel(point.weight, this.scale) / (PEST_RISK_COLORS.length - 1);
+        const blockSources = sourcesByBlock.get(point.key) || new Map();
         const sourceKey = `${centerX}:${centerY}`;
-        const source = sources.get(sourceKey) || { centerX, centerY, total: 0, count: 0 };
-        source.total += normalizedWeight;
+        const source = blockSources.get(sourceKey) || { centerX, centerY, riskTotal: 0, count: 0 };
+        source.riskTotal += risk;
         source.count += 1;
-        sources.set(sourceKey, source);
+        blockSources.set(sourceKey, source);
+        sourcesByBlock.set(point.key, blockSources);
       });
-      sources.forEach((source) => {
-        const { centerX, centerY } = source;
-        const normalizedWeight = source.total / source.count;
-        const minX = Math.max(0, centerX - radius);
-        const maxX = Math.min(gridWidth - 1, centerX + radius);
-        const minY = Math.max(0, centerY - radius);
-        const maxY = Math.min(gridHeight - 1, centerY + radius);
-        for (let gridY = minY; gridY <= maxY; gridY += 1) {
-          for (let gridX = minX; gridX <= maxX; gridX += 1) {
-            const deltaX = gridX - centerX;
-            const deltaY = gridY - centerY;
-            const distanceSquared = deltaX * deltaX + deltaY * deltaY;
-            if (distanceSquared > radius * radius) continue;
-            density[gridY * gridWidth + gridX] += normalizedWeight * Math.exp(-distanceSquared / (2 * sigma * sigma));
-          }
-        }
-      });
-      const populated = [...density].filter((value) => value > 0.02).sort((a, b) => a - b);
-      if (!populated.length) return;
-      const densityCap = pestMonitoringQuantile(populated, 0.96) || populated.at(-1) || 1;
-      const surface = document.createElement("canvas");
-      surface.width = gridWidth;
-      surface.height = gridHeight;
-      const surfaceContext = surface.getContext("2d");
-      const image = surfaceContext.createImageData(gridWidth, gridHeight);
-      density.forEach((value, index) => {
-        if (value <= 0.025) return;
-        const ratio = Math.max(0, Math.min(1, value / densityCap));
-        const [red, green, blue] = pestMonitoringHeatColor(ratio);
-        const pixelIndex = index * 4;
-        image.data[pixelIndex] = red;
-        image.data[pixelIndex + 1] = green;
-        image.data[pixelIndex + 2] = blue;
-        image.data[pixelIndex + 3] = Math.round(82 + ratio * 166);
-      });
-      surfaceContext.putImageData(image, 0, 0);
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
-      if (this.maskRings.length) {
+      const surface = document.createElement("canvas");
+      const surfaceContext = surface.getContext("2d");
+
+      sourcesByBlock.forEach((sources, blockKey) => {
+        const maskRings = this.blockMasks.get(blockKey) || [];
+        if (!maskRings.length) return;
+        let minimumX = gridWidth - 1;
+        let maximumX = 0;
+        let minimumY = gridHeight - 1;
+        let maximumY = 0;
+        maskRings.forEach((ring) => ring.forEach(([lng, lat]) => {
+          const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(lat, lng));
+          const gridX = Math.round((pixel.x - southWest.x) / gridSize);
+          const gridY = Math.round((pixel.y - northEast.y) / gridSize);
+          minimumX = Math.min(minimumX, gridX);
+          maximumX = Math.max(maximumX, gridX);
+          minimumY = Math.min(minimumY, gridY);
+          maximumY = Math.max(maximumY, gridY);
+        }));
+        if (maximumX < 0 || minimumX >= gridWidth || maximumY < 0 || minimumY >= gridHeight) return;
+        minimumX = Math.max(0, minimumX - 2);
+        maximumX = Math.min(gridWidth - 1, maximumX + 2);
+        minimumY = Math.max(0, minimumY - 2);
+        maximumY = Math.min(gridHeight - 1, maximumY + 2);
+        const localWidth = maximumX - minimumX + 1;
+        const localHeight = maximumY - minimumY + 1;
+        surface.width = localWidth;
+        surface.height = localHeight;
+        const image = surfaceContext.createImageData(localWidth, localHeight);
+        const sourceList = [...sources.values()].map((source) => ({
+          ...source,
+          risk: source.riskTotal / source.count
+        }));
+        // IDW extends sparse samples across the whole block without circular gaps.
+        for (let gridY = minimumY; gridY <= maximumY; gridY += 1) {
+          for (let gridX = minimumX; gridX <= maximumX; gridX += 1) {
+            let weightTotal = 0;
+            let riskTotal = 0;
+            for (const source of sourceList) {
+              const deltaX = gridX - source.centerX;
+              const deltaY = gridY - source.centerY;
+              const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+              const influence = 1 / Math.pow(distanceSquared + smoothingRadius * smoothingRadius, distancePower);
+              weightTotal += influence;
+              riskTotal += source.risk * influence;
+            }
+            if (!weightTotal) continue;
+            const riskRatio = Math.max(0, Math.min(1, riskTotal / weightTotal));
+            const [red, green, blue] = pestMonitoringHeatColor(riskRatio);
+            const pixelIndex = ((gridY - minimumY) * localWidth + gridX - minimumX) * 4;
+            image.data[pixelIndex] = red;
+            image.data[pixelIndex + 1] = green;
+            image.data[pixelIndex + 2] = blue;
+            image.data[pixelIndex + 3] = 218;
+          }
+        }
+        surfaceContext.putImageData(image, 0, 0);
         context.save();
         context.beginPath();
-        this.maskRings.forEach((ring) => {
+        maskRings.forEach((ring) => {
           ring.forEach(([lng, lat], index) => {
             const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(lat, lng));
             const x = pixel.x - southWest.x;
@@ -10643,16 +11793,60 @@ function createPestMonitoringHeatOverlay(maps, map, maskRings = []) {
           context.closePath();
         });
         context.clip("evenodd");
-      }
-      context.drawImage(surface, 0, 0, gridWidth, gridHeight, 0, 0, width, height);
-      if (this.maskRings.length) context.restore();
+        context.drawImage(
+          surface,
+          0,
+          0,
+          localWidth,
+          localHeight,
+          minimumX * gridSize,
+          minimumY * gridSize,
+          localWidth * gridSize,
+          localHeight * gridSize
+        );
+        if (zoom >= 18) {
+          const markerRadius = zoom >= 20 ? 3.5 : zoom >= 19 ? 3 : 2.4;
+          sourceList.forEach((source) => {
+            const x = source.centerX * gridSize;
+            const y = source.centerY * gridSize;
+            if (x < 0 || x > width || y < 0 || y > height) return;
+            const [red, green, blue] = pestMonitoringHeatColor(source.risk);
+            context.beginPath();
+            context.arc(x, y, markerRadius, 0, Math.PI * 2);
+            context.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+            context.fill();
+            context.lineWidth = 1;
+            context.strokeStyle = "rgba(255, 255, 255, 0.9)";
+            context.stroke();
+          });
+        }
+        context.restore();
+      });
+
+      this.container.style.left = `${southWest.x}px`;
+      this.container.style.top = `${northEast.y}px`;
+      this.container.style.width = `${width}px`;
+      this.container.style.height = `${height}px`;
+      this.canvas.width = renderCanvas.width;
+      this.canvas.height = renderCanvas.height;
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+      this.canvas.getContext("2d").drawImage(renderCanvas, 0, 0);
+      this.renderBounds = {
+        northEast: bounds.getNorthEast().toJSON(),
+        southWest: bounds.getSouthWest().toJSON()
+      };
+      this.hasPainted = true;
     }
 
     onRemove() {
       if (this.frame) cancelAnimationFrame(this.frame);
+      if (this.paintTimer) clearTimeout(this.paintTimer);
       this.container?.remove();
       this.container = null;
       this.canvas = null;
+      this.bufferCanvas = null;
+      this.renderBounds = null;
     }
   }
   return new PestCanvasHeatOverlay();
@@ -10787,15 +11981,18 @@ function renderPestMonitoringLatestPotreroTable(records) {
 }
 
 function renderPestMonitoring() {
-  if (!pestMonitoringRecords) {
+  if (!pestMonitoringRecords || !pestMonitoringTrees) {
     views.pestMonitoring.innerHTML = `
       <section class="panel pest-loading-state">
         <div class="loading-spinner" aria-hidden="true"></div>
-        <strong>${pestMonitoringLoadError ? "No se pudo cargar el monitoreo" : "Cargando monitoreo de plagas"}</strong>
-        <span>${escapeHtml(pestMonitoringLoadError || "Preparando 13.786 observaciones georreferenciadas")}</span>
-        ${pestMonitoringLoadError ? `<button class="secondary-button" type="button" data-action="retry-pest-monitoring">Reintentar</button>` : ""}
+        <strong>${pestMonitoringLoadError || pestMonitoringTreeLoadError ? "No se pudo cargar el monitoreo" : "Cargando monitoreo de plagas"}</strong>
+        <span>${escapeHtml(pestMonitoringLoadError || pestMonitoringTreeLoadError || "Preparando observaciones y arboles georreferenciados")}</span>
+        ${pestMonitoringLoadError || pestMonitoringTreeLoadError ? `<button class="secondary-button" type="button" data-action="retry-pest-monitoring">Reintentar</button>` : ""}
       </section>`;
-    if (!pestMonitoringLoadError) loadPestMonitoringRecords().then(() => {
+    if (!pestMonitoringLoadError && !pestMonitoringTreeLoadError) Promise.all([
+      loadPestMonitoringRecords(),
+      loadPestMonitoringTrees()
+    ]).then(() => {
       if (currentView === "pestMonitoring") renderPestMonitoring();
     }).catch(() => {
       if (currentView === "pestMonitoring") renderPestMonitoring();
@@ -10808,8 +12005,14 @@ function renderPestMonitoring() {
     return;
   }
   const pests = [...new Set(pestMonitoringRecords.map((record) => record.pest))].sort((a, b) => a.localeCompare(b, "es"));
-  const species = [...new Set(pestMonitoringRecords.map((record) => record.species).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
-  const potreros = [...new Set(pestMonitoringRecords.map((record) => record.potrero).filter(Boolean))].sort(comparePotrero);
+  const species = [...new Set([
+    ...pestMonitoringRecords.map((record) => record.species),
+    ...pestMonitoringTrees.map((tree) => tree.species)
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+  const potreros = [...new Set([
+    ...pestMonitoringRecords.map((record) => record.potrero),
+    ...pestMonitoringTrees.map((tree) => tree.potrero)
+  ].filter(Boolean))].sort(comparePotrero);
   views.pestMonitoring.innerHTML = `
     <section class="pest-monitoring-shell">
       <div class="pest-filter-bar">
@@ -10825,6 +12028,12 @@ function renderPestMonitoring() {
       <div class="pest-monitoring-layout">
         <section class="panel pest-map-panel">
           <div id="pestMonitoringMap" class="geo-map pest-monitoring-map"><span>Cargando mapa...</span></div>
+          <label class="pest-tree-layer-control">
+            <input type="checkbox" data-pest-layer="trees" ${pestMonitoringTreesVisible ? "checked" : ""}>
+            <img class="pest-tree-layer-icon" src="assets/tree-marker-cc0.png?v=2" alt="">
+            <strong>Árboles</strong>
+            <small id="pestMonitoringTreeCount">${number(pestMonitoringTrees.length, 0)}</small>
+          </label>
           <div class="pest-map-legend" id="pestMonitoringLegend" aria-label="Escala de riesgo"></div>
         </section>
         <aside class="panel pest-ranking-panel">
@@ -10850,6 +12059,7 @@ function renderPestMonitoring() {
       </section>
     </section>`;
   wirePestMonitoringFilters();
+  wirePestMonitoringLayers();
   refreshPestMonitoring();
 }
 
@@ -10880,25 +12090,43 @@ function wirePestMonitoringFilters() {
         pestMonitoringBlock = "Todos";
       }
       if (filter === "block") pestMonitoringBlock = control.value;
+      pestMonitoringNeedsFit = true;
       refreshPestMonitoring();
     });
   });
 }
 
+function wirePestMonitoringLayers() {
+  views.pestMonitoring.querySelectorAll("[data-pest-layer]").forEach((control) => {
+    control.addEventListener("change", () => {
+      if (control.dataset.pestLayer === "trees") pestMonitoringTreesVisible = control.checked;
+      if (pestMonitoringMap && globalThis.google?.maps) {
+        updatePestMonitoringTreeMarkers(globalThis.google.maps, pestMonitoringFilteredTrees());
+      } else refreshPestMonitoring();
+    });
+  });
+}
+
 function refreshPestMonitoring() {
-  if (!pestMonitoringRecords) return;
+  if (!pestMonitoringRecords || !pestMonitoringTrees) return;
   const blockControl = document.getElementById("pestMonitoringBlockFilter");
   if (blockControl) {
-    const blocks = [...new Set(pestMonitoringRecords
+    const matchingRecordBlocks = pestMonitoringRecords
       .filter((record) => record.pest === pestMonitoringPest)
       .filter((record) => pestMonitoringSpecies === "Todas" || record.species === pestMonitoringSpecies)
       .filter((record) => pestMonitoringPotrero === "Todos" || record.potrero === pestMonitoringPotrero)
-      .map((record) => String(record.excelBlock || "")).filter(Boolean))]
+      .map((record) => String(record.excelBlock || ""));
+    const matchingTreeBlocks = pestMonitoringTrees
+      .filter((tree) => pestMonitoringSpecies === "Todas" || tree.species === pestMonitoringSpecies)
+      .filter((tree) => pestMonitoringPotrero === "Todos" || tree.potrero === pestMonitoringPotrero)
+      .map((tree) => tree.block);
+    const blocks = [...new Set([...matchingRecordBlocks, ...matchingTreeBlocks].filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
     if (pestMonitoringBlock !== "Todos" && !blocks.includes(pestMonitoringBlock)) pestMonitoringBlock = "Todos";
     blockControl.innerHTML = `<option>Todos</option>${blocks.map((block) => `<option value="${htmlAttr(block)}" ${block === pestMonitoringBlock ? "selected" : ""}>${escapeHtml(block)}</option>`).join("")}`;
   }
   const records = pestMonitoringFilteredRecords();
+  const trees = pestMonitoringFilteredTrees();
   const summaries = pestMonitoringBlockSummaries(records);
   pestMonitoringCurrentSummaries = summaries;
   const kpis = document.getElementById("pestMonitoringKpis");
@@ -10911,6 +12139,8 @@ function refreshPestMonitoring() {
   if (latestPotrero) latestPotrero.innerHTML = renderPestMonitoringLatestPotreroTable(records);
   const summary = document.getElementById("pestMonitoringSummary");
   if (summary) summary.textContent = `${summaries.size} bloques · ${records.length} monitoreos`;
+  const treeCount = document.getElementById("pestMonitoringTreeCount");
+  if (treeCount) treeCount.textContent = number(trees.length, 0);
   const pending = records.filter((record) => record.potreroNormalized === false).length;
   const note = document.getElementById("pestMonitoringDataNote");
   if (note) {
@@ -10921,13 +12151,13 @@ function refreshPestMonitoring() {
   const scale = pestMonitoringRiskScale(records);
   const legend = document.getElementById("pestMonitoringLegend");
   if (legend) legend.innerHTML = pestMonitoringLegend(scale);
-  renderPestMonitoringMap(records, summaries, scale);
+  renderPestMonitoringMap(records, summaries, scale, trees);
   views.pestMonitoring.querySelectorAll("[data-pest-block-key]").forEach((button) => {
     button.addEventListener("click", () => focusPestMonitoringBlock(button.dataset.pestBlockKey, summaries));
   });
 }
 
-async function renderPestMonitoringMap(records, summaries, scale) {
+async function renderPestMonitoringMap(records, summaries, scale, trees) {
   const element = document.getElementById("pestMonitoringMap");
   if (!element) return;
   const renderVersion = ++pestMonitoringMapRenderVersion;
@@ -10938,12 +12168,16 @@ async function renderPestMonitoringMap(records, summaries, scale) {
       pestMonitoringHeatOverlay?.setMap?.(null);
       pestMonitoringPolygons.forEach((entry) => entry.polygon.setMap(null));
       pestMonitoringBaseOverlays.forEach((overlay) => overlay.setMap?.(null));
+      pestMonitoringTreeMarkers.forEach((entry) => entry.marker.setMap(null));
       pestMonitoringMap = null;
       pestMonitoringMapElement = element;
       pestMonitoringPolygons = [];
       pestMonitoringBaseOverlays = [];
+      pestMonitoringTreeMarkers = new Map();
       pestMonitoringHeatOverlay = null;
+      pestMonitoringNeedsFit = true;
       pestMonitoringInfoWindow?.close();
+      pestMonitoringTreeInfoWindow?.close();
     }
     if (!pestMonitoringMap) {
       pestMonitoringMap = new maps.Map(element, {
@@ -11018,32 +12252,97 @@ async function renderPestMonitoringMap(records, summaries, scale) {
       pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(
         maps,
         pestMonitoringMap,
-        blockRings.flatMap((item) => item.rings)
+        new Map([...blockGroups].map(([key, group]) => [key, group.rings]))
       );
     }
     pestMonitoringMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
     pestMonitoringPolygons.forEach((entry) => {
       const block = summaries.get(entry.key);
       const value = block?.intensity || 0;
-      const level = block ? pestMonitoringRiskLevel(value, scale) : 0;
       entry.polygon.setOptions({
         fillColor: block ? pestMonitoringRiskColor(value, scale) : "#6e8f83",
-        fillOpacity: block ? 0.3 + level * 0.055 : 0.045,
-        strokeOpacity: block ? 0.9 : 0.32,
-        strokeWeight: block ? 1.8 : 1
+        fillOpacity: block ? 0.035 : 0.045,
+        strokeOpacity: block ? 1 : 0.38,
+        strokeWeight: block ? 2.2 : 1.1
       });
     });
     pestMonitoringHeatOverlay.setData(records.map((record) => ({
       lat: record.latitude,
       lng: record.longitude,
-      weight: pestMonitoringObservedTotal(record)
+      weight: pestMonitoringObservedTotal(record),
+      key: pestMonitoringBlockKey(record)
     })), scale);
+    updatePestMonitoringTreeMarkers(maps, trees);
     const bounds = new maps.LatLngBounds();
     records.forEach((record) => bounds.extend({ lat: record.latitude, lng: record.longitude }));
-    if (!bounds.isEmpty()) pestMonitoringMap.fitBounds(bounds, 36);
+    trees.forEach((tree) => bounds.extend({ lat: tree.latitude, lng: tree.longitude }));
+    if (pestMonitoringNeedsFit && !bounds.isEmpty()) {
+      pestMonitoringMap.fitBounds(bounds, 36);
+      pestMonitoringNeedsFit = false;
+    }
   } catch (error) {
     if (renderVersion === pestMonitoringMapRenderVersion) element.innerHTML = `<div class="empty-state"><strong>No se pudo cargar el mapa</strong><span>${escapeHtml(error.message)}</span></div>`;
   }
+}
+
+function pestMonitoringTreeMarkerIcon(maps) {
+  return {
+    url: new URL("assets/tree-marker-cc0.png?v=2", document.baseURI).href,
+    size: new maps.Size(96, 96),
+    scaledSize: new maps.Size(32, 32),
+    anchor: new maps.Point(16, 31),
+    labelOrigin: new maps.Point(16, 38)
+  };
+}
+
+function updatePestMonitoringTreeMarkers(maps, trees) {
+  const visibleTrees = pestMonitoringTreesVisible ? trees : [];
+  const visibleIds = new Set(visibleTrees.map((tree) => tree.id));
+  pestMonitoringTreeMarkers.forEach((entry, id) => {
+    if (!visibleIds.has(id)) entry.marker.setMap(null);
+  });
+  visibleTrees.forEach((tree) => {
+    let entry = pestMonitoringTreeMarkers.get(tree.id);
+    if (!entry) {
+      const marker = new maps.Marker({
+        position: { lat: tree.latitude, lng: tree.longitude },
+        optimized: true,
+        zIndex: 18
+      });
+      marker.addListener("click", () => showPestMonitoringTreeInfo(entry.tree, marker, maps));
+      entry = { marker, tree };
+      pestMonitoringTreeMarkers.set(tree.id, entry);
+    } else entry.tree = tree;
+    entry.marker.setPosition({ lat: tree.latitude, lng: tree.longitude });
+    entry.marker.setIcon(pestMonitoringTreeMarkerIcon(maps));
+    entry.marker.setLabel({
+      text: tree.tree,
+      color: tree.normalized ? "#103b2e" : "#8a4c06",
+      fontSize: tree.tree.length > 2 ? "9px" : "10px",
+      fontWeight: "800",
+      className: "pest-tree-number-label"
+    });
+    entry.marker.setTitle(`Árbol ${tree.tree} · ${potreroLabel(tree.potrero)} · Bloque ${tree.block || "-"}`);
+    entry.marker.setMap(pestMonitoringMap);
+  });
+}
+
+function showPestMonitoringTreeInfo(tree, marker, maps) {
+  if (!tree || !marker || !pestMonitoringMap) return;
+  pestMonitoringTreeInfoWindow ||= new maps.InfoWindow({ maxWidth: 270 });
+  pestMonitoringTreeInfoWindow.setContent(`
+    <div class="pest-map-info pest-tree-info">
+      <strong>Árbol ${escapeHtml(tree.tree)}</strong>
+      <div><span>Potrero</span><b>${escapeHtml(potreroLabel(tree.potrero))}</b></div>
+      <div><span>Bloque</span><b>${escapeHtml(tree.block || "-")}</b></div>
+      <div><span>Especie</span><b>${escapeHtml(tree.species || "-")}</b></div>
+      <div><span>Variedad</span><b>${escapeHtml(tree.variety || "-")}</b></div>
+      <div><span>Hilera</span><b>${escapeHtml(tree.row || "-")}</b></div>
+      <div><span>Sector monitoreo</span><b>${escapeHtml(tree.monitoringSector || "-")}</b></div>
+      <div><span>Fecha referencia</span><b>${escapeHtml(tree.date ? printDate(tree.date) : "-")}</b></div>
+      ${tree.normalized ? "" : `<p>Relacion de campo pendiente: ${escapeHtml(tree.sourcePotrero)} / bloque ${escapeHtml(tree.sourceBlock || "-")}.</p>`}
+    </div>`);
+  pestMonitoringTreeInfoWindow.open({ map: pestMonitoringMap, anchor: marker });
 }
 
 function showPestMonitoringBlockInfo(key, position, summaries, maps) {
@@ -15377,7 +16676,7 @@ function cloudModulesForRealtimeTable(table = "") {
   if (table === "registros_trazabilidad") return ["harvest"];
   if (table === "cosecha_analisis") return ["harvestAnalysis"];
   if (table === "exportacion_analisis") return ["harvestExport"];
-  if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes"].includes(table)) return ["fertilizers"];
+  if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes", "programa_fertilizante"].includes(table)) return ["fertilizers"];
   if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos"].includes(table)) return ["fields", "applications"];
   return cloudModulesForView(currentView);
 }
@@ -15417,6 +16716,7 @@ function startCloudSync() {
     "evaporacion_bandeja",
     "estacion_climatica",
     "monitoreo_plagas",
+    "monitoreo_arboles",
     "fertilizante_casetas",
     "fertilizante_estanques",
     "fertilizante_estanque_potreros",
@@ -15424,6 +16724,7 @@ function startCloudSync() {
     "fertilizante_preparaciones",
     "fertilizante_aplicaciones",
     "fertilizante_lotes",
+    "programa_fertilizante",
     "registros_trazabilidad",
     "cosecha_analisis",
     "exportacion_analisis",
@@ -15459,14 +16760,23 @@ function startCloudSync() {
             if (currentView === "pestMonitoring") renderPestMonitoring();
             return;
           }
-          if (table.startsWith("fertilizante_")) {
+          if (table === "monitoreo_arboles") {
+            pestMonitoringTrees = null;
+            pestMonitoringTreeLoadError = "";
+            pestMonitoringTreeDataSource = "";
+            if (currentView === "pestMonitoring") renderPestMonitoring();
+            return;
+          }
+          if (table.startsWith("fertilizante_") || table === "programa_fertilizante") {
             fertilizerRows = null;
+            if (table === "programa_fertilizante") fertilizerProgramRows = null;
             fertilizerStockRows = [];
             fertilizerStockLots = [];
             fertilizerLoadError = "";
             fertilizerStockError = "";
             fertilizerDataSource = "";
             if (currentView === "fertilizers") renderFertilizers();
+            if (currentView === "fertilizerAnalysis") renderFertilizerAnalysis();
             return;
           }
           scheduleRealtimeCloudReload(table);
@@ -19225,6 +20535,9 @@ async function openFertilizerPreparationDialog() {
           <option value="">Seleccionar</option>
           ${(fertilizerProducts || []).map((product) => `<option value="${htmlAttr(product.id)}">${escapeHtml(product.name)} (${escapeHtml(product.unit)})</option>`).join("")}
         </select></label>
+        <label class="full">Folio de origen<select name="lotId" required>
+          ${renderFertilizerFolioOptions(initialCaseta, "")}
+        </select><small>La preparación reserva producto del folio; el descuento ocurre al aplicarlo.</small></label>
         <label>Litros de agua<input name="waterLiters" type="number" min="0.001" step="0.001" required></label>
         <label>Cantidad producto<input name="productQuantity" type="number" min="0.001" step="0.001" required></label>
         <label>Unidad<input name="unit" readonly placeholder="Segun producto"></label>
@@ -19246,15 +20559,25 @@ async function openFertilizerPreparationDialog() {
     const productQuantity = Number(form.productQuantity.value) || 0;
     const dissolution = water > 0 ? productQuantity / water : 0;
     const available = tank && product ? fertilizerAvailableProductAmount(tank.caseta, product.id) : 0;
+    const folio = fertilizerFolioById(form.lotId.value);
     form.unit.value = product?.unit || "";
     document.getElementById("fertilizerPreparationPreview").innerHTML = `
       <span>Disponible bodega: <strong>${number(available)} ${escapeHtml(product?.unit || "")}</strong></span>
+      <span>Disponible para preparar: <strong>${folio ? number(folio.availableToPrepare) : "-"} ${escapeHtml(folio?.unit || product?.unit || "")}</strong></span>
       <span>Disolucion: <strong>${number(dissolution, 4)}</strong></span>
-      <span>Quedaria: <strong>${number(available - productQuantity)} ${escapeHtml(product?.unit || "")}</strong></span>
+      <span>Quedaria para preparar: <strong>${folio ? number(folio.availableToPrepare - productQuantity) : "-"} ${escapeHtml(folio?.unit || product?.unit || "")}</strong></span>
     `;
+  };
+  const refreshFolios = () => {
+    form.lotId.innerHTML = renderFertilizerFolioOptions(form.caseta.value, form.productId.value);
   };
   form.caseta.addEventListener("change", () => {
     form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value);
+    refreshFolios();
+    update();
+  });
+  form.productId.addEventListener("change", () => {
+    refreshFolios();
     update();
   });
   form.addEventListener("input", update);
@@ -19269,10 +20592,19 @@ async function saveFertilizerPreparation() {
   const data = Object.fromEntries(new FormData(form));
   const tank = fertilizerTankById(data.tankId);
   const product = fertilizerProductById(data.productId);
+  const lot = fertilizerFolioById(data.lotId);
   const water = Number(data.waterLiters) || 0;
   const productQuantity = Number(data.productQuantity) || 0;
-  if (!tank || !product || water <= 0 || productQuantity <= 0) {
-    showToast("Completa estanque, producto y cantidades positivas");
+  if (!tank || !product || !lot || water <= 0 || productQuantity <= 0) {
+    showToast("Completa estanque, producto, folio y cantidades positivas");
+    return;
+  }
+  if (lot.caseta !== tank.caseta || lot.producto_id !== product.id) {
+    showToast("El folio no pertenece a la caseta y producto seleccionados");
+    return;
+  }
+  if (productQuantity > lot.availableToPrepare) {
+    showToast(`El folio ${lot.folio} solo tiene ${number(lot.availableToPrepare)} ${lot.unit} disponibles para preparar`);
     return;
   }
   const available = fertilizerAvailableProductAmount(tank.caseta, product.id);
@@ -19285,6 +20617,7 @@ async function saveFertilizerPreparation() {
     producto: product.name,
     producto_unidad: product.unit,
     producto_cantidad: productQuantity,
+    lote_id: lot.id,
     cantidad_litros: water,
     responsable_id: user.id,
     responsable_nombre: user.name,
@@ -19304,7 +20637,10 @@ async function saveFertilizerPreparation() {
     if (currentView === "fertilizers") renderFertilizers();
     showToast("Preparacion registrada");
   } catch (error) {
-    showToast(`No se guardo la preparacion: ${error.message}`);
+    const migrationHint = isMissingSupabaseColumn(error, ["lote_id"])
+      ? " Ejecuta supabase_fertilizacion_folios.sql en Supabase."
+      : "";
+    showToast(`No se guardo la preparacion: ${error.message}.${migrationHint}`);
   }
 }
 
@@ -19403,6 +20739,10 @@ async function openFertilizerApplicationDialog() {
     form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value, currentTankId);
     if (currentTankId && !form.tankId.value) form.tankId.value = "";
     const tank = fertilizerTankById(form.tankId.value);
+    const preparationBalances = tank ? fertilizerPreparationBalancesForTank(tank.id, form.date.value) : [];
+    const preparedAvailable = preparationBalances.reduce((sum, preparation) => sum + preparation.availableLiters, 0);
+    const nextPreparation = preparationBalances[0];
+    const nextFolio = nextPreparation?.lote_id ? fertilizerFolioById(nextPreparation.lote_id) : null;
     syncBlockLiters();
     const entries = selectedFieldEntries();
     const hectares = entries.reduce((sum, entry) => sum + (Number(entry.field.hectares) || 0), 0);
@@ -19410,6 +20750,9 @@ async function openFertilizerApplicationDialog() {
     const missingLiters = entries.filter((entry) => entry.liters <= 0).length;
     document.getElementById("fertilizerApplicationPreview").innerHTML = `
       <span>Disponible estanque: <strong>${number(tank?.litrosActuales || 0, 0)} L</strong></span>
+      <span>Preparado trazable: <strong>${number(preparedAvailable, 0)} L</strong></span>
+      <span>Preparaciones disponibles: <strong>${number(preparationBalances.length, 0)}</strong></span>
+      <span>Siguiente consumo FIFO: <strong>${nextPreparation ? `${escapeHtml(fertilizerReportDateTime(nextPreparation.fecha || nextPreparation.creado_en))}${nextFolio ? ` · folio ${escapeHtml(nextFolio.folio)}` : ""}` : "Sin preparación"}</strong></span>
       <span>Bloques seleccionados: <strong>${number(entries.length, 0)}</strong></span>
       <span>Sin litros: <strong>${number(missingLiters, 0)}</strong></span>
       <span>Total aplicacion: <strong>${number(totalLiters, 0)} L</strong></span>
@@ -19485,8 +20828,18 @@ async function saveFertilizerApplication() {
     showToast("Completa caseta, estanque, bloques y litros positivos");
     return;
   }
+  if (!fertilizerConsumptionTraceAvailable) {
+    showToast("Ejecuta supabase_fertilizacion_folios.sql antes de registrar aplicaciones");
+    return;
+  }
   const totalLiters = applications.reduce((sum, entry) => sum + entry.liters, 0);
-  if (totalLiters > Number(tank.litrosActuales || 0) && !confirm(`La aplicacion total supera los litros disponibles del estanque (${number(tank.litrosActuales, 0)} L). Se registraran ${number(totalLiters, 0)} L en ${applications.length} bloques. Guardar de todas formas?`)) return;
+  const preparedAvailable = fertilizerPreparationBalancesForTank(tank.id, data.date)
+    .reduce((sum, preparation) => sum + preparation.availableLiters, 0);
+  const availableLiters = Math.min(Number(tank.litrosActuales || 0), preparedAvailable);
+  if (totalLiters > availableLiters + 0.000001) {
+    showToast(`La aplicacion supera el saldo trazable del estanque: ${number(availableLiters, 0)} L disponibles`);
+    return;
+  }
   const user = fertilizerCurrentUserPayload();
   const payload = applications.map(({ field, liters }) => ({
     estanque_id: tank.id,
@@ -19513,7 +20866,10 @@ async function saveFertilizerApplication() {
     if (currentView === "fertilizers") renderFertilizers();
     showToast(`Aplicacion registrada en ${applications.length} bloque${applications.length === 1 ? "" : "s"}`);
   } catch (error) {
-    showToast(`No se guardo la aplicacion: ${error.message}`);
+    const migrationHint = /fertilizante_aplicacion_consumos|asignar_fertilizante_consumo/i.test(error.message || "")
+      ? " Ejecuta supabase_fertilizacion_folios.sql en Supabase."
+      : "";
+    showToast(`No se guardo la aplicacion: ${error.message}.${migrationHint}`);
   }
 }
 
@@ -19997,6 +21353,12 @@ document.addEventListener("click", async (event) => {
     menu.classList.toggle("open", open);
     actionTarget.setAttribute("aria-expanded", String(open));
   }
+  if (action === "toggle-fertilizers-menu") {
+    const menu = document.getElementById("fertilizersMenu");
+    const open = !menu.classList.contains("open");
+    menu.classList.toggle("open", open);
+    actionTarget.setAttribute("aria-expanded", String(open));
+  }
   if (action === "toggle-irrigation-menu") {
     const menu = document.getElementById("irrigationMenu");
     const open = !menu.classList.contains("open");
@@ -20008,6 +21370,37 @@ document.addEventListener("click", async (event) => {
     const open = !menu.classList.contains("open");
     menu.classList.toggle("open", open);
     actionTarget.setAttribute("aria-expanded", String(open));
+  }
+  if (action === "toggle-fertilizer-analysis-month") {
+    const month = actionTarget.dataset.month;
+    if (fertilizerAnalysisExpandedMonths.has(month)) fertilizerAnalysisExpandedMonths.delete(month);
+    else fertilizerAnalysisExpandedMonths.add(month);
+    renderFertilizerAnalysis();
+  }
+  if (action === "toggle-fertilizer-analysis-day") {
+    const dayKey = `${actionTarget.dataset.month}|${actionTarget.dataset.date}`;
+    if (fertilizerAnalysisExpandedDays.has(dayKey)) fertilizerAnalysisExpandedDays.delete(dayKey);
+    else fertilizerAnalysisExpandedDays.add(dayKey);
+    renderFertilizerAnalysis();
+  }
+  if (action === "set-fertilizer-analysis-monthly-metric") {
+    fertilizerAnalysisMonthlyMetric = actionTarget.dataset.metric || "perHa";
+    renderFertilizerAnalysis();
+  }
+  if (action === "clear-fertilizer-analysis-filters") {
+    fertilizerAnalysisSeasonFilter = "Todas";
+    fertilizerAnalysisSpeciesFilter = "Todas";
+    fertilizerAnalysisPotreroFilter = "Todos";
+    fertilizerAnalysisCasetaFilter = "Todas";
+    fertilizerAnalysisProductFilter = "Todos";
+    renderFertilizerAnalysis();
+  }
+  if (action === "retry-fertilizer-analysis") {
+    fertilizerProgramRows = null;
+    fertilizerProgramLoadError = "";
+    fertilizerRows = null;
+    fertilizerLoadError = "";
+    renderFertilizerAnalysis();
   }
   if (action === "clear-harvest-export-filters") {
     harvestExportSelectedYears = new Set();
@@ -20123,6 +21516,8 @@ document.addEventListener("click", async (event) => {
   if (action === "retry-pest-monitoring") {
     pestMonitoringLoadError = "";
     pestMonitoringRecords = null;
+    pestMonitoringTreeLoadError = "";
+    pestMonitoringTrees = null;
     renderPestMonitoring();
   }
   if (action === "retry-fertilizers" || action === "reload-fertilizers") {
@@ -20152,7 +21547,8 @@ document.addEventListener("click", async (event) => {
     openFertilizerTankRecommendationDialog(id);
   }
   if (action === "set-fertilizer-storage-view") {
-    fertilizerStorageView = actionTarget.dataset.viewMode === "bodega" ? "bodega" : "estanques";
+    const requestedView = actionTarget.dataset.viewMode;
+    fertilizerStorageView = ["estanques", "bodega", "folios"].includes(requestedView) ? requestedView : "estanques";
     renderFertilizers();
   }
   if (action === "export-fertilizer-report") {
