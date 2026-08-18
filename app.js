@@ -8696,7 +8696,7 @@ function restoreIrrigationGanttScroll(snapshot) {
   }));
 }
 
-function normalizeFertilizerTankRow(row) {
+function normalizeFertilizerTankRow(row, canonical = null) {
   const rawPotreros = Array.isArray(row.potreros)
     ? row.potreros
     : Array.isArray(row.potreros_json)
@@ -8704,14 +8704,16 @@ function normalizeFertilizerTankRow(row) {
       : String(row.potreros || "").split(",");
   const potreros = [...new Set(rawPotreros.map((item) => String(item || "").trim()).filter(Boolean))]
     .sort(comparePotrero);
-  const maxLiters = Number(row.volumen_maximo_litros) || 0;
+  const maxLiters = Number(canonical?.volumen_maximo_litros ?? row.volumen_maximo_litros) || 0;
   const currentLiters = Math.max(0, Number(row.litros_actuales) || 0);
   return {
-    id: row.id || `${row.caseta_key || row.caseta}-${row.estanque_key || row.numero_estanque}-${row.fip_key || row.fip}-${maxLiters}`,
-    caseta: row.caseta || "Sin caseta",
-    casetaKey: row.caseta_key || row.caseta || "",
-    numeroEstanque: row.numero_estanque || row.numeroEstanque || "Sin estanque",
-    fip: row.fip || "Sin FIP",
+    id: canonical?.id || row.id || `${row.caseta_key || row.caseta}-${row.estanque_key || row.numero_estanque}-${row.fip_key || row.fip}-${maxLiters}`,
+    caseta: canonical?.caseta || row.caseta || "Sin caseta",
+    casetaKey: canonical?.casetaKey || row.caseta_key || row.caseta || "",
+    numeroEstanque: canonical?.numeroEstanque || row.numero_estanque || row.numeroEstanque || "Sin estanque",
+    numeroEstanqueKey: canonical?.numeroEstanqueKey || row.estanque_key || row.numero_estanque_normalizado || row.numero_estanque || "",
+    fip: canonical?.fip || row.fip || "Sin FIP",
+    fipKey: canonical?.fipKey || row.fip_key || row.fip_normalizado || row.fip || "",
     volumenMaximoLitros: maxLiters,
     litrosActuales: currentLiters,
     litrosPreparados: Number(row.litros_preparados) || 0,
@@ -8720,6 +8722,80 @@ function normalizeFertilizerTankRow(row) {
     ultimaAplicacion: row.ultima_aplicacion || "",
     potreros
   };
+}
+
+function fertilizerTankSortNumber(value) {
+  const match = String(value || "").match(/\d+/);
+  return match ? Number(match[0]) : Number.POSITIVE_INFINITY;
+}
+
+function compareFertilizerCasetaName(a, b) {
+  return fertilizerTankSortNumber(a) - fertilizerTankSortNumber(b)
+    || String(a || "").localeCompare(String(b || ""), "es", { numeric: true, sensitivity: "base" });
+}
+
+function compareFertilizerTankRows(a, b) {
+  return compareFertilizerCasetaName(a.caseta, b.caseta)
+    || fertilizerTankSortNumber(a.numeroEstanque) - fertilizerTankSortNumber(b.numeroEstanque)
+    || String(a.numeroEstanqueKey || a.numeroEstanque || "").localeCompare(String(b.numeroEstanqueKey || b.numeroEstanque || ""), "es", { numeric: true, sensitivity: "base" })
+    || String(a.fipKey || a.fip || "").localeCompare(String(b.fipKey || b.fip || ""), "es", { numeric: true, sensitivity: "base" });
+}
+
+function buildFertilizerRowsFromTanks(stateRows = [], rawTanks = [], casetas = []) {
+  const stateById = new Map((stateRows || []).map((row) => [row.id, row]));
+  const casetasById = new Map((casetas || []).map((caseta) => [caseta.id, caseta]));
+  const merged = (rawTanks || []).map((tank) => {
+    const caseta = casetasById.get(tank.caseta_id);
+    const state = stateById.get(tank.id) || {};
+    return normalizeFertilizerTankRow(state, {
+      id: tank.id,
+      caseta: caseta?.name || state.caseta || "Sin caseta",
+      casetaKey: caseta?.key || state.caseta_key || "",
+      numeroEstanque: tank.numero_estanque || state.numero_estanque || "Sin estanque",
+      numeroEstanqueKey: tank.numero_estanque_normalizado || state.estanque_key || "",
+      fip: tank.fip || state.fip || "Sin FIP",
+      fipKey: tank.fip_normalizado || state.fip_key || "",
+      volumen_maximo_litros: tank.volumen_maximo_litros ?? state.volumen_maximo_litros
+    });
+  });
+  const seen = new Set(merged.map((row) => row.id));
+  (stateRows || []).forEach((row) => {
+    if (seen.has(row.id)) return;
+    merged.push(normalizeFertilizerTankRow(row));
+  });
+  const grouped = new Map();
+  merged.forEach((row) => {
+    const key = `${fertilizerReportKey(row.casetaKey || row.caseta)}|${fertilizerReportKey(row.numeroEstanqueKey || row.numeroEstanque)}`;
+    const current = grouped.get(key);
+    if (!current) {
+      grouped.set(key, {
+        ...row,
+        potreros: [...row.potreros],
+        sourceTankIds: [row.id],
+        _fips: new Set([row.fip].filter(Boolean))
+      });
+      return;
+    }
+    const currentActivity = current.litrosPreparados + current.litrosAplicados;
+    const rowActivity = row.litrosPreparados + row.litrosAplicados;
+    if (rowActivity > currentActivity) current.id = row.id;
+    current.sourceTankIds.push(row.id);
+    current._fips.add(row.fip);
+    current.volumenMaximoLitros = Math.max(current.volumenMaximoLitros, row.volumenMaximoLitros);
+    current.litrosPreparados += row.litrosPreparados;
+    current.litrosAplicados += row.litrosAplicados;
+    current.litrosActuales = Math.max(0, current.litrosPreparados - current.litrosAplicados);
+    current.ultimaPreparacion = [current.ultimaPreparacion, row.ultimaPreparacion].filter(Boolean).sort().at(-1) || "";
+    current.ultimaAplicacion = [current.ultimaAplicacion, row.ultimaAplicacion].filter(Boolean).sort().at(-1) || "";
+    current.potreros = [...new Set([...current.potreros, ...row.potreros])].sort(comparePotrero);
+  });
+  return [...grouped.values()].map((row) => {
+    const fips = [...row._fips].sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
+    row.fip = fips.join(" / ") || "Sin FIP";
+    row.fipKey = fips.map(fertilizerReportKey).join("--");
+    delete row._fips;
+    return row;
+  }).sort(compareFertilizerTankRows);
 }
 
 function normalizeFertilizerProduct(row) {
@@ -8829,7 +8905,7 @@ function computeFertilizerStockRows({ lots = [], preparations = [], consumptions
     lots: [...new Set(row.lots)].slice(0, 4),
     folios: [...new Set(row.folios)].slice(0, 4)
   })).sort((a, b) =>
-    a.caseta.localeCompare(b.caseta, "es", { numeric: true })
+    compareFertilizerCasetaName(a.caseta, b.caseta)
     || a.product.localeCompare(b.product, "es", { numeric: true })
   );
 }
@@ -8904,7 +8980,7 @@ function fertilizerFolioRows() {
       lastApplication: movements[0]?.application?.fecha || movements[0]?.application?.creado_en || ""
     };
   }).sort((a, b) =>
-    a.caseta.localeCompare(b.caseta, "es", { numeric: true })
+    compareFertilizerCasetaName(a.caseta, b.caseta)
     || String(b.fecha || b.creado_en || "").localeCompare(String(a.fecha || a.creado_en || ""))
     || String(a.folio || "").localeCompare(String(b.folio || ""), "es", { numeric: true })
   );
@@ -8940,15 +9016,16 @@ function fertilizerUntracedApplications() {
   return (fertilizerApplicationHistory || []).filter((application) => !tracedIds.has(application.id));
 }
 
-function fertilizerPreparationBalancesForTank(tankId, applicationDate = "") {
+function fertilizerPreparationBalancesForTank(tankOrId, applicationDate = "") {
   const applicationTime = applicationDate ? fertilizerApplicationTime({ fecha: applicationDate }) : Number.POSITIVE_INFINITY;
+  const tankIds = new Set(fertilizerTankSourceIds(tankOrId));
   const consumedByPreparation = new Map();
   (fertilizerApplicationConsumptions || []).forEach((consumption) => {
     const current = consumedByPreparation.get(consumption.preparacion_id) || 0;
     consumedByPreparation.set(consumption.preparacion_id, current + (Number(consumption.litros_consumidos) || 0));
   });
   return (fertilizerPreparationHistory || [])
-    .filter((preparation) => preparation.estanque_id === tankId
+    .filter((preparation) => tankIds.has(preparation.estanque_id)
       && preparation.lote_id
       && fertilizerPreparationTime(preparation) <= applicationTime)
     .map((preparation) => {
@@ -9013,7 +9090,7 @@ async function loadFertilizerRowsFromSupabase() {
       });
     }),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
-    sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,fip,volumen_maximo_litros&activo=eq.true&order=numero_estanque.asc,fip.asc", 1000).catch(() => []),
+    sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,numero_estanque_normalizado,fip,fip_normalizado,volumen_maximo_litros&activo=eq.true&order=caseta_id.asc,numero_estanque.asc,fip.asc", 1000).catch(() => []),
     sbSelectAll("campos", "select=id,potrero,bloque,especie,variedad,hectareas,activo&activo=eq.true&order=potrero.asc,bloque.asc", 5000).catch(() => []),
     loadFertilizerPreparationsForModule().catch((error) => {
       console.warn("No se pudo cargar el historial de preparaciones", error);
@@ -9054,7 +9131,7 @@ async function loadFertilizerRowsFromSupabase() {
   fertilizerApplicationHistory = applicationsRaw;
   fertilizerApplicationConsumptions = consumptionsRaw;
   fertilizerHistoryLoadError = historyErrors.join(" | ");
-  fertilizerUserNames = await loadFertilizerUserNamesForHistory([...preparationsRaw, ...applicationsRaw]);
+  fertilizerUserNames = await loadFertilizerUserNamesForHistory([...preparationsRaw, ...applicationsRaw, ...lotsRaw]);
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
     preparations: preparationsRaw,
@@ -9065,7 +9142,7 @@ async function loadFertilizerRowsFromSupabase() {
     traceAvailable: fertilizerConsumptionTraceAvailable
   });
   fertilizerDataSource = "Supabase";
-  return rows.map(normalizeFertilizerTankRow);
+  return buildFertilizerRowsFromTanks(rows, tanksRaw, fertilizerCasetas);
 }
 
 async function loadFertilizerRowsFromLocalBackup() {
@@ -9099,11 +9176,7 @@ async function loadFertilizerRows() {
       console.warn("Fertilizantes usa respaldo local", error);
       fertilizerRows = await loadFertilizerRowsFromLocalBackup();
     }
-    fertilizerRows.sort((a, b) =>
-      a.caseta.localeCompare(b.caseta, "es", { numeric: true })
-      || a.numeroEstanque.localeCompare(b.numeroEstanque, "es", { numeric: true })
-      || a.fip.localeCompare(b.fip, "es", { numeric: true })
-    );
+    fertilizerRows.sort(compareFertilizerTankRows);
     fertilizerLoadError = "";
     return fertilizerRows;
   })().catch((error) => {
@@ -9603,7 +9676,10 @@ function fertilizerRawTankById(id) {
 }
 
 function fertilizerTankOptionLabel(row) {
-  return `${row.caseta} / Estanque ${row.numeroEstanque} / ${row.fip}`;
+  const preparation = Number(row.litrosActuales) > 0 ? fertilizerLatestPreparationForTank(row) : null;
+  const product = fertilizerProductForPreparation(preparation);
+  const productLabel = product?.name || preparation?.producto || "Sin producto preparado";
+  return `Estanque ${row.numeroEstanque} / ${productLabel} / ${number(row.litrosActuales, 0)} L de ${number(row.volumenMaximoLitros, 0)} L`;
 }
 
 function fertilizerProductById(id) {
@@ -9617,16 +9693,13 @@ function fertilizerAvailableProductAmount(caseta, productId) {
 
 function fertilizerCasetaOptions() {
   return [...new Set((fertilizerRows || []).map((row) => row.caseta).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+    .sort(compareFertilizerCasetaName);
 }
 
 function fertilizerTanksForCaseta(caseta) {
   return (fertilizerRows || [])
     .filter((row) => !caseta || row.caseta === caseta)
-    .sort((a, b) =>
-      String(a.numeroEstanque).localeCompare(String(b.numeroEstanque), "es", { numeric: true })
-      || String(a.fip).localeCompare(String(b.fip), "es", { numeric: true })
-    );
+    .sort(compareFertilizerTankRows);
 }
 
 function fertilizerPotreroOptions(tank = null) {
@@ -9647,7 +9720,7 @@ function fertilizerFieldsForPotrero(potrero) {
 function renderFertilizerTankOptions(caseta, selectedId = "") {
   const tanks = fertilizerTanksForCaseta(caseta);
   return `<option value="">Seleccionar estanque</option>${tanks.map((row) => `
-    <option value="${htmlAttr(row.id)}" ${row.id === selectedId ? "selected" : ""}>${escapeHtml(`Estanque ${row.numeroEstanque} / ${row.fip} - ${number(row.litrosActuales, 0)} L`)}</option>
+    <option value="${htmlAttr(row.id)}" ${row.id === selectedId ? "selected" : ""}>${escapeHtml(fertilizerTankOptionLabel(row))}</option>
   `).join("")}`;
 }
 
@@ -9731,6 +9804,12 @@ function fertilizerHistoryUser(row) {
 function fertilizerDateMs(value) {
   const date = new Date(value || "");
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function fertilizerLotDateLabel(value) {
+  const dateValue = String(value || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return "-";
+  return new Date(`${dateValue}T12:00:00`).toLocaleDateString("es-CL");
 }
 
 function fertilizerTankMetaForHistory(row) {
@@ -9869,6 +9948,33 @@ function renderFertilizerApplicationHistoryTable(rows) {
   `;
 }
 
+function renderFertilizerLotHistoryTable(rows) {
+  const recent = [...rows]
+    .sort((a, b) => fertilizerDateMs(b.fecha || b.creado_en) - fertilizerDateMs(a.fecha || a.creado_en))
+    .slice(0, 120);
+  if (!recent.length) return `<div class="empty-state compact"><strong>Sin lotes ingresados.</strong></div>`;
+  return `
+    <div class="fertilizer-table-wrap fertilizer-history-table-wrap">
+      <table class="fertilizer-table fertilizer-history-table">
+        <thead><tr><th>Fecha ingreso</th><th>Caseta</th><th>Folio</th><th>Lote</th><th>Producto</th><th>Cantidad</th><th>Usuario</th></tr></thead>
+        <tbody>
+          ${recent.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.fecha ? fertilizerLotDateLabel(row.fecha) : fertilizerReportDateTime(row.creado_en))}</td>
+              <td>${escapeHtml(row.caseta || "Sin caseta")}</td>
+              <td><strong>${escapeHtml(row.folio || "-")}</strong></td>
+              <td>${escapeHtml(row.lote || "-")}</td>
+              <td class="fertilizer-table-fip">${escapeHtml(row.product || "Sin producto")}</td>
+              <td><strong>${number(row.initial)} ${escapeHtml(row.unit || "")}</strong></td>
+              <td>${escapeHtml(fertilizerHistoryUser(row))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderFertilizerOperationsHistory() {
   const preparationRows = fertilizerHistoryRowsForMode("preparations");
   const applicationRows = fertilizerHistoryRowsForMode("applications");
@@ -9891,34 +9997,47 @@ function renderFertilizerOperationsHistory() {
 }
 
 function fertilizerHistoryRowsForMode(mode = "applications") {
-  const sourceRows = mode === "preparations" ? fertilizerPreparationHistory : fertilizerApplicationHistory;
+  const sourceRows = mode === "lots"
+    ? fertilizerFolioRows()
+    : mode === "preparations"
+      ? fertilizerPreparationHistory
+      : fertilizerApplicationHistory;
   const hasActiveFilter = fertilizerCasetaFilter !== "Todas" || fertilizerPotreroFilter !== "Todos" || fertilizerStatusFilter !== "Todos";
   if (!hasActiveFilter) return sourceRows || [];
-  const visibleTankIds = new Set(fertilizerFilteredRows().map((row) => row.id));
+  const visibleTanks = fertilizerFilteredRows();
+  if (mode === "lots") {
+    const visibleCasetas = new Set(visibleTanks.map((row) => row.caseta));
+    return (sourceRows || []).filter((row) => visibleCasetas.has(row.caseta));
+  }
+  const visibleTankIds = new Set(visibleTanks.flatMap((row) => row.sourceTankIds?.length ? row.sourceTankIds : [row.id]));
   return (sourceRows || []).filter((row) => visibleTankIds.has(row.estanque_id));
 }
 
 function renderFertilizerHistoryDialogContent(mode = "applications") {
-  const activeMode = mode === "preparations" ? "preparations" : "applications";
+  const activeMode = ["applications", "preparations", "lots"].includes(mode) ? mode : "applications";
   const applicationsCount = fertilizerHistoryRowsForMode("applications").length;
   const preparationsCount = fertilizerHistoryRowsForMode("preparations").length;
+  const lotsCount = fertilizerHistoryRowsForMode("lots").length;
   return `
     ${fertilizerHistoryLoadError ? `<div class="empty-state compact fertilizer-history-error"><strong>No se pudo cargar todo el historial.</strong><p>${escapeHtml(fertilizerHistoryLoadError)}</p></div>` : ""}
     <div class="fertilizer-history-tabs">
       <button type="button" data-action="set-fertilizer-history-mode" data-mode="applications" class="${activeMode === "applications" ? "active" : ""}">Aplicaciones <span>${number(applicationsCount, 0)}</span></button>
       <button type="button" data-action="set-fertilizer-history-mode" data-mode="preparations" class="${activeMode === "preparations" ? "active" : ""}">Preparacion <span>${number(preparationsCount, 0)}</span></button>
+      <button type="button" data-action="set-fertilizer-history-mode" data-mode="lots" class="${activeMode === "lots" ? "active" : ""}">Ingreso de lotes <span>${number(lotsCount, 0)}</span></button>
     </div>
     <div class="fertilizer-history-dialog-table">
-      ${activeMode === "preparations"
-        ? renderFertilizerPreparationHistoryTable(fertilizerHistoryRowsForMode(activeMode))
-        : renderFertilizerApplicationHistoryTable(fertilizerHistoryRowsForMode(activeMode))}
+      ${activeMode === "lots"
+        ? renderFertilizerLotHistoryTable(fertilizerHistoryRowsForMode(activeMode))
+        : activeMode === "preparations"
+          ? renderFertilizerPreparationHistoryTable(fertilizerHistoryRowsForMode(activeMode))
+          : renderFertilizerApplicationHistoryTable(fertilizerHistoryRowsForMode(activeMode))}
     </div>
   `;
 }
 
 function openFertilizerHistoryDialog(initialMode = "applications") {
   const dialog = document.getElementById("purchaseDialog");
-  const activeMode = initialMode === "preparations" ? "preparations" : "applications";
+  const activeMode = ["applications", "preparations", "lots"].includes(initialMode) ? initialMode : "applications";
   dialog.classList.add("fertilizer-history-modal");
   dialog.addEventListener("close", () => dialog.classList.remove("fertilizer-history-modal"), { once: true });
   dialog.innerHTML = `
@@ -9953,15 +10072,22 @@ function fertilizerProductForPreparation(preparation) {
     || (fertilizerProducts || []).find((product) => product.key === fertilizerReportKey(preparation.producto));
 }
 
-function fertilizerLatestPreparationForTank(tankId) {
+function fertilizerTankSourceIds(tankOrId) {
+  const tank = typeof tankOrId === "object" ? tankOrId : fertilizerTankById(tankOrId);
+  if (!tank) return [tankOrId].filter(Boolean);
+  return [...new Set(tank.sourceTankIds?.length ? tank.sourceTankIds : [tank.id])];
+}
+
+function fertilizerLatestPreparationForTank(tankOrId) {
+  const tankIds = new Set(fertilizerTankSourceIds(tankOrId));
   return (fertilizerPreparationHistory || [])
-    .filter((row) => row.estanque_id === tankId)
+    .filter((row) => tankIds.has(row.estanque_id))
     .sort((a, b) => fertilizerDateMs(b.fecha || b.creado_en) - fertilizerDateMs(a.fecha || a.creado_en))[0]
     || null;
 }
 
 function fertilizerRecommendationContext(tank) {
-  const preparation = fertilizerLatestPreparationForTank(tank?.id);
+  const preparation = fertilizerLatestPreparationForTank(tank);
   const product = fertilizerProductForPreparation(preparation);
   const waterLiters = Number(preparation?.cantidad_litros) || 0;
   const productQuantity = Number(preparation?.producto_cantidad) || 0;
@@ -10166,6 +10292,7 @@ function openFertilizerTankRecommendationDialog(tankId) {
     if (!groups.has(field.potrero)) groups.set(field.potrero, []);
     groups.get(field.potrero).push(field);
   });
+  const compactGroups = groups.size > 1;
   const fieldRecommendations = fields.map((field) => {
     const species = fertilizerDoseSpeciesMeta(field.crop);
     const dose = fertilizerRecommendedDoseForProduct(product, field.crop);
@@ -10195,7 +10322,7 @@ function openFertilizerTankRecommendationDialog(tankId) {
     <div class="modal-body fertilizer-recommendation-dialog">
       <div class="modal-head">
         <div>
-          <h2>${escapeHtml(tank.caseta)} · ${escapeHtml(tank.numeroEstanque)}</h2>
+          <h2>${escapeHtml(tank.caseta)} · Estanque ${escapeHtml(tank.numeroEstanque)}</h2>
           <p>Recomendacion de solucion preparada para los bloques asociados.</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
@@ -10211,22 +10338,31 @@ function openFertilizerTankRecommendationDialog(tankId) {
       ${product && missingSpecies.length ? `<div class="fertilizer-recommendation-warning">Falta definir ${escapeHtml(product.name)} para: ${missingSpecies.map(escapeHtml).join(", ")}.</div>` : ""}
       ${product && dissolution <= 0 ? `<div class="empty-state compact"><strong>No hay una disolucion valida.</strong><p>Registra cantidad de producto y litros de agua en la preparacion del estanque.</p></div>` : ""}
       ${product && dissolution > 0 && groups.size ? `
-        <div class="fertilizer-recommendation-groups">
+        <div class="fertilizer-recommendation-groups${compactGroups ? " is-compact" : ""}">
           ${[...groups.entries()].map(([potrero, potreroFields]) => {
             const potreroEntries = potreroFields.map((field) => fieldRecommendations.find((entry) => entry.field.id === field.id));
             const potreroLiters = potreroEntries.reduce((sum, entry) => sum + (entry?.liters || 0), 0);
+            const potreroHectares = potreroFields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
+            if (compactGroups) return `
+              <button type="button" class="fertilizer-recommendation-potrero" data-action="open-fertilizer-potrero-recommendation" data-tank-id="${htmlAttr(tank.id)}" data-potrero="${htmlAttr(potrero)}">
+                <span><strong>${escapeHtml(potreroLabel(potrero))}</strong><small>${number(potreroFields.length, 0)} bloques · ${number(potreroHectares)} ha</small></span>
+                <span><em>${number(potreroLiters, 1)} L</em><b aria-hidden="true">+</b></span>
+              </button>
+            `;
             return `
               <section class="fertilizer-recommendation-group">
                 <div class="fertilizer-recommendation-group-head">
                   <strong>${escapeHtml(potreroLabel(potrero))}</strong>
                   <span>${number(potreroLiters, 1)} L recomendados</span>
                 </div>
-                <div class="fertilizer-recommendation-table">
-                  <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
-                  ${potreroEntries.map((entry) => {
-                    const field = entry.field;
-                    return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
-                  }).join("")}
+                <div class="fertilizer-recommendation-table-scroll" tabindex="0" aria-label="Bloques recomendados de ${htmlAttr(potreroLabel(potrero))}">
+                  <div class="fertilizer-recommendation-table">
+                    <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
+                    ${potreroEntries.map((entry) => {
+                      const field = entry.field;
+                      return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
+                    }).join("")}
+                  </div>
                 </div>
               </section>
             `;
@@ -10238,19 +10374,76 @@ function openFertilizerTankRecommendationDialog(tankId) {
       <div class="modal-actions"><button class="primary-button" type="button" data-action="close-dialog">Cerrar</button></div>
     </div>
   `;
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
+}
+
+function openFertilizerPotreroRecommendationDialog(tankId, potrero) {
+  const tank = fertilizerTankById(tankId);
+  if (!tank) {
+    showToast("No se encontro el estanque seleccionado");
+    return;
+  }
+  const { product, dissolution, dissolutionSource } = fertilizerRecommendationContext(tank);
+  const fields = fertilizerFieldsForTank(tank).filter((field) => fertilizerReportKey(field.potrero) === fertilizerReportKey(potrero));
+  const entries = fields.map((field) => {
+    const species = fertilizerDoseSpeciesMeta(field.crop);
+    const dose = fertilizerRecommendedDoseForProduct(product, field.crop);
+    const hasDose = dose !== null && Number.isFinite(dose) && dose >= 0;
+    return {
+      field,
+      species,
+      dose,
+      hasDose,
+      liters: hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0
+    };
+  });
+  const hectares = fields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
+  const liters = entries.reduce((sum, entry) => sum + entry.liters, 0);
+  const dialog = document.getElementById("purchaseDialog");
+  dialog.innerHTML = `
+    <div class="modal-body fertilizer-recommendation-dialog fertilizer-recommendation-detail">
+      <div class="modal-head">
+        <div>
+          <button class="fertilizer-recommendation-back" type="button" data-action="back-fertilizer-tank-recommendation" data-tank-id="${htmlAttr(tank.id)}">‹ Volver al estanque</button>
+          <h2>${escapeHtml(potreroLabel(potrero))}</h2>
+          <p>${escapeHtml(tank.caseta)} · Estanque ${escapeHtml(tank.numeroEstanque)} · ${number(entries.length, 0)} bloques</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="fertilizer-recommendation-potrero-summary">
+        <span><small>Producto</small><strong>${escapeHtml(product?.name || "Sin producto preparado")}</strong></span>
+        <span><small>Superficie</small><strong>${number(hectares)} ha</strong></span>
+        <span><small>Disolucion</small><strong>${dissolution > 0 ? number(dissolution, 4) : "Sin definir"}</strong><em>${escapeHtml(dissolutionSource)}</em></span>
+        <span><small>Total recomendado</small><strong>${dissolution > 0 ? `${number(liters, 1)} L` : "Pendiente"}</strong></span>
+      </div>
+      <div class="fertilizer-recommendation-table-scroll is-expanded" tabindex="0" aria-label="Bloques recomendados de ${htmlAttr(potreroLabel(potrero))}">
+        <div class="fertilizer-recommendation-table">
+          <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
+          ${entries.map((entry) => {
+            const field = entry.field;
+            return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose && dissolution > 0 ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
+          }).join("") || `<div class="empty-state compact"><strong>Sin bloques activos para este potrero.</strong></div>`}
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-action="back-fertilizer-tank-recommendation" data-tank-id="${htmlAttr(tank.id)}">Volver</button>
+        <button class="primary-button" type="button" data-action="close-dialog">Cerrar</button>
+      </div>
+    </div>
+  `;
 }
 
 function renderFertilizerTankCard(row) {
   const status = fertilizerTankStatus(row);
   const percent = row.volumenMaximoLitros ? Math.min(100, row.litrosActuales / row.volumenMaximoLitros * 100) : 0;
   const levelTone = percent <= 15 ? "red" : percent <= 35 ? "orange" : percent <= 65 ? "yellow" : "green";
+  const potreros = [...(row.potreros || [])].sort(comparePotrero);
   return `
     <button type="button" class="fertilizer-tank-card fertilizer-estanque-card status-${status} tank-level-${levelTone}" data-action="open-fertilizer-tank-recommendation" data-id="${htmlAttr(row.id)}" title="Ver recomendacion por bloque">
       <div
         class="fertilizer-tank-visual"
         role="img"
-        aria-label="${escapeHtml(row.numeroEstanque)} al ${number(percent, 0)} por ciento"
+        aria-label="Estanque ${escapeHtml(row.numeroEstanque)} al ${number(percent, 0)} por ciento"
         style="--tank-level:${Math.max(0, percent)}%"
       >
         <div class="fertilizer-tank-shell">
@@ -10260,11 +10453,17 @@ function renderFertilizerTankCard(row) {
         <strong>${number(percent, 0)}%</strong>
       </div>
       <div class="fertilizer-tank-description">
-        <span class="fertilizer-tank-number">${escapeHtml(row.numeroEstanque)}</span>
+        <span class="fertilizer-tank-number">Estanque ${escapeHtml(row.numeroEstanque)}</span>
         <strong class="fertilizer-fip-text">${escapeHtml(row.fip)}</strong>
         <div class="fertilizer-tank-liters">
           <strong>${number(row.litrosActuales, 0)} L</strong>
           <span>de ${number(row.volumenMaximoLitros, 0)} L</span>
+        </div>
+        <small class="fertilizer-tank-potrero-label">Potreros beneficiados</small>
+        <div class="fertilizer-tank-potreros" aria-label="Potreros asociados">
+          ${potreros.length
+            ? potreros.map((potrero) => `<span>${escapeHtml(potreroLabel(potrero))}</span>`).join("")
+            : `<span class="is-empty">Sin potrero</span>`}
         </div>
       </div>
     </button>
@@ -10279,8 +10478,13 @@ function renderFertilizerCasetaGroup(caseta, rows) {
     <section class="panel fertilizer-caseta-card">
       <div class="panel-header fertilizer-caseta-header">
         <div>
-          <h2>${escapeHtml(caseta)}</h2>
-          <p>${potreros.map((potrero) => escapeHtml(potreroLabel(potrero))).join(" · ")}</p>
+          <div class="fertilizer-caseta-identity">
+            <h2>${escapeHtml(caseta)}</h2>
+            <div class="fertilizer-caseta-potreros" aria-label="Potreros asociados a ${htmlAttr(caseta)}">
+              ${potreros.map((potrero) => `<span>${escapeHtml(potreroLabel(potrero))}</span>`).join("")}
+            </div>
+          </div>
+          <p>${rows.length} ${rows.length === 1 ? "estanque" : "estanques"} · ${potreros.length} ${potreros.length === 1 ? "potrero asociado" : "potreros asociados"}</p>
         </div>
         <div class="fertilizer-caseta-total">
           <strong>${number(currentLiters, 0)} L</strong>
@@ -10288,10 +10492,22 @@ function renderFertilizerCasetaGroup(caseta, rows) {
         </div>
       </div>
       <div class="fertilizer-tank-grid">
-        ${rows.map(renderFertilizerTankCard).join("")}
+        ${[...rows].sort(compareFertilizerTankRows).map(renderFertilizerTankCard).join("")}
       </div>
     </section>
   `;
+}
+
+function renderFertilizerTankGroups(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
+    grouped.get(row.caseta).push(row);
+  });
+  return [...grouped.entries()]
+    .sort(([a], [b]) => compareFertilizerCasetaName(a, b))
+    .map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items))
+    .join("");
 }
 
 function fertilizerWarehouseUnit(row) {
@@ -10510,6 +10726,7 @@ function renderFertilizerFolioGroups(rows) {
     ${unassigned.length ? `<div class="inline-warning fertilizer-folio-warning"><strong>${number(unassigned.length, 0)} preparaciones anteriores sin folio.</strong><span>Estas preparaciones no pueden descontar un folio hasta ser relacionadas.</span></div>` : ""}
     ${fertilizerConsumptionTraceAvailable && untraced.length ? `<div class="inline-warning fertilizer-folio-warning"><strong>${number(untraced.length, 0)} aplicaciones históricas sin preparación asociada.</strong><span>La migración no encontró volumen preparado suficiente para asignarlas.</span></div>` : ""}
     ${[...grouped.entries()].map(([caseta, items]) => {
+      items.sort((a, b) => fertilizerDateMs(b.fecha || b.creado_en) - fertilizerDateMs(a.fecha || a.creado_en));
       const active = items.filter((row) => row.available > 0).length;
       return `<section class="panel fertilizer-caseta-card fertilizer-folio-group">
         <div class="panel-header fertilizer-caseta-header"><div><h2>${escapeHtml(caseta)}</h2><p>${items.length} folios · ${active} con saldo</p></div></div>
@@ -10587,7 +10804,7 @@ function renderFertilizers() {
     });
     return;
   }
-  const casetas = [...new Set(fertilizerRows.map((row) => row.caseta))].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const casetas = fertilizerCasetaOptions();
   const potreros = [...new Set(fertilizerRows.flatMap((row) => row.potreros))].sort(comparePotrero);
   if (fertilizerCasetaFilter !== "Todas" && !casetas.includes(fertilizerCasetaFilter)) fertilizerCasetaFilter = "Todas";
   if (fertilizerPotreroFilter !== "Todos" && !potreros.includes(fertilizerPotreroFilter)) fertilizerPotreroFilter = "Todos";
@@ -10604,11 +10821,6 @@ function renderFertilizers() {
     bodega: { title: "Bodega", description: "Kilos y litros almacenados por caseta y producto." },
     folios: { title: "Folios", description: "Ingreso, preparación, aplicación y saldo trazable de cada folio." }
   }[fertilizerStorageView];
-  const grouped = new Map();
-  rows.forEach((row) => {
-    if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
-    grouped.get(row.caseta).push(row);
-  });
   views.fertilizers.innerHTML = `
     <section class="fertilizer-shell">
       <div class="fertilizer-toolbar">
@@ -10659,7 +10871,7 @@ function renderFertilizers() {
               ? renderFertilizerWarehouseGroups(warehouseRows)
               : fertilizerStorageView === "folios"
                 ? renderFertilizerFolioGroups(folioRows)
-                : [...grouped.entries()].map(([caseta, items]) => renderFertilizerCasetaGroup(caseta, items)).join("") || `<div class="empty-state"><strong>Sin casetas para el filtro.</strong></div>`}
+                : renderFertilizerTankGroups(rows) || `<div class="empty-state"><strong>Sin estanques para el filtro.</strong></div>`}
           </div>
         </div>
         ${renderFertilizerAlertsPanel(rows)}
@@ -20555,17 +20767,28 @@ async function openFertilizerPreparationDialog() {
   const update = () => {
     const tank = fertilizerTankById(form.tankId.value);
     const product = fertilizerProductById(form.productId.value);
+    const currentPreparation = Number(tank?.litrosActuales) > 0 ? fertilizerLatestPreparationForTank(tank) : null;
+    const currentProduct = fertilizerProductForPreparation(currentPreparation);
     const water = Number(form.waterLiters.value) || 0;
     const productQuantity = Number(form.productQuantity.value) || 0;
     const dissolution = water > 0 ? productQuantity / water : 0;
     const available = tank && product ? fertilizerAvailableProductAmount(tank.caseta, product.id) : 0;
     const folio = fertilizerFolioById(form.lotId.value);
+    const currentLiters = Number(tank?.litrosActuales) || 0;
+    const maximumLiters = Number(tank?.volumenMaximoLitros) || 0;
+    const remainingCapacity = maximumLiters > 0 ? Math.max(0, maximumLiters - currentLiters) : 0;
+    if (maximumLiters > 0) form.waterLiters.max = String(remainingCapacity);
+    else form.waterLiters.removeAttribute("max");
     form.unit.value = product?.unit || "";
     document.getElementById("fertilizerPreparationPreview").innerHTML = `
+      <span>Producto en estanque: <strong>${escapeHtml(currentProduct?.name || currentPreparation?.producto || "Sin producto preparado")}</strong></span>
+      <span>Contenido estanque: <strong>${number(currentLiters, 0)} L de ${number(maximumLiters, 0)} L</strong></span>
+      <span>Espacio disponible: <strong>${maximumLiters > 0 ? `${number(remainingCapacity, 0)} L` : "Sin capacidad definida"}</strong></span>
       <span>Disponible bodega: <strong>${number(available)} ${escapeHtml(product?.unit || "")}</strong></span>
       <span>Disponible para preparar: <strong>${folio ? number(folio.availableToPrepare) : "-"} ${escapeHtml(folio?.unit || product?.unit || "")}</strong></span>
       <span>Disolucion: <strong>${number(dissolution, 4)}</strong></span>
       <span>Quedaria para preparar: <strong>${folio ? number(folio.availableToPrepare - productQuantity) : "-"} ${escapeHtml(folio?.unit || product?.unit || "")}</strong></span>
+      ${water > remainingCapacity && maximumLiters > 0 ? `<span class="is-danger">Capacidad excedida: <strong>${number(water - remainingCapacity, 0)} L sobre el limite</strong></span>` : ""}
     `;
   };
   const refreshFolios = () => {
@@ -20573,6 +20796,15 @@ async function openFertilizerPreparationDialog() {
   };
   form.caseta.addEventListener("change", () => {
     form.tankId.innerHTML = renderFertilizerTankOptions(form.caseta.value);
+    form.productId.value = "";
+    refreshFolios();
+    update();
+  });
+  form.tankId.addEventListener("change", () => {
+    const tank = fertilizerTankById(form.tankId.value);
+    const preparation = Number(tank?.litrosActuales) > 0 ? fertilizerLatestPreparationForTank(tank) : null;
+    const preparedProduct = fertilizerProductForPreparation(preparation);
+    if (preparedProduct?.id) form.productId.value = preparedProduct.id;
     refreshFolios();
     update();
   });
@@ -20588,7 +20820,23 @@ async function openFertilizerPreparationDialog() {
 
 async function saveFertilizerPreparation() {
   const form = document.getElementById("fertilizerPreparationForm");
-  if (!form?.reportValidity()) return;
+  if (!form) return;
+  const capacityData = Object.fromEntries(new FormData(form));
+  const capacityTank = fertilizerTankById(capacityData.tankId);
+  const capacityWater = Number(capacityData.waterLiters) || 0;
+  if (capacityTank && capacityWater > 0) {
+    const maximum = Number(capacityTank.volumenMaximoLitros) || 0;
+    const remaining = Math.max(0, maximum - (Number(capacityTank.litrosActuales) || 0));
+    if (maximum <= 0) {
+      showToast("El estanque no tiene una capacidad maxima configurada");
+      return;
+    }
+    if (capacityWater > remaining + 0.000001) {
+      showToast(`La preparacion supera la capacidad del estanque: ${number(remaining, 0)} L disponibles de ${number(maximum, 0)} L`);
+      return;
+    }
+  }
+  if (!form.reportValidity()) return;
   const data = Object.fromEntries(new FormData(form));
   const tank = fertilizerTankById(data.tankId);
   const product = fertilizerProductById(data.productId);
@@ -20605,6 +20853,17 @@ async function saveFertilizerPreparation() {
   }
   if (productQuantity > lot.availableToPrepare) {
     showToast(`El folio ${lot.folio} solo tiene ${number(lot.availableToPrepare)} ${lot.unit} disponibles para preparar`);
+    return;
+  }
+  const maximumLiters = Number(tank.volumenMaximoLitros) || 0;
+  const currentLiters = Number(tank.litrosActuales) || 0;
+  const remainingCapacity = Math.max(0, maximumLiters - currentLiters);
+  if (maximumLiters <= 0) {
+    showToast("El estanque no tiene una capacidad maxima configurada");
+    return;
+  }
+  if (water > remainingCapacity + 0.000001) {
+    showToast(`La preparacion supera la capacidad del estanque: ${number(remainingCapacity, 0)} L disponibles de ${number(maximumLiters, 0)} L`);
     return;
   }
   const available = fertilizerAvailableProductAmount(tank.caseta, product.id);
@@ -21545,6 +21804,12 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "open-fertilizer-tank-recommendation") {
     openFertilizerTankRecommendationDialog(id);
+  }
+  if (action === "open-fertilizer-potrero-recommendation") {
+    openFertilizerPotreroRecommendationDialog(actionTarget.dataset.tankId, actionTarget.dataset.potrero || "");
+  }
+  if (action === "back-fertilizer-tank-recommendation") {
+    openFertilizerTankRecommendationDialog(actionTarget.dataset.tankId);
   }
   if (action === "set-fertilizer-storage-view") {
     const requestedView = actionTarget.dataset.viewMode;

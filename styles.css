@@ -2716,7 +2716,7 @@ td span,
 }
 
 .fertilizer-caseta-header h2 {
-  margin-bottom: 2px;
+  margin: 0;
 }
 
 .fertilizer-caseta-header p {
@@ -2726,6 +2726,35 @@ td span,
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.fertilizer-caseta-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  margin-bottom: 4px;
+}
+
+.fertilizer-caseta-potreros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fertilizer-caseta-potreros span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid rgba(13, 119, 82, 0.18);
+  border-radius: 5px;
+  background: #eef8f2;
+  color: #1f5d48;
+  font-size: 0.67rem;
+  font-weight: 850;
+  line-height: 1.1;
 }
 
 .fertilizer-caseta-total {
@@ -2780,7 +2809,7 @@ td span,
   overflow: hidden;
   background: linear-gradient(145deg, #ffffff 0%, #f5faf7 100%);
   width: 100%;
-  border-color: rgba(18, 85, 64, 0.14);
+  border: 1px solid rgba(18, 85, 64, 0.18);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -2789,7 +2818,7 @@ td span,
 }
 
 .fertilizer-estanque-card:hover {
-  border-color: rgba(8, 122, 85, 0.42);
+  border-color: rgba(8, 122, 85, 0.52);
   box-shadow: 0 8px 18px rgba(19, 82, 61, 0.12);
   transform: translateY(-1px);
 }
@@ -2923,9 +2952,10 @@ td span,
 }
 
 .fertilizer-tank-number {
-  color: #527066;
-  font-size: 0.68rem;
-  font-weight: 850;
+  color: #113f31;
+  font-size: 0.92rem;
+  font-weight: 950;
+  line-height: 1.05;
   text-transform: uppercase;
 }
 
@@ -2953,6 +2983,40 @@ td span,
   color: #667c73;
   font-size: 0.68rem;
   font-weight: 750;
+}
+
+.fertilizer-tank-potreros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fertilizer-tank-potrero-label {
+  margin-top: 3px;
+  color: #657970;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.fertilizer-tank-potreros span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid rgba(13, 119, 82, 0.2);
+  border-radius: 5px;
+  background: #eef8f2;
+  color: #284b3e;
+  font-size: 0.63rem;
+  font-weight: 850;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.fertilizer-tank-potreros .is-empty {
+  color: #72837b;
+  font-weight: 700;
 }
 
 @keyframes fertilizer-tank-fill {
@@ -3455,6 +3519,7 @@ td span,
 
 .fertilizer-history-tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
   border: 1px solid rgba(31, 111, 74, 0.14);
@@ -3651,6 +3716,72 @@ td span,
   overflow: auto;
 }
 
+.fertilizer-recommendation-groups.is-compact {
+  align-content: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fertilizer-recommendation-potrero {
+  display: flex;
+  min-width: 0;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(19, 101, 71, 0.18);
+  border-radius: 8px;
+  background: #f7fbf8;
+  color: #164d3c;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.fertilizer-recommendation-potrero:hover {
+  border-color: rgba(8, 122, 85, 0.45);
+  background: #edf8f1;
+  transform: translateY(-1px);
+}
+
+.fertilizer-recommendation-potrero > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.fertilizer-recommendation-potrero strong,
+.fertilizer-recommendation-potrero small {
+  overflow-wrap: anywhere;
+}
+
+.fertilizer-recommendation-potrero small {
+  color: #6a8077;
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+
+.fertilizer-recommendation-potrero em {
+  color: #08704e;
+  font-size: 0.73rem;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.fertilizer-recommendation-potrero b {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  justify-self: end;
+  border: 1px solid rgba(8, 122, 85, 0.26);
+  border-radius: 50%;
+  background: #fff;
+  color: #087a55;
+  font-size: 1rem;
+}
+
 .fertilizer-recommendation-group {
   overflow: hidden;
   border: 1px solid rgba(19, 101, 71, 0.15);
@@ -3674,6 +3805,79 @@ td span,
 
 .fertilizer-recommendation-table {
   display: grid;
+  min-width: 560px;
+}
+
+.fertilizer-recommendation-table-scroll {
+  max-height: min(34vh, 280px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.fertilizer-recommendation-table-scroll.is-expanded {
+  max-height: min(58vh, 520px);
+  border: 1px solid rgba(19, 101, 71, 0.14);
+  border-radius: 8px;
+}
+
+.fertilizer-recommendation-back {
+  margin: 0 0 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #08704e;
+  font-size: 0.7rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fertilizer-recommendation-potrero-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.fertilizer-recommendation-potrero-summary > span {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(19, 101, 71, 0.12);
+  border-radius: 7px;
+  background: #f4f9f6;
+}
+
+.fertilizer-recommendation-potrero-summary small,
+.fertilizer-recommendation-potrero-summary em {
+  display: block;
+  color: #6a8077;
+  font-size: 0.59rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.fertilizer-recommendation-potrero-summary strong {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: #164d3c;
+  font-size: 0.75rem;
+}
+
+.calc-preview .is-danger {
+  padding: 7px 8px;
+  border: 1px solid #efb5b1;
+  border-radius: 7px;
+  background: #fff1f1;
+  color: #9d2924;
+}
+
+.calc-preview .is-danger strong {
+  color: #9d2924;
+}
+
+.fertilizer-recommendation-table-scroll:focus-visible {
+  outline: 2px solid rgba(8, 122, 85, 0.35);
+  outline-offset: -2px;
 }
 
 .fertilizer-recommendation-row {
@@ -3688,6 +3892,9 @@ td span,
 }
 
 .fertilizer-recommendation-row.is-head {
+  position: sticky;
+  z-index: 2;
+  top: 0;
   border-top: 0;
   background: #f7faf8;
   color: #657a72;
@@ -3807,11 +4014,24 @@ td span,
     grid-template-columns: 1fr 1fr;
   }
 
+  .fertilizer-recommendation-groups.is-compact,
+  .fertilizer-recommendation-potrero-summary {
+    grid-template-columns: 1fr;
+  }
+
   .fertilizer-recommendation-row {
     grid-template-columns: 42px minmax(92px, 1fr) 53px 58px 72px;
     gap: 5px;
     padding-inline: 7px;
     font-size: 0.64rem;
+  }
+
+  .fertilizer-recommendation-table {
+    min-width: 430px;
+  }
+
+  .fertilizer-recommendation-table-scroll {
+    max-height: min(40vh, 320px);
   }
 
   .fertilizer-formula-note {

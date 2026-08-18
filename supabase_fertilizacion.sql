@@ -24,7 +24,7 @@ create table if not exists public.fertilizante_estanques (
   activo boolean not null default true,
   creado_en timestamptz not null default now(),
   actualizado_en timestamptz not null default now(),
-  constraint fertilizante_estanques_unq unique (caseta_id, numero_estanque_normalizado, fip_normalizado, volumen_maximo_litros)
+  constraint fertilizante_estanques_caseta_numero_unq unique (caseta_id, numero_estanque_normalizado)
 );
 
 create table if not exists public.fertilizante_estanque_potreros (
@@ -73,6 +73,78 @@ create index if not exists fertilizante_preparaciones_estanque_fecha_idx on publ
 create index if not exists fertilizante_aplicaciones_estanque_fecha_idx on public.fertilizante_aplicaciones (estanque_id, fecha desc);
 create index if not exists fertilizante_aplicaciones_campo_fecha_idx on public.fertilizante_aplicaciones (campo_id, fecha desc);
 
+create or replace function public.validar_capacidad_fertilizante_estanque()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_caseta_id uuid;
+  v_estanque_key text;
+  v_capacidad numeric;
+  v_preparado numeric;
+  v_aplicado numeric;
+  v_actual numeric;
+  v_old_id uuid;
+begin
+  if tg_op = 'UPDATE' then
+    v_old_id := old.id;
+  end if;
+  select e.caseta_id, e.numero_estanque_normalizado
+  into v_caseta_id, v_estanque_key
+  from public.fertilizante_estanques e
+  where e.id = new.estanque_id and e.activo;
+
+  if v_caseta_id is null then
+    raise exception 'El estanque seleccionado no existe o esta inactivo';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(v_caseta_id::text || '|' || v_estanque_key));
+
+  select max(e.volumen_maximo_litros)
+  into v_capacidad
+  from public.fertilizante_estanques e
+  where e.activo
+    and e.caseta_id = v_caseta_id
+    and e.numero_estanque_normalizado = v_estanque_key;
+
+  select coalesce(sum(p.cantidad_litros), 0)
+  into v_preparado
+  from public.fertilizante_preparaciones p
+  join public.fertilizante_estanques e on e.id = p.estanque_id
+  where e.activo
+    and e.caseta_id = v_caseta_id
+    and e.numero_estanque_normalizado = v_estanque_key
+    and (v_old_id is null or p.id <> v_old_id);
+
+  select coalesce(sum(a.cantidad_litros), 0)
+  into v_aplicado
+  from public.fertilizante_aplicaciones a
+  join public.fertilizante_estanques e on e.id = a.estanque_id
+  where e.activo
+    and e.caseta_id = v_caseta_id
+    and e.numero_estanque_normalizado = v_estanque_key;
+
+  v_actual := greatest(0, v_preparado - v_aplicado);
+  if coalesce(v_capacidad, 0) <= 0 then
+    raise exception 'El estanque no tiene una capacidad maxima configurada';
+  end if;
+  if v_actual + new.cantidad_litros > v_capacidad + 0.000001 then
+    raise exception 'La preparacion supera la capacidad del estanque. Disponible: % L de % L',
+      greatest(0, v_capacidad - v_actual), v_capacidad;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists fertilizante_preparaciones_validar_capacidad_trg on public.fertilizante_preparaciones;
+create trigger fertilizante_preparaciones_validar_capacidad_trg
+before insert or update of estanque_id, cantidad_litros
+on public.fertilizante_preparaciones
+for each row
+execute function public.validar_capacidad_fertilizante_estanque();
+
 create or replace view public.v_fertilizante_estado_estanques as
 with prep as (
   select estanque_id, sum(cantidad_litros) as litros_preparados, max(fecha) as ultima_preparacion
@@ -114,6 +186,31 @@ left join prep on prep.estanque_id = e.id
 left join apl on apl.estanque_id = e.id
 left join potreros on potreros.estanque_id = e.id;
 
+create or replace view public.v_fertilizante_estanque_campos as
+select
+  e.id as estanque_id,
+  e.caseta_id,
+  cst.nombre as caseta,
+  e.numero_estanque,
+  e.numero_estanque_normalizado,
+  e.fip,
+  e.fip_normalizado,
+  e.volumen_maximo_litros,
+  ep.potrero,
+  campos.id as campo_id,
+  campos.bloque,
+  campos.especie,
+  campos.variedad,
+  campos.hectareas,
+  campos.plantas
+from public.fertilizante_estanques e
+join public.fertilizante_casetas cst on cst.id = e.caseta_id
+join public.fertilizante_estanque_potreros ep on ep.estanque_id = e.id and ep.activo
+join public.campos campos
+  on lower(trim(campos.potrero)) = lower(trim(ep.potrero))
+  and campos.activo
+where e.activo;
+
 alter table public.fertilizante_casetas enable row level security;
 alter table public.fertilizante_estanques enable row level security;
 alter table public.fertilizante_estanque_potreros enable row level security;
@@ -138,6 +235,7 @@ create policy fertilizante_aplicaciones_escritura on public.fertilizante_aplicac
 
 grant select on public.fertilizante_casetas, public.fertilizante_estanques, public.fertilizante_estanque_potreros, public.fertilizante_preparaciones, public.fertilizante_aplicaciones to authenticated;
 grant select on public.v_fertilizante_estado_estanques to authenticated;
+grant select on public.v_fertilizante_estanque_campos to authenticated;
 grant insert on public.fertilizante_preparaciones, public.fertilizante_aplicaciones to authenticated;
 
 commit;
