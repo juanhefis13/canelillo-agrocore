@@ -296,6 +296,43 @@ body.auth-locked {
   overflow: visible;
 }
 
+/* Paneles congelados: conserva la referencia del potrero al recorrer los meses. */
+#manager .gantt-matrix-viewport .gantt-row > span:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 12;
+  align-self: stretch;
+  align-content: center;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  border-right: 1px solid #b7d4ca;
+  background: #f7fbf9;
+  box-shadow: 10px 0 14px -14px rgba(14, 57, 45, 0.8);
+}
+
+#manager .gantt-matrix-viewport .gantt-row:hover > span:first-child,
+#manager .gantt-matrix-viewport .gantt-row.selected > span:first-child {
+  background: #e9f7f1;
+}
+
+#manager .gantt-matrix-viewport .gantt-month-header {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  background: #e7f3ee;
+}
+
+#manager .gantt-matrix-viewport .gantt-month-header > span:first-child {
+  z-index: 72;
+  background: #dceee7;
+}
+
+#manager .gantt-matrix-viewport .gantt-month-header .gantt-period-calendar {
+  position: relative;
+  z-index: 71;
+  background: #ffffff;
+}
+
 #manager :is(.gantt-horizontal-scroll, .gantt-matrix-viewport)::-webkit-scrollbar {
   height: 12px;
 }
@@ -4504,10 +4541,26 @@ td span,
   display: grid;
   min-height: 25px;
   place-items: center;
+  position: relative;
   border-right: 2px solid #83b9a7;
   color: #12523f;
   font-size: 0.68rem;
   text-transform: uppercase;
+}
+
+#manager .gantt-period-months strong > span {
+  position: sticky;
+  left: 274px;
+  z-index: 73;
+  display: inline-flex;
+  width: max-content;
+  max-width: calc(100% - 8px);
+  min-height: 21px;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 3px;
+  background: #dceee7;
+  white-space: nowrap;
 }
 
 #manager .gantt-day-track {

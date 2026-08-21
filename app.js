@@ -16081,7 +16081,7 @@ function managerMonthGantt(orders) {
         <div class="gantt-row gantt-month-detail gantt-period-detail gantt-month-header" style="--period-width:${periodWidth}px">
         <span>Especie / Potrero</span>
         <div class="gantt-period-calendar">
-          <div class="gantt-period-months" style="--days:${days.length}">${period.months.map((month) => `<strong style="grid-column:${month.start} / span ${month.span}">${escapeHtml(month.label)}</strong>`).join("")}</div>
+          <div class="gantt-period-months" style="--days:${days.length}">${period.months.map((month) => `<strong style="grid-column:${month.start} / span ${month.span}"><span>${escapeHtml(month.label)}</span></strong>`).join("")}</div>
           <div class="gantt-day-grid" style="--days:${days.length}">${days.map((day) => `<b class="${day.weekend ? "is-weekend" : ""} ${day.holiday ? "is-holiday" : ""} ${day.monthStart ? "is-month-start" : ""}" title="${htmlAttr(irrigationDayTitle(day.date, day.date))}">${day.day}</b>`).join("")}</div>
         </div>
       </div>
