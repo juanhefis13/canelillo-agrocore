@@ -75,6 +75,10 @@ body.auth-locked {
 
 /* Supervisor: Gantt compacta, filtros plegables y ordenes con jerarquia operativa. */
 #manager.active-view > .panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   padding: 10px;
 }
 
@@ -94,6 +98,10 @@ body.auth-locked {
 }
 
 #manager .gantt-panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   gap: 7px;
   margin-bottom: 10px;
   padding: 8px;
@@ -217,9 +225,90 @@ body.auth-locked {
 }
 
 #manager .gantt-table {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 7px;
   margin-top: 0 !important;
   padding-top: 5px !important;
+  overscroll-behavior-x: contain;
+  scrollbar-color: #3d8b73 #dceae5;
+  scrollbar-width: auto;
+}
+
+#manager .gantt-horizontal-scroll {
+  width: 100%;
+  max-width: 100%;
+  height: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid #c5dad2;
+  border-radius: 5px;
+  background: #e8f2ee;
+  overscroll-behavior-x: contain;
+  scrollbar-color: #287a62 #dceae5;
+  scrollbar-width: auto;
+}
+
+#manager .gantt-horizontal-control {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  gap: 4px;
+  align-items: center;
+}
+
+#manager .gantt-horizontal-control > .icon-button {
+  width: 28px;
+  min-width: 28px;
+  min-height: 24px;
+  height: 24px;
+  border-color: #9fc6b9;
+  background: #e4f2ed;
+  color: #12664f;
+  font-size: 1.2rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+#manager .gantt-horizontal-scroll span {
+  display: block;
+  height: 1px;
+}
+
+#manager .gantt-matrix-viewport {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  scrollbar-color: #287a62 #dceae5;
+  scrollbar-width: auto;
+}
+
+#manager .gantt-matrix-viewport > .gantt-table-month {
+  width: max-content;
+  max-width: none;
+  min-width: 100%;
+  overflow: visible;
+}
+
+#manager :is(.gantt-horizontal-scroll, .gantt-matrix-viewport)::-webkit-scrollbar {
+  height: 12px;
+}
+
+#manager :is(.gantt-horizontal-scroll, .gantt-matrix-viewport)::-webkit-scrollbar-track {
+  border-radius: 6px;
+  background: #dceae5;
+}
+
+#manager :is(.gantt-horizontal-scroll, .gantt-matrix-viewport)::-webkit-scrollbar-thumb {
+  border: 2px solid #dceae5;
+  border-radius: 6px;
+  background: #287a62;
 }
 
 #manager .gantt-row {
@@ -269,8 +358,7 @@ body.auth-locked {
   bottom: auto !important;
 }
 
-#manager .gantt-status-legend,
-#manager .gantt-bottom-filter {
+#manager .gantt-status-legend {
   margin-top: 0;
 }
 
@@ -4366,6 +4454,472 @@ td span,
   overflow-wrap: anywhere;
 }
 
+/* Aplicaciones: Gantt continua, ordenes compactas y texto operativo completo. */
+#manager .gantt-controls {
+  grid-template-columns: minmax(118px, 0.8fr) minmax(220px, 1.35fr) repeat(5, minmax(96px, 0.7fr));
+}
+
+#manager .gantt-filter-summary,
+#manager .gantt-row > span,
+#manager .gantt-row > span > strong,
+#manager .gantt-row small {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#manager .gantt-row {
+  border-left: 4px solid #a9c8bd;
+  background: linear-gradient(90deg, #f6fbf8 0, #ffffff 18%);
+}
+
+#manager .gantt-row:hover,
+#manager .gantt-row.selected {
+  border-color: #299775;
+  background: linear-gradient(90deg, #e9f7f1 0, #ffffff 24%);
+  box-shadow: 0 4px 14px rgba(18, 84, 64, 0.12);
+}
+
+#manager .gantt-period-detail {
+  grid-template-columns: 250px minmax(var(--period-width), 1fr);
+  min-width: calc(266px + var(--period-width));
+}
+
+#manager .gantt-period-calendar {
+  display: grid;
+  min-width: var(--period-width);
+}
+
+#manager .gantt-period-months {
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(22px, 1fr));
+  border: 1px solid #bdd8ce;
+  border-bottom: 0;
+  background: #dceee7;
+}
+
+#manager .gantt-period-months strong {
+  display: grid;
+  min-height: 25px;
+  place-items: center;
+  border-right: 2px solid #83b9a7;
+  color: #12523f;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+#manager .gantt-day-track {
+  background-color: #ffffff;
+}
+
+#manager .gantt-day-grid b.is-weekend {
+  color: #174b7a;
+  background: repeating-linear-gradient(135deg, #e7f3ff 0 5px, #cfe5fa 5px 8px);
+}
+
+#manager .gantt-day-grid b.is-holiday {
+  color: #4c1d95;
+  background: repeating-linear-gradient(135deg, #f1eafe 0 5px, #c4b5fd 5px 8px);
+  box-shadow: inset 0 -3px 0 #7c3aed;
+}
+
+#manager .gantt-day-grid b.is-month-start {
+  border-left: 2px solid #4e9b83;
+}
+
+#manager .gantt-day-grid {
+  grid-template-columns: repeat(var(--days), minmax(22px, 1fr));
+}
+
+#manager .gantt-day-track {
+  isolation: isolate;
+  background:
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent calc((100% / var(--days)) - 1px),
+      #d9e7e1 calc((100% / var(--days)) - 1px),
+      #d9e7e1 calc(100% / var(--days))
+    ),
+    #ffffff;
+}
+
+#manager .gantt-calendar-band {
+  min-width: 0;
+  align-self: stretch;
+  justify-self: stretch;
+  border-right: 1px solid rgba(48, 111, 171, 0.2);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#manager .gantt-calendar-band.is-weekend {
+  background: repeating-linear-gradient(135deg, rgba(196, 222, 248, 0.68) 0 6px, rgba(230, 242, 255, 0.68) 6px 10px);
+}
+
+#manager .gantt-calendar-band.is-holiday {
+  background: repeating-linear-gradient(135deg, rgba(139, 92, 246, 0.62) 0 6px, rgba(221, 214, 254, 0.78) 6px 10px);
+  box-shadow: inset 2px 0 0 rgba(109, 40, 217, 0.4), inset -2px 0 0 rgba(109, 40, 217, 0.4);
+}
+
+#manager .gantt-track i.active,
+#manager .gantt-day-track i.active {
+  border: 2px solid var(--gantt-state-color, #2563eb);
+  background: color-mix(in srgb, var(--gantt-state-color, #2563eb) 24%, white);
+  color: color-mix(in srgb, var(--gantt-state-color, #2563eb) 72%, #101d19);
+  box-shadow: inset 0 3px 0 var(--program-color, #315e50), 0 2px 5px rgba(16, 62, 48, 0.12);
+  z-index: 2;
+}
+
+#manager .gantt-track i.active::after,
+#manager .gantt-day-track i.active::after {
+  height: 5px;
+  background: var(--gantt-state-color, #2563eb);
+}
+
+#manager .gantt-track i.active.pending,
+#manager .gantt-day-track i.active.pending {
+  color: #5d4400;
+}
+
+#manager .gantt-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  border: 1px solid #d2e2dc;
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: #ffffff;
+}
+
+#manager .gantt-status-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #49655b;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+#manager .gantt-status-legend i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border: 2px solid var(--gantt-state-color);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--gantt-state-color) 30%, white);
+}
+
+#manager .gantt-status-legend .calendar-weekend i {
+  border-color: #78a9d5;
+  background: repeating-linear-gradient(135deg, #e7f3ff 0 4px, #c5def6 4px 7px);
+}
+
+#manager .gantt-status-legend .calendar-holiday i {
+  border-color: #7c3aed;
+  background: repeating-linear-gradient(135deg, #f1eafe 0 4px, #a78bfa 4px 7px);
+}
+
+.application-order-details {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #d4e3dd;
+  border-radius: 6px;
+  background: #f9fcfa;
+}
+
+.application-order-details > summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+  color: #275447;
+  font-size: 0.72rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.application-order-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.application-order-details > summary::after {
+  content: "+";
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  border: 1px solid #b9d4ca;
+  border-radius: 50%;
+  color: #147056;
+  font-size: 0.86rem;
+}
+
+.application-order-details[open] > summary::after {
+  content: "-";
+}
+
+.application-order-details > summary strong {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #e5f2ed;
+  color: #12634c;
+  font-size: 0.66rem;
+}
+
+.application-order-details[open] > summary {
+  border-bottom: 1px solid #d4e3dd;
+  background: #edf7f3;
+}
+
+#manager .manager-order-card {
+  --order-status: #8ca39b;
+  gap: 7px;
+  padding: 10px;
+  border-left-color: var(--order-status);
+}
+
+#manager .manager-order-card[data-order-status="planned"] { --order-status: #d39214; background: linear-gradient(90deg, #fffaf0, #ffffff 18%); }
+#manager .manager-order-card[data-order-status="in_progress"] { --order-status: #2774c5; background: linear-gradient(90deg, #f0f7ff, #ffffff 18%); }
+#manager .manager-order-card[data-order-status="closed"] { --order-status: #208554; background: linear-gradient(90deg, #effaf4, #ffffff 18%); }
+#manager .manager-order-card[data-order-status="cancelled"] { --order-status: #c4423a; background: linear-gradient(90deg, #fff2f1, #ffffff 18%); }
+#manager .manager-order-card[data-order-status="draft"] { --order-status: #7a8792; background: linear-gradient(90deg, #f5f7f8, #ffffff 18%); }
+
+#manager .manager-order-number strong {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+#manager .manager-order-summary {
+  padding: 6px 0;
+}
+
+#manager .manager-order-details .manager-recipe-list {
+  padding: 7px;
+}
+
+#manager .manager-recipe-list span,
+#manager .manager-recipe-list strong,
+.official-products-table td,
+.official-products-table th,
+.warehouse-product-table td,
+.warehouse-history-table td {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.official-program-item > summary {
+  min-height: 58px;
+  height: auto;
+}
+
+.official-program-title strong,
+.official-program-title small,
+.official-program-objective,
+.official-program-meta small {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.official-products-table th:first-child,
+.official-products-table td:first-child,
+.warehouse-product-table th:first-child,
+.warehouse-product-table td:first-child {
+  min-width: 190px;
+  width: 28%;
+  line-height: 1.25;
+}
+
+.warehouse-order-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.warehouse-order-card {
+  --order-status: #849b93;
+  position: relative;
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border-left: 5px solid var(--order-status);
+  border-radius: 7px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--order-status) 8%, white), #ffffff 18%);
+  box-shadow: 0 3px 10px rgba(15, 64, 49, 0.07);
+}
+
+.warehouse-order-card[data-order-status="planned"] { --order-status: #d39214; }
+.warehouse-order-card[data-order-status="in_progress"] { --order-status: #2774c5; }
+.warehouse-order-card[data-order-status="closed"] { --order-status: #208554; }
+.warehouse-order-card[data-order-status="cancelled"] { --order-status: #c4423a; }
+.warehouse-order-card[data-order-status="draft"] { --order-status: #7a8792; }
+
+.warehouse-order-card .order-card-head {
+  align-items: center;
+}
+
+.warehouse-order-card .order-card-head h3 {
+  margin: 1px 0;
+  font-size: 0.92rem;
+  line-height: 1.15;
+}
+
+.warehouse-created-at {
+  display: block;
+  color: #667c74;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.warehouse-order-card .metrics {
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid #d5e3de;
+  border-radius: 5px;
+  background: #d5e3de;
+}
+
+.warehouse-order-card .metrics > div {
+  min-height: 48px;
+  padding: 6px 8px;
+  background: #ffffff;
+}
+
+.warehouse-order-card .metrics dt {
+  font-size: 0.61rem;
+}
+
+.warehouse-order-card .metrics dd {
+  font-size: 0.86rem;
+}
+
+.warehouse-order-card .progress {
+  height: 7px;
+}
+
+.warehouse-order-card .progress i {
+  background: var(--order-status);
+}
+
+.warehouse-order-context {
+  grid-template-columns: minmax(130px, 0.45fr) minmax(220px, 1.55fr);
+  gap: 6px;
+  margin: 0;
+}
+
+.warehouse-order-context > div {
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 5px;
+}
+
+.warehouse-order-context strong {
+  font-size: 0.6rem;
+}
+
+.warehouse-order-context span {
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.warehouse-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.warehouse-detail-grid > details[open] {
+  grid-column: 1 / -1;
+}
+
+.warehouse-order-details .table-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.warehouse-order-details table {
+  margin: 0;
+}
+
+.warehouse-order-details th,
+.warehouse-order-details td {
+  padding: 6px 7px;
+  font-size: 0.68rem;
+}
+
+.warehouse-order-card .warehouse-actions {
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.warehouse-order-card .warehouse-actions button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 1180px) {
+  #manager .gantt-controls {
+    grid-template-columns: repeat(4, minmax(118px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  #manager .gantt-period-detail {
+    grid-template-columns: 205px minmax(var(--period-width), 1fr);
+    min-width: calc(221px + var(--period-width));
+  }
+
+  .warehouse-order-card .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .warehouse-order-context,
+  .warehouse-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .warehouse-detail-grid > details[open] {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .official-program-item > summary {
+    align-items: start;
+  }
+
+  .official-products-table th:first-child,
+  .official-products-table td:first-child,
+  .warehouse-product-table th:first-child,
+  .warehouse-product-table td:first-child {
+    min-width: 0;
+    width: auto;
+  }
+
+  .warehouse-order-card {
+    padding: 9px;
+  }
+}
+
 .harvest-variety-year-bar strong,
 .harvest-export-comparison-row :is(b, em),
 .harvest-export-year-row :is(span, b),
@@ -4579,7 +5133,8 @@ td span,
 
 .irrigation-gantt .irrigation-row:not(.irrigation-row-head) {
   content-visibility: auto;
-  contain-intrinsic-size: 32px 1600px;
+  contain-intrinsic-width: 1600px;
+  contain-intrinsic-height: 32px;
 }
 
 .irrigation-row-head {
@@ -11047,6 +11602,235 @@ textarea {
   margin-bottom: 8px;
 }
 
+.recipe-product-picker {
+  min-width: 0;
+}
+
+.recipe-product-picker input,
+.recipe-product-trigger {
+  width: 100%;
+}
+
+.recipe-product-trigger {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recipe-product-trigger:hover,
+.recipe-product-trigger:focus-visible {
+  border-color: var(--brand);
+  outline: 2px solid rgba(4, 120, 87, 0.14);
+  outline-offset: 1px;
+}
+
+.recipe-product-trigger > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.recipe-product-trigger strong,
+.recipe-product-trigger small {
+  overflow-wrap: anywhere;
+}
+
+.recipe-product-trigger strong {
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+
+.recipe-product-trigger small {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.2;
+}
+
+.recipe-product-trigger > b {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--brand);
+  font-size: 0.68rem;
+}
+
+.recipe-product-dialog {
+  width: min(840px, calc(100vw - 24px));
+  overflow: hidden;
+}
+
+.recipe-product-catalog {
+  height: min(760px, calc(100dvh - 28px));
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.recipe-product-catalog .modal-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.recipe-product-catalog .modal-head h2,
+.recipe-product-catalog .modal-head p {
+  margin: 0;
+}
+
+.recipe-product-catalog .modal-head p {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.recipe-product-catalog-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.38fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.recipe-product-catalog-tools label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: #40564e;
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.recipe-product-catalog-tools input,
+.recipe-product-catalog-tools select {
+  min-height: 42px;
+  font-size: 0.86rem;
+  text-transform: none;
+}
+
+.recipe-product-catalog-summary {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.recipe-product-catalog-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 2px 7px 2px 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.recipe-product-option {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.3fr);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.recipe-product-option:hover,
+.recipe-product-option:focus-visible {
+  border-color: var(--brand);
+  background: #f3faf7;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.recipe-product-option.is-selected {
+  border-color: var(--brand);
+  background: #eaf6f1;
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.recipe-product-option-copy,
+.recipe-product-option-meta {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.recipe-product-option-copy strong,
+.recipe-product-option-copy small,
+.recipe-product-option-copy em,
+.recipe-product-option-meta small {
+  overflow-wrap: anywhere;
+}
+
+.recipe-product-option-copy strong {
+  font-size: 0.87rem;
+  line-height: 1.2;
+}
+
+.recipe-product-option-copy small,
+.recipe-product-option-copy em {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+
+.recipe-product-option-copy em {
+  font-style: normal;
+}
+
+.recipe-product-option-meta {
+  justify-items: end;
+  text-align: right;
+}
+
+.recipe-product-option-meta b {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #e5f4ee;
+  color: var(--brand);
+  font-size: 0.72rem;
+}
+
+.recipe-product-option-meta small {
+  color: #536a61;
+  font-size: 0.63rem;
+  font-weight: 750;
+}
+
+.recipe-product-empty {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.recipe-product-empty strong {
+  color: var(--ink);
+}
+
 .recipe-line-head {
   color: var(--muted);
   font-size: 0.82rem;
@@ -14913,8 +15697,7 @@ body {
 
   #manager.active-view .gantt-panel:not(.mobile-gantt-open) .gantt-table,
   #manager.active-view .gantt-panel:not(.mobile-gantt-open) .gantt-detail,
-  #manager.active-view .gantt-panel:not(.mobile-gantt-open) .gantt-status-legend,
-  #manager.active-view .gantt-panel:not(.mobile-gantt-open) .gantt-bottom-filter {
+  #manager.active-view .gantt-panel:not(.mobile-gantt-open) .gantt-status-legend {
     display: none !important;
   }
 
@@ -16666,7 +17449,7 @@ body {
     grid-template-columns: 1fr 1fr 40px;
   }
 
-  .recipe-line:not(.recipe-line-head) > select[name="productId"] {
+  .recipe-line:not(.recipe-line-head) > .recipe-product-picker {
     grid-column: 1 / -1;
   }
 
@@ -16680,6 +17463,30 @@ body {
 
   .recipe-line-head {
     display: none;
+  }
+
+  .recipe-product-dialog {
+    width: calc(100vw - 12px);
+    max-height: calc(100dvh - 12px);
+  }
+
+  .recipe-product-catalog {
+    height: calc(100dvh - 12px);
+    padding: 14px;
+  }
+
+  .recipe-product-catalog-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-product-option {
+    grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 8px;
+    padding: 9px;
+  }
+
+  .recipe-product-option-meta small {
+    font-size: 0.58rem;
   }
 }
 
@@ -20680,5 +21487,267 @@ body {
 
   .harvest-analysis-open-section > .harvest-analytics-card .panel-header {
     padding-right: 38px;
+  }
+}
+
+/* Cierre visual de Aplicaciones: prevalece sobre estilos historicos. */
+#warehouse .panel-header.warehouse-panel-header {
+  display: grid !important;
+  grid-template-columns: minmax(250px, 0.65fr) minmax(590px, 1.35fr) !important;
+  align-items: end !important;
+  gap: 12px !important;
+  margin: 0 0 8px !important;
+  padding: 9px 10px !important;
+  border-radius: 7px !important;
+}
+
+#warehouse .panel-header.warehouse-panel-header::before {
+  content: none !important;
+}
+
+#warehouse .warehouse-filters::before {
+  content: none !important;
+}
+
+:is(#program, #manager, #warehouse, #orders, #inventory, #prices, #reports) table td:first-child,
+:is(#program, #manager, #warehouse, #orders, #inventory, #prices, #reports) table td:first-child :is(strong, span) {
+  max-width: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+#warehouse .warehouse-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+#warehouse .warehouse-panel-header p {
+  margin: 2px 0 0;
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+
+#warehouse .warehouse-filters {
+  display: grid !important;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(110px, 0.8fr) repeat(2, minmax(135px, 1fr)) auto !important;
+  align-items: end !important;
+  gap: 6px !important;
+  width: 100%;
+}
+
+#warehouse .warehouse-order-list {
+  gap: 7px;
+}
+
+#warehouse .warehouse-order-card[hidden] {
+  display: none !important;
+}
+
+#warehouse .warehouse-order-card {
+  gap: 4px;
+  padding: 8px 9px;
+}
+
+#warehouse .warehouse-order-card .order-card-head h3 {
+  font-size: 0.82rem;
+}
+
+#warehouse .warehouse-created-at {
+  font-size: 0.58rem;
+}
+
+#warehouse .warehouse-order-card .metrics > div {
+  min-height: 38px;
+  padding: 4px 6px;
+}
+
+#warehouse .warehouse-order-card .metrics dt {
+  font-size: 0.54rem;
+}
+
+#warehouse .warehouse-order-card .metrics dd {
+  font-size: 0.76rem;
+  line-height: 1.05;
+}
+
+#warehouse .warehouse-order-context {
+  gap: 4px;
+}
+
+#warehouse .warehouse-order-context > div {
+  padding: 4px 6px;
+}
+
+#warehouse .warehouse-order-context strong {
+  font-size: 0.54rem;
+}
+
+#warehouse .warehouse-order-context span {
+  font-size: 0.65rem;
+}
+
+#warehouse .application-order-details > summary {
+  min-height: 28px;
+  padding: 3px 6px;
+  font-size: 0.64rem;
+}
+
+#warehouse .application-order-details > summary::after {
+  width: 19px;
+  height: 19px;
+  flex-basis: 19px;
+}
+
+#warehouse .warehouse-order-card .warehouse-actions {
+  min-height: 28px;
+}
+
+#warehouse .warehouse-order-card .warehouse-actions button {
+  min-height: 27px;
+  padding: 3px 7px;
+  font-size: 0.61rem;
+}
+
+#manager .manager-orders-month-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+#manager .manager-orders-month-checklist legend {
+  width: 100%;
+  margin-bottom: 2px;
+  color: #42665b;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+#manager .manager-orders-month-checklist label {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+  border: 1px solid #c8ddd5;
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: #ffffff;
+  color: #365f52;
+  font-size: 0.63rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+#manager .manager-orders-month-checklist label:has(input:checked) {
+  border-color: #218164;
+  background: #e4f4ed;
+  color: #0d5a43;
+}
+
+#manager .manager-orders-month-checklist input {
+  width: 13px;
+  height: 13px;
+  min-height: 0;
+  margin: 0;
+}
+
+#manager .manager-unified-month-filter {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+#manager .gantt-month-grid b.is-filtered-out {
+  opacity: 0.35;
+  background: #edf2f0;
+}
+
+#manager .manager-order-card.is-gantt-target {
+  border-color: #dc2626;
+  border-left-color: #dc2626;
+  background: linear-gradient(90deg, #fff1f2, #ffffff 24%);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.24), 0 8px 22px rgba(127, 29, 29, 0.14);
+}
+
+#manager .manager-order-card.is-gantt-target:focus {
+  outline: none;
+}
+
+#manager .gantt-track i.active.is-selected,
+#manager .gantt-day-track i.active.is-selected {
+  outline: 3px solid #dc2626;
+  outline-offset: 2px;
+  z-index: 15;
+}
+
+@media (min-width: 1180px) {
+  #warehouse .warehouse-order-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  #warehouse .warehouse-order-card .metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  #manager .manager-orders-month-checklist {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  #manager .manager-orders-month-checklist legend {
+    display: none;
+  }
+
+  #manager .manager-orders-month-checklist label {
+    flex: 0 0 auto;
+  }
+
+}
+
+#warehouse .warehouse-filters .inline-filter {
+  min-width: 0;
+  font-size: 0.62rem;
+}
+
+#warehouse .warehouse-filters input,
+#warehouse .warehouse-filters select,
+#warehouse .warehouse-filters button {
+  min-height: 30px;
+  height: 30px;
+  padding-block: 3px;
+  font-size: 0.68rem;
+}
+
+#manager .manager-order-number strong {
+  overflow-wrap: normal !important;
+  white-space: nowrap !important;
+}
+
+@media (max-width: 1040px) {
+  #warehouse .panel-header.warehouse-panel-header {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 680px) {
+  #warehouse .warehouse-filters {
+    display: flex !important;
+    grid-template-columns: none !important;
+    overflow-x: auto;
+  }
+
+  #warehouse .warehouse-filters .inline-filter {
+    flex: 0 0 148px !important;
   }
 }

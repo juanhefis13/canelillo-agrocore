@@ -90,6 +90,7 @@ const seedState = {
     { id: "op-2", name: "Luis Ramirez", phone: "", active: true },
     { id: "op-3", name: "Marcelo Diaz", phone: "", active: true }
   ],
+  nozzles: [],
   equipment: [
     { id: "eq-1", type: "Nebulizadora", code: "N-01", tankLiters: 2000 },
     { id: "eq-2", type: "Nebulizadora", code: "N-02", tankLiters: 1500 },
@@ -197,13 +198,14 @@ const seedState = {
 
 let state = normalizeState(loadState());
 let currentView = "dashboard";
+let activeRecipeProductLine = null;
 let programFilters = { seasonId: "Todas", search: "", species: "Todas", number: "Todos", type: "Todos", status: "Todos" };
 let officialProgramFallbackCache = null;
 let programSearchTimer = null;
 let reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
 let managerYear = String(new Date().getFullYear());
 let managerMonth = String(new Date().getMonth() + 1).padStart(2, "0");
-let managerOrdersMonth = "all";
+let managerOrdersMonths = new Set([managerMonth]);
 let managerGanttMode = "month";
 let managerGanttMobileOpen = false;
 let managerGanttFiltersOpen = false;
@@ -474,9 +476,10 @@ let selectedGanttOrderId = "";
 let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
 let managerSpeciesFilters = new Set(["Todas"]);
-let warehouseStatusFilter = "in_progress";
+let warehouseStatusFilter = "all";
 let warehouseDateFromFilter = "";
 let warehouseDateToFilter = "";
+let warehouseOrderSearch = "";
 let cloudSyncTimer = null; // respaldo antiguo: ya no se usa setInterval para evitar parpadeos
 let cloudSyncInProgress = false;
 let cloudRealtimeClient = null;
@@ -1039,6 +1042,7 @@ function normalizeState(rawState) {
   next.blocks ||= [];
   next.harvestFields ||= next.blocks || [];
   next.operators ||= [];
+  next.nozzles ||= [];
   next.equipment ||= [];
   next.vehicles ||= [];
   next.orders ||= [];
@@ -1073,6 +1077,7 @@ function normalizeState(rawState) {
     if (order.status === "closed") order.finishedByManager ||= false;
     if (order.status === "draft") order.status = "planned";
     order.dispatches ||= [];
+    order.dispatches.forEach((dispatch) => { dispatch.endTime ??= ""; });
     order.tanks ||= [];
     order.recipe ||= [];
     order.recipe.forEach((line) => {
@@ -1762,7 +1767,11 @@ function extractTimeValue(value) {
 }
 
 function dispatchDisplayTime(dispatch) {
-  return dispatch.time || extractTimeValue(dispatch.createdAt) || extractTimeValue(dispatch.date) || "-";
+  return extractTimeValue(dispatch.time) || extractTimeValue(dispatch.createdAt) || extractTimeValue(dispatch.date) || "-";
+}
+
+function dispatchEndDisplayTime(dispatch) {
+  return extractTimeValue(dispatch.endTime) || "-";
 }
 
 function uid(prefix) {
@@ -3169,11 +3178,23 @@ function irrigationVolumeLabel(value) {
   return `${number(Number(value) || 0, 0)} m3`;
 }
 
-function updateIrrigationComparisonCells(blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal) {
+function updateIrrigationComparisonCells(
+  blockId,
+  daysInMonth,
+  monthPrefix,
+  historicalEvaporationTotal,
+  monthEvaporationTotal,
+  knownProgramTotal = null,
+  knownRealTotal = null
+) {
   const block = state.blocks.find((item) => item.id === blockId);
   if (!block) return;
-  const programTotal = irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth);
-  const realTotal = irrigationBlockMonthTotal(irrigationHours, blockId, monthPrefix, daysInMonth);
+  const programTotal = Number.isFinite(knownProgramTotal)
+    ? knownProgramTotal
+    : irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth);
+  const realTotal = Number.isFinite(knownRealTotal)
+    ? knownRealTotal
+    : irrigationBlockMonthTotal(irrigationHours, blockId, monthPrefix, daysInMonth);
   const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
   const realReposition = irrigationReposicion(realTotal, block.precipitation, monthEvaporationTotal);
   const hoursDiff = irrigationDifferencePercent(realTotal, programTotal);
@@ -5713,7 +5734,21 @@ function matchesOrderStatusFilter(order, filter) {
 }
 
 function orderDateForFilter(order) {
-  return (orderStartDate(order) || order.createdAt || "").slice(0, 10);
+  return String(orderCreatedValue(order) || orderStartDate(order) || "").slice(0, 10);
+}
+
+function applicationOrderCreatedLabel(order) {
+  const value = orderCreatedValue(order);
+  if (!value) return "no registrada";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).slice(0, 16).replace("T", " ");
+  return new Intl.DateTimeFormat("es-CL", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function matchesWarehouseDateFilter(order) {
@@ -5746,13 +5781,14 @@ function statusFilterOptions(selected) {
 }
 
 
-function orderListMonthOptions(selected) {
-  return [`<option value="all" ${selected === "all" ? "selected" : ""}>Todos los meses</option>`, ...monthOptions().map((month) => `<option value="${month.value}" ${month.value === selected ? "selected" : ""}>${month.label}</option>`)].join("");
+function matchesManagerOrdersMonth(order) {
+  if (!managerOrdersMonths.size) return true;
+  return [...managerOrdersMonths].some((month) => orderOverlapsMonth(order, managerYear, month));
 }
 
-function matchesManagerOrdersMonth(order) {
-  if (!managerOrdersMonth || managerOrdersMonth === "all") return true;
-  return orderOverlapsMonth(order, managerYear, managerOrdersMonth);
+function managerSelectedMonthValues() {
+  if (!managerOrdersMonths.size) return monthOptions().map((month) => month.value);
+  return [...managerOrdersMonths].sort((a, b) => Number(a) - Number(b));
 }
 function plannedProduct(order, recipeLine) {
   const hectares = Number(order.hectares) || 0;
@@ -6723,6 +6759,8 @@ function switchView(view) {
     view = defaultViewForRole(role);
     showToast(`Tu rol ${roleLabel(role)} no tiene acceso a ese modulo`);
   }
+  const enteringWarehouse = view === "warehouse" && currentView !== "warehouse";
+  if (enteringWarehouse) warehouseStatusFilter = "all";
   const openingHarvestAnalysis = view === "harvestAnalysis";
   currentView = view;
   if (openingHarvestAnalysis) {
@@ -8471,6 +8509,7 @@ function renderIrrigation() {
     const value = Number(irrigationCellValue(target));
     const key = irrigationKey(context.blockId, context.date);
     if (context.kind === "program") {
+      const previousValue = Number(irrigationProgramHours[key]) || 0;
       if (irrigationCellValue(target) === "" || value <= 0) {
         delete irrigationProgramHours[key];
         clearIrrigationCellAudit("program", context.blockId, context.date);
@@ -8483,19 +8522,27 @@ function renderIrrigation() {
       target.classList.toggle("has-hours", Boolean(irrigationProgramHours[key]));
       target.classList.toggle("has-audit", Boolean(irrigationProgramAudit[key]));
       scheduleIrrigationLocalSave("program");
-      const programTotal = Array.from({ length: daysInMonth }, (_, index) => {
-        const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-        return Number(irrigationProgramHours[irrigationKey(context.blockId, date)]) || 0;
-      }).reduce((sum, item) => sum + item, 0);
+      const nextValue = Number(irrigationProgramHours[key]) || 0;
+      const programTotal = Math.max(0, (programMonthTotals.get(context.blockId) || 0) - previousValue + nextValue);
+      programMonthTotals.set(context.blockId, programTotal);
       const reposition = irrigationReposicion(programTotal, block?.precipitation, historicalEvaporationTotal);
       const totalCell = views.irrigation.querySelector(`[data-program-total="${CSS.escape(context.blockId)}"]`);
       const repositionCell = views.irrigation.querySelector(`[data-program-reposition="${CSS.escape(context.blockId)}"]`);
       if (totalCell) totalCell.textContent = number(programTotal);
       if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
-      updateIrrigationComparisonCells(context.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+      updateIrrigationComparisonCells(
+        context.blockId,
+        daysInMonth,
+        monthPrefix,
+        historicalEvaporationTotal,
+        monthEvaporationTotal,
+        programTotal,
+        realMonthTotals.get(context.blockId) || 0
+      );
       scheduleIrrigationProgramCellSave(context.blockId, context.date, irrigationCellValue(target));
       return;
     }
+    const previousValue = Number(irrigationHours[key]) || 0;
     if (irrigationCellValue(target) === "" || value <= 0) {
       delete irrigationHours[key];
       clearIrrigationCellAudit("real", context.blockId, context.date);
@@ -8509,16 +8556,23 @@ function renderIrrigation() {
     target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
     scheduleIrrigationLocalSave("real");
     scheduleIrrigationCellSave(context.blockId, context.date, irrigationCellValue(target));
-    const blockTotal = Array.from({ length: daysInMonth }, (_, index) => {
-      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-      return Number(irrigationHours[irrigationKey(context.blockId, date)]) || 0;
-    }).reduce((sum, item) => sum + item, 0);
+    const nextValue = Number(irrigationHours[key]) || 0;
+    const blockTotal = Math.max(0, (realMonthTotals.get(context.blockId) || 0) - previousValue + nextValue);
+    realMonthTotals.set(context.blockId, blockTotal);
     const totalCell = views.irrigation.querySelector(`[data-block-total="${CSS.escape(context.blockId)}"]`);
     if (totalCell) totalCell.textContent = number(blockTotal);
     const reposition = irrigationReposicion(blockTotal, block?.precipitation, monthEvaporationTotal);
     const repositionCell = views.irrigation.querySelector(`[data-block-reposition="${CSS.escape(context.blockId)}"]`);
     if (repositionCell) repositionCell.textContent = irrigationReposicionLabel(reposition);
-    updateIrrigationComparisonCells(context.blockId, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+    updateIrrigationComparisonCells(
+      context.blockId,
+      daysInMonth,
+      monthPrefix,
+      historicalEvaporationTotal,
+      monthEvaporationTotal,
+      programMonthTotals.get(context.blockId) || 0,
+      blockTotal
+    );
   };
   if (irrigationTab === "bandejas") wireIrrigationBandejaMatrix();
   if (irrigationTab === "satellite") wireIrrigationSatellitePanel(filteredBlocks, monthPrefix);
@@ -8595,7 +8649,7 @@ function syncIrrigationGanttScroll() {
   const program = views.irrigation.querySelector(".irrigation-gantt-program");
   const real = views.irrigation.querySelector(".irrigation-gantt-real");
   if (!program || !real) return;
-  let syncing = false;
+  let syncingTarget = null;
   let frame = 0;
   const maxScrollTop = (element) => Math.max(0, element.scrollHeight - element.clientHeight);
   const syncedTop = (source, target) => {
@@ -8604,35 +8658,21 @@ function syncIrrigationGanttScroll() {
     if (!sourceMax || !targetMax) return source.scrollTop;
     return (source.scrollTop / sourceMax) * targetMax;
   };
-  const applySync = (source, target, immediate = false) => {
-    if (syncing) return;
+  const applySync = (source, target) => {
+    if (syncingTarget === source) return;
     cancelAnimationFrame(frame);
-    const run = () => {
-      syncing = true;
+    frame = requestAnimationFrame(() => {
+      syncingTarget = target;
       const nextTop = syncedTop(source, target);
       if (target.scrollLeft !== source.scrollLeft) target.scrollLeft = source.scrollLeft;
       if (Math.abs(target.scrollTop - nextTop) > 1) target.scrollTop = nextTop;
-      requestAnimationFrame(() => { syncing = false; });
-    };
-    if (immediate) run();
-    else frame = requestAnimationFrame(run);
+      requestAnimationFrame(() => {
+        if (syncingTarget === target) syncingTarget = null;
+      });
+    });
   };
-  const syncFromScroll = (source, target) => applySync(source, target);
-  const syncWheel = (source, target, event) => {
-    if (!event.deltaY && !event.deltaX) return;
-    const sourceTopBefore = source.scrollTop;
-    const sourceLeftBefore = source.scrollLeft;
-    source.scrollTop += event.deltaY;
-    source.scrollLeft += event.deltaX;
-    const consumed = source.scrollTop !== sourceTopBefore || source.scrollLeft !== sourceLeftBefore;
-    if (!consumed) return;
-    event.preventDefault();
-    applySync(source, target, true);
-  };
-  program.addEventListener("scroll", () => syncFromScroll(program, real), { passive: true });
-  real.addEventListener("scroll", () => syncFromScroll(real, program), { passive: true });
-  program.addEventListener("wheel", (event) => syncWheel(program, real, event), { passive: false });
-  real.addEventListener("wheel", (event) => syncWheel(real, program, event), { passive: false });
+  program.addEventListener("scroll", () => applySync(program, real), { passive: true });
+  real.addEventListener("scroll", () => applySync(real, program), { passive: true });
 }
 
 function irrigationGanttScrollSnapshot() {
@@ -11820,19 +11860,51 @@ function pestMonitoringHeatColor(ratio) {
 }
 
 function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
+  const dataSignature = (points, scale) => {
+    let hash = 2166136261;
+    const append = (value) => {
+      const text = String(value);
+      for (let index = 0; index < text.length; index += 1) {
+        hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
+      }
+    };
+    points.forEach((point) => {
+      append(point.key || "");
+      append(Number(point.lat).toFixed(6));
+      append(Number(point.lng).toFixed(6));
+      append(Number(point.weight).toFixed(3));
+    });
+    append((scale?.bounds || []).join(","));
+    append(Number(scale?.maximum || 0).toFixed(3));
+    return `${points.length}:${hash >>> 0}`;
+  };
+
   class PestCanvasHeatOverlay extends maps.OverlayView {
     constructor() {
       super();
       this.container = null;
       this.canvas = null;
       this.bufferCanvas = null;
+      this.surfaceCanvas = null;
       this.points = [];
       this.blockMasks = blockMasks;
+      this.blockBounds = new Map([...blockMasks].map(([key, rings]) => {
+        const coordinates = rings.flat();
+        return [key, coordinates.reduce((bounds, [lng, lat]) => ({
+          west: Math.min(bounds.west, lng),
+          east: Math.max(bounds.east, lng),
+          south: Math.min(bounds.south, lat),
+          north: Math.max(bounds.north, lat)
+        }), { west: Infinity, east: -Infinity, south: Infinity, north: -Infinity })];
+      }));
       this.scale = { bounds: [], thresholds: [], minimum: 0, maximum: 0, positives: 0 };
       this.frame = 0;
       this.paintTimer = 0;
       this.hasPainted = false;
       this.renderBounds = null;
+      this.currentDataSignature = "";
+      this.lastPaintKey = "";
+      this.idleListener = null;
       this.setMap(map);
     }
 
@@ -11841,20 +11913,25 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       this.container.className = "pest-heat-overlay";
       this.canvas = document.createElement("canvas");
       this.bufferCanvas = document.createElement("canvas");
+      this.surfaceCanvas = document.createElement("canvas");
       this.container.appendChild(this.canvas);
       const layer = this.getPanes().overlayLayer;
       layer.insertBefore(this.container, layer.firstChild);
+      this.idleListener = maps.event.addListener(map, "idle", () => this.queuePaint(0));
     }
 
     setData(points, scale) {
+      const nextSignature = dataSignature(points, scale);
       this.points = points;
       this.scale = scale;
+      if (nextSignature === this.currentDataSignature && this.hasPainted) return;
+      this.currentDataSignature = nextSignature;
       this.queuePaint(0);
     }
 
     draw() {
       if (this.hasPainted) this.positionCurrentCanvas();
-      this.queuePaint(this.hasPainted ? 80 : 0);
+      else this.queuePaint(0);
     }
 
     positionCurrentCanvas() {
@@ -11891,7 +11968,7 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
 
     paint() {
       this.frame = 0;
-      if (!this.container || !this.canvas || !this.bufferCanvas || !this.getProjection()) return;
+      if (!this.container || !this.canvas || !this.bufferCanvas || !this.surfaceCanvas || !this.getProjection()) return;
       const bounds = map.getBounds();
       if (!bounds) return;
       const projection = this.getProjection();
@@ -11899,7 +11976,23 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       const southWest = projection.fromLatLngToDivPixel(bounds.getSouthWest());
       const width = Math.max(1, Math.round(northEast.x - southWest.x));
       const height = Math.max(1, Math.round(southWest.y - northEast.y));
-      const pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
+      const zoom = map.getZoom() || 16;
+      const northEastValue = bounds.getNorthEast().toJSON();
+      const southWestValue = bounds.getSouthWest().toJSON();
+      const paintKey = [
+        this.currentDataSignature,
+        zoom,
+        `${width}x${height}`,
+        northEastValue.lat.toFixed(6),
+        northEastValue.lng.toFixed(6),
+        southWestValue.lat.toFixed(6),
+        southWestValue.lng.toFixed(6)
+      ].join("|");
+      if (this.hasPainted && paintKey === this.lastPaintKey) {
+        this.positionCurrentCanvas();
+        return;
+      }
+      const pixelRatio = Math.min(1.25, window.devicePixelRatio || 1);
       const renderCanvas = this.bufferCanvas;
       renderCanvas.width = Math.round(width * pixelRatio);
       renderCanvas.height = Math.round(height * pixelRatio);
@@ -11907,7 +12000,6 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, width, height);
 
-      const zoom = map.getZoom() || 16;
       const gridSize = zoom >= 20 ? 1 : zoom >= 19 ? 2 : zoom >= 18 ? 3 : zoom >= 17 ? 4 : zoom >= 15 ? 5 : 7;
       const gridWidth = Math.max(1, Math.ceil(width / gridSize));
       const gridHeight = Math.max(1, Math.ceil(height / gridSize));
@@ -11916,9 +12008,15 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       const smoothingMeters = zoom >= 20 ? 2.5 : zoom >= 19 ? 4 : zoom >= 18 ? 7 : zoom >= 17 ? 12 : zoom >= 16 ? 20 : 30;
       const smoothingRadius = Math.max(0.9, smoothingMeters / Math.max(0.01, metersPerPixel) / gridSize);
       const distancePower = zoom >= 20 ? 2.25 : zoom >= 19 ? 2 : zoom >= 18 ? 1.75 : zoom >= 17 ? 1.5 : zoom >= 16 ? 1.3 : 1.15;
+      const visibleBlockKeys = new Set([...this.blockBounds].filter(([, blockBounds]) => (
+        blockBounds.east >= southWestValue.lng
+        && blockBounds.west <= northEastValue.lng
+        && blockBounds.north >= southWestValue.lat
+        && blockBounds.south <= northEastValue.lat
+      )).map(([key]) => key));
       const sourcesByBlock = new Map();
       this.points.forEach((point) => {
-        if (!point.key || !this.blockMasks.has(point.key)) return;
+        if (!point.key || !visibleBlockKeys.has(point.key)) return;
         const pixel = projection.fromLatLngToDivPixel(new maps.LatLng(point.lat, point.lng));
         const x = pixel.x - southWest.x;
         const y = pixel.y - northEast.y;
@@ -11935,7 +12033,7 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       });
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
-      const surface = document.createElement("canvas");
+      const surface = this.surfaceCanvas;
       const surfaceContext = surface.getContext("2d");
 
       sourcesByBlock.forEach((sources, blockKey) => {
@@ -12045,20 +12143,26 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
       this.canvas.style.height = `${height}px`;
       this.canvas.getContext("2d").drawImage(renderCanvas, 0, 0);
       this.renderBounds = {
-        northEast: bounds.getNorthEast().toJSON(),
-        southWest: bounds.getSouthWest().toJSON()
+        northEast: northEastValue,
+        southWest: southWestValue
       };
+      this.lastPaintKey = paintKey;
       this.hasPainted = true;
     }
 
     onRemove() {
       if (this.frame) cancelAnimationFrame(this.frame);
       if (this.paintTimer) clearTimeout(this.paintTimer);
+      if (this.idleListener) maps.event.removeListener(this.idleListener);
       this.container?.remove();
       this.container = null;
       this.canvas = null;
       this.bufferCanvas = null;
+      this.surfaceCanvas = null;
       this.renderBounds = null;
+      this.blockBounds.clear();
+      this.lastPaintKey = "";
+      this.idleListener = null;
     }
   }
   return new PestCanvasHeatOverlay();
@@ -15750,24 +15854,22 @@ function renderManager() {
     .filter((order) => orderOverlapsYear(order, managerYear))
     .filter((order) => matchesOrderStatusFilter(order, managerStatusFilter))
     .filter(matchesManagerFilters));
-  const visibleOrders = managerGanttMode === "month"
-    ? yearOrders.filter((order) => orderOverlapsMonth(order, managerYear, managerMonth))
-    : yearOrders;
+  const visibleOrders = yearOrders.filter(matchesManagerOrdersMonth);
   const gantt = managerGantt(visibleOrders);
-  const listOrders = yearOrders.filter(matchesManagerOrdersMonth);
+  const listOrders = visibleOrders;
   const rows = listOrders.map((order) => {
     const total = plannedLiters(order);
     const dispatched = dispatchedLiters(order);
     const pct = total ? Math.min(100, dispatched / total * 100) : 0;
     const status = effectiveOrderStatus(order);
     return `
-      <article class="order-card manager-order-card" data-order-status="${htmlAttr(status)}">
+      <article class="order-card manager-order-card ${selectedGanttOrderId === order.id ? "is-gantt-target" : ""}" data-order-status="${htmlAttr(status)}" data-manager-order-id="${htmlAttr(order.id)}" tabindex="-1">
         <div class="order-card-head">
           <div class="manager-order-identity">
             <span class="manager-order-number"><small>Orden</small><strong>#${escapeHtml(order.number)}</strong></span>
             <div>
               <h3>${escapeHtml(potreroListLabel(order.potrero))} <span>Bloques ${escapeHtml(order.blocks?.join(", ") || "-")}</span></h3>
-              <p>${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")}</p>
+              <p>${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")} · Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</p>
             </div>
           </div>
           <span class="badge ${statusClass(status)}">${escapeHtml(ganttState(order).label)}</span>
@@ -15782,12 +15884,15 @@ function renderManager() {
           <div><strong>${number(dispatched, 0)} L</strong><span>salidos de ${number(total, 0)} L autorizados</span><b class="order-progress-percent">${number(pct, 0)}%</b></div>
           <div class="progress"><i style="width:${pct}%"></i></div>
         </div>
-        <div class="recipe-list manager-recipe-list">
-          ${order.recipe.map((line) => {
-            const product = getProduct(line.productId);
-            return `<span><strong>${escapeHtml(product?.name || "Producto")}</strong>${number(productHaFromDose(order, line))} ${escapeHtml(product?.unit || "")}/ha · ${number(plannedProduct(order, line))} total</span>`;
-          }).join("")}
-        </div>
+        <details class="application-order-details manager-order-details">
+          <summary><span>Productos de la orden</span><strong>${order.recipe.length}</strong></summary>
+          <div class="recipe-list manager-recipe-list">
+            ${order.recipe.map((line) => {
+              const product = getProduct(line.productId);
+              return `<span><strong>${escapeHtml(product?.name || "Producto")}</strong>${number(productHaFromDose(order, line))} ${escapeHtml(product?.unit || "")}/ha · ${number(plannedProduct(order, line))} total</span>`;
+            }).join("")}
+          </div>
+        </details>
         <div class="card-actions">
           <button class="secondary-button" data-action="edit-order" data-id="${order.id}">Editar orden</button>
           <button class="secondary-button" data-action="open-dispatch-info" data-id="${order.id}">Información de salida</button>
@@ -15797,7 +15902,7 @@ function renderManager() {
         </div>
       </article>
     `;
-  }).join("") || `<div class="empty">No hay órdenes para el mes seleccionado.</div>`;
+  }).join("") || `<div class="empty">No hay ordenes para los filtros seleccionados.</div>`;
 
   views.manager.innerHTML = `
     <section class="panel">
@@ -15822,7 +15927,7 @@ function renderManager() {
         <div class="gantt-head">
           <div class="gantt-heading">
             <h3>CARTA GANTT APLICACIONES</h3>
-            <span class="gantt-filter-summary">${escapeHtml(potreroLabel(managerPotreroFilter))} · ${managerGanttMode === "month" ? monthOptions().find((item) => item.value === managerMonth)?.label : "Año completo"} ${managerYear} · ${escapeHtml(managerStatusFilter === "all" ? "Todos los estados" : statusLabel(managerStatusFilter).replace(/^[^\p{L}\p{N}]+/u, ""))}</span>
+            <span class="gantt-filter-summary">${escapeHtml(potreroLabel(managerPotreroFilter))} · ${managerGanttMode === "month" ? managerPeriodLabel() : `Año completo · ${managerPeriodLabel()}`} ${managerYear} · ${escapeHtml(managerStatusFilter === "all" ? "Todos los estados" : statusLabel(managerStatusFilter).replace(/^[^\p{L}\p{N}]+/u, ""))}</span>
           </div>
           <button class="icon-button gantt-filter-toggle" type="button" data-action="toggle-manager-gantt-filters" aria-expanded="${managerGanttFiltersOpen ? "true" : "false"}" title="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}" aria-label="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}"><span aria-hidden="true">${managerGanttFiltersOpen ? "&gt;" : "&lt;"}</span></button>
           <div class="gantt-controls" ${managerGanttFiltersOpen ? "" : "hidden"}>
@@ -15842,23 +15947,19 @@ function renderManager() {
             <label>Año
               <select id="managerYearFilter">${availableYears.sort((a, b) => b.localeCompare(a)).map((year) => `<option value="${year}" ${year === managerYear ? "selected" : ""}>${year}</option>`).join("")}</select>
             </label>
-            <label class="${managerGanttMode === "year" ? "muted-control" : ""}">Mes
-              <select id="managerMonthFilter" ${managerGanttMode === "year" ? "disabled" : ""}>${monthOptions().map((month) => `<option value="${month.value}" ${month.value === managerMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
-            </label>
             <label>Estado
               <select id="managerStatusFilter">${statusFilterOptions(managerStatusFilter)}</select>
             </label>
+            <fieldset class="manager-orders-month-checklist manager-unified-month-filter">
+              <legend>Meses</legend>
+              <label><input class="manager-orders-month-filter" type="checkbox" value="all" ${managerOrdersMonths.size ? "" : "checked"}> Todos</label>
+              ${monthOptions().map((month) => `<label><input class="manager-orders-month-filter" type="checkbox" value="${month.value}" ${managerOrdersMonths.has(month.value) ? "checked" : ""}> ${month.label.slice(0, 3)}</label>`).join("")}
+            </fieldset>
           </div>
         </div>
         <p class="gantt-mobile-hint">Gira el celular en horizontal y desliza la carta hacia los lados. Toca una barra para ver el detalle.</p>
         ${gantt}
         ${ganttStatusLegend()}
-        <div class="gantt-bottom-filter">
-          <label>Ordenar / ver por mes
-            <select id="managerMonthBottomFilter">${orderListMonthOptions(managerOrdersMonth)}</select>
-          </label>
-          <small>Este filtro ordena/filtra solo las órdenes de abajo. La Carta Gantt mantiene sus propios filtros superiores.</small>
-        </div>
       </div>
       <div class="order-grid">${rows}</div>
     </section>
@@ -15867,13 +15968,17 @@ function renderManager() {
     managerYear = event.target.value;
     renderManager();
   });
-  document.getElementById("managerMonthFilter")?.addEventListener("change", (event) => {
-    managerMonth = event.target.value;
-    renderManager();
-  });
-  document.getElementById("managerMonthBottomFilter")?.addEventListener("change", (event) => {
-    managerOrdersMonth = event.target.value;
-    renderManager();
+  document.querySelectorAll(".manager-orders-month-filter").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.value === "all" && input.checked) {
+        managerOrdersMonths = new Set();
+      } else {
+        managerOrdersMonths = new Set([...document.querySelectorAll('.manager-orders-month-filter:checked')]
+          .map((item) => item.value)
+          .filter((value) => value !== "all"));
+      }
+      renderManager();
+    });
   });
   document.getElementById("managerModeFilter")?.addEventListener("change", (event) => {
     managerGanttMode = event.target.value;
@@ -15900,26 +16005,55 @@ function renderManager() {
       renderManager();
     });
   });
+  wireManagerGanttHorizontalScroll();
+}
+
+function wireManagerGanttHorizontalScroll() {
+  const proxy = views.manager.querySelector("[data-gantt-scroll-proxy]");
+  const table = views.manager.querySelector("[data-gantt-scroll-target]");
+  if (!proxy || !table) return;
+  let syncing = false;
+  const sync = (source, target) => {
+    if (syncing) return;
+    syncing = true;
+    target.scrollLeft = source.scrollLeft;
+    requestAnimationFrame(() => { syncing = false; });
+  };
+  proxy.addEventListener("scroll", () => sync(proxy, table), { passive: true });
+  table.addEventListener("scroll", () => sync(table, proxy), { passive: true });
+  views.manager.querySelectorAll("[data-gantt-scroll-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const direction = Number(button.dataset.ganttScrollStep) || 0;
+      const distance = Math.max(320, proxy.clientWidth * 0.8);
+      proxy.scrollBy({ left: direction * distance, behavior: "smooth" });
+    });
+  });
 }
 
 function managerGantt(orders) {
   const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
   if (managerGanttMode === "month") return managerMonthGantt(orders);
+  const activeMonths = new Set(managerSelectedMonthValues());
   const groups = ganttGroupsByPotrero(orders);
   return `
     <div class="gantt-table">
       <div class="gantt-row gantt-months">
         <span>Especie / Potrero</span>
-        <div class="gantt-month-grid">${months.map((month) => `<b>${month}</b>`).join("")}</div>
+        <div class="gantt-month-grid">${months.map((month, index) => {
+          const value = String(index + 1).padStart(2, "0");
+          return `<b class="${activeMonths.has(value) ? "" : "is-filtered-out"}">${month}</b>`;
+        }).join("")}</div>
       </div>
       ${groups.map((group) => {
         return `
           <div class="gantt-row">
-            <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
+            <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${escapeHtml(group.species)}</small></span>
             <div class="gantt-month-grid gantt-track">
               ${months.map((_, index) => {
                 const month = String(index + 1).padStart(2, "0");
-                const monthOrders = group.orders.filter((order) => orderOverlapsMonth(order, managerYear, month));
+                const monthOrders = activeMonths.has(month)
+                  ? group.orders.filter((order) => orderOverlapsMonth(order, managerYear, month))
+                  : [];
                 return `<span class="gantt-stack">${monthOrders.map((order) => ganttMarker(order)).join("")}</span>`;
               }).join("")}
             </div>
@@ -15931,30 +16065,107 @@ function managerGantt(orders) {
 }
 
 function managerMonthGantt(orders) {
-  const daysInMonth = new Date(Number(managerYear), Number(managerMonth), 0).getDate();
-  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
+  const period = managerDetailedPeriod();
+  const days = period.days;
+  const periodWidth = Math.max(720, days.length * 22);
+  const scrollWidth = 266 + periodWidth;
   const groups = ganttGroupsByPotrero(orders);
   return `
-    <div class="gantt-table gantt-table-month">
-      <div class="gantt-row gantt-month-detail gantt-month-header">
+    <div class="gantt-horizontal-control">
+      <button class="icon-button" type="button" data-gantt-scroll-step="-1" title="Meses anteriores" aria-label="Mover Gantt a la izquierda">&lsaquo;</button>
+      <div class="gantt-horizontal-scroll" data-gantt-scroll-proxy tabindex="0" aria-label="Desplazamiento horizontal de la carta Gantt"><span style="width:${scrollWidth}px"></span></div>
+      <button class="icon-button" type="button" data-gantt-scroll-step="1" title="Meses siguientes" aria-label="Mover Gantt a la derecha">&rsaquo;</button>
+    </div>
+    <div class="gantt-matrix-viewport" data-gantt-scroll-target tabindex="0" aria-label="Carta Gantt desplazable">
+      <div class="gantt-table gantt-table-month">
+        <div class="gantt-row gantt-month-detail gantt-period-detail gantt-month-header" style="--period-width:${periodWidth}px">
         <span>Especie / Potrero</span>
-        <div class="gantt-day-grid" style="--days:${daysInMonth}">${days.map((day) => `<b>${day}</b>`).join("")}</div>
+        <div class="gantt-period-calendar">
+          <div class="gantt-period-months" style="--days:${days.length}">${period.months.map((month) => `<strong style="grid-column:${month.start} / span ${month.span}">${escapeHtml(month.label)}</strong>`).join("")}</div>
+          <div class="gantt-day-grid" style="--days:${days.length}">${days.map((day) => `<b class="${day.weekend ? "is-weekend" : ""} ${day.holiday ? "is-holiday" : ""} ${day.monthStart ? "is-month-start" : ""}" title="${htmlAttr(irrigationDayTitle(day.date, day.date))}">${day.day}</b>`).join("")}</div>
+        </div>
       </div>
-      ${groups.map((group) => {
-        return `
-          <div class="gantt-row gantt-month-detail ${group.orders.some((order) => selectedGanttOrderId === order.id) ? "selected" : ""}">
-            <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${group.species} · Ordenes ${group.orders.map((order) => `#${order.number}`).join(", ")}</small></span>
-            <div class="gantt-day-grid gantt-day-track" style="--days:${daysInMonth};--rows:${Math.max(1, group.orders.filter((order) => orderOverlapsMonth(order, managerYear, managerMonth)).length)}">
-              ${group.orders
-                .filter((order) => orderOverlapsMonth(order, managerYear, managerMonth))
-                .map((order, index) => ganttRangeMarker(order, index, daysInMonth))
-                .join("")}
+        ${groups.map((group) => {
+          return `
+            <div class="gantt-row gantt-month-detail gantt-period-detail ${group.orders.some((order) => selectedGanttOrderId === order.id) ? "selected" : ""}" style="--period-width:${periodWidth}px">
+              <span><strong>${escapeHtml(potreroListLabel(group.potrero))}</strong><small>${escapeHtml(group.species)}</small></span>
+              <div class="gantt-day-grid gantt-day-track" style="--days:${days.length};--rows:${Math.max(1, group.orders.length)}">
+                ${ganttCalendarBands(period, Math.max(1, group.orders.length))}
+                ${group.orders
+                  .map((order, index) => ganttPeriodRangeMarker(order, index, period))
+                  .join("")}
+              </div>
             </div>
-          </div>
-        `;
-      }).join("") || `<div class="empty">No hay ordenes planificadas para ${monthOptions().find((item) => item.value === managerMonth)?.label} ${managerYear}.</div>`}
+          `;
+        }).join("") || `<div class="empty">No hay ordenes planificadas para ${escapeHtml(managerPeriodLabel())} ${managerYear}.</div>`}
+      </div>
     </div>
   `;
+}
+
+function managerDetailedPeriod() {
+  const selectedMonths = managerSelectedMonthValues();
+  const days = [];
+  const months = [];
+  selectedMonths.forEach((monthValue) => {
+    const monthIndex = Math.max(0, Number(monthValue) - 1);
+    const count = new Date(Number(managerYear), monthIndex + 1, 0).getDate();
+    const start = days.length + 1;
+    for (let day = 1; day <= count; day += 1) {
+      const date = `${managerYear}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const weekday = new Date(Number(managerYear), monthIndex, day).getDay();
+      days.push({
+        date,
+        day,
+        weekend: weekday === 0 || weekday === 6,
+        holiday: CHILE_HOLIDAYS_2026.has(date),
+        monthStart: day === 1
+      });
+    }
+    months.push({
+      start,
+      span: count,
+      label: monthOptions()[monthIndex]?.label || String(monthIndex + 1)
+    });
+  });
+  const fallbackDate = `${managerYear}-${managerMonth}-01`;
+  return {
+    start: days[0]?.date || fallbackDate,
+    end: days.at(-1)?.date || fallbackDate,
+    days,
+    months
+  };
+}
+
+function managerPeriodLabel() {
+  const period = managerDetailedPeriod();
+  const labels = period.months.map((month) => month.label);
+  if (labels.length === 12) return "Todos los meses";
+  if (labels.length > 3) return `${labels.length} meses seleccionados`;
+  return labels.join(" · ") || "Mes";
+}
+
+function ganttPeriodRangeMarker(order, index, period) {
+  const start = orderStartDate(order) || period.start;
+  const end = orderEndDate(order) || start;
+  const matchingColumns = period.days.reduce((columns, day, dayIndex) => {
+    if (day.date >= start && day.date <= end) columns.push(dayIndex + 1);
+    return columns;
+  }, []);
+  if (!matchingColumns.length) return "";
+  const startColumn = matchingColumns[0];
+  const span = Math.max(1, matchingColumns.at(-1) - startColumn + 1);
+  return ganttMarker(order, `grid-column:${startColumn} / span ${span};grid-row:${index + 1};`);
+}
+
+function ganttCalendarBands(period, rowCount) {
+  return period.days.map((day, index) => {
+    if (!day.weekend && !day.holiday) return "";
+    const classes = ["gantt-calendar-band"];
+    if (day.weekend) classes.push("is-weekend");
+    if (day.holiday) classes.push("is-holiday");
+    return `<span class="${classes.join(" ")}" style="grid-column:${index + 1};grid-row:1 / span ${rowCount}" title="${htmlAttr(irrigationDayTitle(day.date, day.date))}"></span>`;
+  }).join("");
 }
 
 
@@ -15982,21 +16193,46 @@ function comparePotreroNatural(a, b) {
 }
 
 function compareGanttGroups(a, b) {
-  const speciesCompare = a.species.localeCompare(b.species, "es", { numeric: true, sensitivity: "base" });
-  if (speciesCompare) return speciesCompare;
   return comparePotreroNatural(a.potrero, b.potrero);
 }
 
+function ganttPotreroKey(value) {
+  const text = normalizeText(value)
+    .replace(/^potrero\s*/, "")
+    .replace(/^p(?=\s*\d)/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const numeric = text.match(/^(\d+(?:[.,]\d+)?)(.*)$/);
+  if (!numeric) return text || "sin potrero";
+  return `${Number(numeric[1].replace(",", "."))}${numeric[2].trim() ? ` ${numeric[2].trim()}` : ""}`;
+}
+
+function ganttPotreroDisplay(value) {
+  const key = ganttPotreroKey(value);
+  const field = state.blocks.find((block) => ganttPotreroKey(block.potrero) === key);
+  return potreroLabel(field?.potrero || value || "Sin potrero");
+}
+
 function ganttGroupsByPotrero(orders) {
-  return Object.values(orders.reduce((acc, order) => {
-    const potrero = order.potrero || "Sin potrero";
-    const species = ganttSpeciesLabel(order);
-    const key = `${species}__${potrero}`;
-    acc[key] ||= { species, potrero, orders: [] };
-    acc[key].orders.push(order);
+  const groups = orders.reduce((acc, order) => {
+    const potreros = String(order.potrero || "Sin potrero")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    (potreros.length ? potreros : ["Sin potrero"]).forEach((potrero) => {
+      const key = ganttPotreroKey(potrero);
+      acc[key] ||= { potrero: ganttPotreroDisplay(potrero), species: new Set(), orders: new Map() };
+      acc[key].species.add(ganttSpeciesLabel(order));
+      acc[key].orders.set(order.id, order);
+    });
     return acc;
-  }, {}))
-    .map((group) => ({ ...group, orders: sortOrdersNewestFirst(group.orders) }))
+  }, {});
+  return Object.values(groups)
+    .map((group) => ({
+      ...group,
+      species: [...group.species].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).join(" / "),
+      orders: sortOrdersNewestFirst([...group.orders.values()])
+    }))
     .sort(compareGanttGroups);
 }
 
@@ -16033,20 +16269,7 @@ function ganttMarker(order, extraStyle = "") {
     "Productos:",
     productLines.length ? productLines.join("\n") : "-"
   ].join("\n");
-  return `<i class="active ${stateInfo.key}" data-action="select-gantt-order" data-id="${order.id}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span></i>`;
-}
-
-function ganttRangeMarker(order, index, daysInMonth) {
-  const start = orderStartDate(order);
-  const end = orderEndDate(order);
-  const monthStart = `${managerYear}-${managerMonth}-01`;
-  const monthEnd = `${managerYear}-${managerMonth}-${String(daysInMonth).padStart(2, "0")}`;
-  const clampedStart = start && start > monthStart ? start : monthStart;
-  const clampedEnd = end && end < monthEnd ? end : monthEnd;
-  const startDay = Math.max(1, Number(clampedStart.slice(8, 10)) || 1);
-  const endDay = Math.min(daysInMonth, Number(clampedEnd.slice(8, 10)) || startDay);
-  const span = Math.max(1, endDay - startDay + 1);
-  return ganttMarker(order, `grid-column:${startDay} / span ${span};grid-row:${index + 1};`);
+  return `<i class="active ${stateInfo.key} ${selectedGanttOrderId === order.id ? "is-selected" : ""}" data-action="select-gantt-order" data-id="${order.id}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span></i>`;
 }
 
 function programColor(order) {
@@ -16090,42 +16313,8 @@ function ganttStatusLegend() {
   return `
     <div class="gantt-status-legend">
       ${statuses.map(([key, label, color]) => `<span class="${key}" style="--gantt-state-color:${color}"><i></i>${label}</span>`).join("")}
-    </div>
-  `;
-}
-
-function ganttDetail() {
-  const order = state.orders.find((item) => item.id === selectedGanttOrderId);
-  if (!order) return `<div class="gantt-detail empty">Selecciona una orden de la Gantt para ver el detalle del dia.</div>`;
-  return `
-    <div class="gantt-detail">
-      <div>
-        <span class="overline">Detalle del dia ${orderStartDate(order) || "-"} - ${ganttState(order).label}</span>
-        <h3>Orden #${order.number} - ${escapeHtml(potreroListLabel(order.potrero))}</h3>
-        <p>${programLabel(order)} - ${order.objective || "Sin objetivo"}</p>
-      </div>
-      <div class="gantt-detail-grid">
-        <span><strong>Bloques</strong>${order.blocks?.join(", ") || "-"}</span>
-        <span><strong>Especie</strong>${order.crop || "-"} ${order.variety || ""}</span>
-        <span><strong>Has</strong>${number(order.hectares)} ha</span>
-        <span><strong>Mojamiento</strong>${number(plannedLiters(order), 0)} L</span>
-        <span><strong>Salida</strong>${number(dispatchedLiters(order), 0)} L</span>
-        <span><strong>Avance</strong>${number(plannedLiters(order) ? Math.min(100, dispatchedLiters(order) / plannedLiters(order) * 100) : 0, 0)}%</span>
-      </div>
-      ${order.notes ? `<div class="gantt-detail-note"><strong>Nota de la orden</strong><p>${escapeHtml(order.notes)}</p></div>` : ""}
-      <div class="recipe-list">
-        ${order.recipe.map((line) => {
-          const product = getProduct(line.productId);
-          return `<span>${product?.name || "Producto"}: ${number(productHaFromDose(order, line))} ${product?.unit || ""}/ha - ${number(plannedProduct(order, line))} total - salido ${number(dispatchedProduct(order, line.productId))}</span>`;
-        }).join("")}
-      </div>
-      <div class="card-actions">
-        <button class="secondary-button" data-action="edit-order" data-id="${order.id}">Editar orden</button>
-        <button class="secondary-button" data-action="open-dispatch-info" data-id="${order.id}">Información de salida</button>
-        ${!["closed", "cancelled"].includes(effectiveOrderStatus(order)) ? `<button class="danger-button" data-action="finish-order" data-id="${order.id}">Terminar orden</button>` : ""}
-        ${!["closed", "cancelled"].includes(effectiveOrderStatus(order)) ? `<button class="danger-button cancel-order-button" data-action="cancel-order" data-id="${order.id}">Cancelar orden</button>` : ""}
-        <button class="secondary-button" data-action="print-order" data-id="${order.id}">PDF orden</button>
-      </div>
+      <span class="calendar-weekend"><i></i>Fin de semana</span>
+      <span class="calendar-holiday"><i></i>Feriado</span>
     </div>
   `;
 }
@@ -16150,8 +16339,7 @@ function normalizeText(value = "") {
 
 async function ensureVehicleCodesLoaded() {
   try {
-    // Fuente unica para el selector Codigo tractor de Bodega.
-    // Consulta public.vehiculos y muestra TODOS los codigos registrados.
+    // Fuente unica para los selectores de tractor y maquinaria de Bodega.
     const vehicles = await sbSelect(
       "vehiculos",
       "select=id,clasificacion,tipo_vehiculo,marca,modelo,numero_serie,anio,codigo&codigo=not.is.null&order=codigo.asc"
@@ -16176,6 +16364,38 @@ async function ensureVehicleCodesLoaded() {
   }
 }
 
+function vehicleSearchText(vehicle = {}) {
+  return normalizeText([
+    vehicle.classification || vehicle.clasificacion,
+    vehicle.type || vehicle.tipo_vehiculo,
+    vehicle.brand || vehicle.marca,
+    vehicle.model || vehicle.modelo,
+    vehicle.code || vehicle.codigo
+  ].filter(Boolean).join(" "));
+}
+
+function vehicleIsTractor(vehicle = {}) {
+  return /\btractor(es)?\b/.test(vehicleSearchText(vehicle));
+}
+
+function vehicleIsApplicationMachine(vehicle = {}) {
+  const text = vehicleSearchText(vehicle);
+  if (vehicleIsTractor(vehicle)) return false;
+  return text.includes("aplicacion")
+    || text.includes("maquinaria")
+    || text.includes("nebul")
+    || text.includes("pulver")
+    || text.includes("piton")
+    || text.includes("atomiz");
+}
+
+function vehiclesForSelector(kind = "all") {
+  const vehicles = (state.vehicles || []).filter((vehicle) => String(vehicle.code || vehicle.codigo || "").trim());
+  if (kind === "tractor") return vehicles.filter(vehicleIsTractor);
+  if (kind === "machine") return vehicles.filter(vehicleIsApplicationMachine);
+  return vehicles;
+}
+
 function vehicleOptionLabel(vehicle) {
   const code = String(vehicle.code || vehicle.codigo || "").trim();
   const type = vehicle.type || vehicle.tipo_vehiculo || "";
@@ -16185,10 +16405,9 @@ function vehicleOptionLabel(vehicle) {
   return `${code}${type ? ` - ${type}` : ""}${detail ? ` - ${detail}` : ""}`;
 }
 
-function tractorCodeOptions(selected = "") {
+function vehicleCodeOptions(selected = "", kind = "all") {
   const selectedValue = String(selected || "");
-  const vehicles = (state.vehicles || [])
-    .filter((vehicle) => String(vehicle.code || vehicle.codigo || "").trim())
+  const vehicles = vehiclesForSelector(kind)
     .sort((a, b) => String(a.code || a.codigo || "").localeCompare(String(b.code || b.codigo || ""), "es", { numeric: true }));
 
   if (!vehicles.length) {
@@ -16218,22 +16437,29 @@ function tractorCodeOptions(selected = "") {
   return options.join("");
 }
 
-async function refreshVehicleCodeSelect(select, selected = "") {
+function tractorCodeOptions(selected = "") {
+  return vehicleCodeOptions(selected, "tractor");
+}
+
+function machineCodeOptions(selected = "") {
+  return vehicleCodeOptions(selected, "machine");
+}
+
+async function refreshVehicleCodeSelect(select, selected = "", kind = "all") {
   if (!select) return;
   select.innerHTML = `<option value="">Cargando codigos...</option>`;
 
   try {
     await ensureVehicleCodesLoaded();
     const selectedValue = String(selected || "");
-    const vehicles = (state.vehicles || [])
-      .filter((vehicle) => String(vehicle.code || vehicle.codigo || "").trim())
+    const vehicles = vehiclesForSelector(kind)
       .sort((a, b) => String(a.code || a.codigo || "").localeCompare(String(b.code || b.codigo || ""), "es", { numeric: true }));
 
     select.innerHTML = "";
 
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = vehicles.length ? "Seleccionar codigo" : "Sin codigos disponibles";
+    placeholder.textContent = vehicles.length ? "Seleccionar codigo" : kind === "tractor" ? "Sin tractores disponibles" : kind === "machine" ? "Sin maquinaria disponible" : "Sin codigos disponibles";
     select.appendChild(placeholder);
 
     const knownCodes = new Set(vehicles.map((vehicle) => String(vehicle.code || vehicle.codigo || "").trim()));
@@ -16255,12 +16481,157 @@ async function refreshVehicleCodeSelect(select, selected = "") {
     });
 
     if (!vehicles.length) {
-      showToast("Vehiculos devolvio 0 codigos. Si en SQL Editor si aparecen, falta la politica RLS SELECT para authenticated/anon.");
+      showToast("No hay codigos disponibles para este tipo. Revisa clasificacion/tipo en vehiculos o la politica RLS SELECT.");
     }
   } catch (error) {
     select.innerHTML = `<option value="">Error cargando codigos</option>`;
     showToast(`Error cargando vehiculos: ${error.message}`);
   }
+}
+
+function workerFullName(worker = {}) {
+  return [worker.nombre, worker.apellido].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function mapWorkerToOperator(worker = {}) {
+  const name = workerFullName(worker) || worker.nombre_completo || worker.name || "";
+  return {
+    id: worker.id,
+    name,
+    phone: worker.telefono ? String(worker.telefono) : "",
+    active: worker.activo !== false,
+    area: worker.area || "",
+    role: worker.cargo || "",
+    labor: worker.labor || ""
+  };
+}
+
+function isApplicationOperatorWorker(worker = {}) {
+  const area = normalizeText(worker.area);
+  const role = normalizeText(worker.cargo);
+  const labor = normalizeText(worker.labor);
+  return (area.includes("aplicacion") && role.includes("aplicador"))
+    || labor.includes("tractorista");
+}
+
+async function loadApplicationOperatorsFromSupabase() {
+  const selectColumns = "select=id,nombre,apellido,rut,correo,telefono,area,cargo,labor,activo&order=apellido.asc,nombre.asc";
+  const fallbackColumns = "select=id,nombre,apellido,rut,correo,telefono,area,cargo,labor&order=apellido.asc,nombre.asc";
+  const readWorkers = async (query) => sbSelectAll("trabajador", query, 1000);
+  const rows = await readWorkers(`${selectColumns}&area=ilike.*APLICACION*&cargo=ilike.*APLICADOR*`).catch((error) => {
+    if (!isMissingSupabaseColumn(error, ["activo"])) throw error;
+    return readWorkers(`${fallbackColumns}&area=ilike.*APLICACION*&cargo=ilike.*APLICADOR*`);
+  }).catch(async (filteredError) => {
+    console.warn("No se pudo cargar aplicadores filtrados desde public.trabajador; usando lectura general", filteredError);
+    return readWorkers(selectColumns).catch((error) => {
+      if (!isMissingSupabaseColumn(error, ["activo"])) throw error;
+      return readWorkers(fallbackColumns);
+    });
+  });
+  const operators = (rows || [])
+    .filter(isApplicationOperatorWorker)
+    .map(mapWorkerToOperator)
+    .filter((operator) => operator.id && operator.name);
+  state.operators = operators;
+  return operators;
+}
+
+function operatorOptions(selected = "") {
+  const selectedValue = String(selected || "");
+  const operators = (state.operators || [])
+    .filter((operator) => operator.active !== false && operator.name)
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { numeric: true }));
+  const options = [`<option value="">${operators.length ? "Seleccionar" : "Sin aplicadores cargados"}</option>`];
+  const known = new Set(operators.map((operator) => String(operator.id)));
+  if (selectedValue && !known.has(selectedValue)) {
+    options.push(`<option value="${htmlAttr(selectedValue)}" selected>${escapeHtml(getOperator(selectedValue))} - guardado actualmente</option>`);
+  }
+  options.push(...operators.map((operator) => `<option value="${htmlAttr(operator.id)}" ${String(operator.id) === selectedValue ? "selected" : ""}>${escapeHtml(operator.name)}</option>`));
+  return options.join("");
+}
+
+function mapNozzleRow(row = {}) {
+  return {
+    id: row.id,
+    mode: row.modo || "",
+    model: row.modelo || "",
+    type: row.tipo || "",
+    spec: row.especificacion || "",
+    use: row.uso || "",
+    active: row.activo !== false
+  };
+}
+
+function nozzleModeFromClassification(classification = "") {
+  const value = String(classification || "").toUpperCase();
+  if (value === "N") return "Nebulizado";
+  if (value === "P") return "Pulverizado barra";
+  if (value === "ME" || value === "M") return "Piton";
+  return "";
+}
+
+function nozzleMatchesMode(nozzle, mode = "") {
+  if (!mode) return true;
+  const nozzleMode = normalizeText(nozzle.mode);
+  const wanted = normalizeText(mode);
+  if (wanted.includes("pulver")) return nozzleMode.includes("pulver");
+  if (wanted.includes("nebul")) return nozzleMode.includes("nebul");
+  if (wanted.includes("piton")) return nozzleMode.includes("piton");
+  return nozzleMode === wanted;
+}
+
+function nozzlesForOrderClassification(classification = "") {
+  const mode = nozzleModeFromClassification(classification);
+  const active = (state.nozzles || []).filter((nozzle) => nozzle.active !== false);
+  const filtered = active.filter((nozzle) => nozzleMatchesMode(nozzle, mode));
+  return filtered.length ? filtered : active;
+}
+
+function parseNozzleValue(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return { model: "", spec: "" };
+  const found = (state.nozzles || []).find((nozzle) => {
+    const combined = normalizeCatalogText(`${nozzle.model} ${nozzle.spec}`);
+    return combined && normalizeCatalogText(text).includes(combined);
+  });
+  if (found) return { model: found.model, spec: found.spec };
+  const parts = text.split(/[·|/]/).map((item) => item.trim()).filter(Boolean);
+  return { model: parts[0] || text, spec: parts[1] || "" };
+}
+
+function orderNozzleText(model = "", spec = "") {
+  return [model, spec].map((item) => String(item || "").trim()).filter(Boolean).join(" · ");
+}
+
+function renderOrderNozzlePicker() {
+  const form = document.getElementById("orderForm");
+  if (!form) return;
+  const modelSelect = document.getElementById("nozzleModelSelect");
+  const specSelect = document.getElementById("nozzleSpecSelect");
+  if (!modelSelect || !specSelect) return;
+  const parsed = parseNozzleValue(form.dataset.savedNozzle || "");
+  const nozzles = nozzlesForOrderClassification(form.classification.value);
+  const currentModel = modelSelect.value || parsed.model;
+  const models = [...new Set(nozzles.map((nozzle) => nozzle.model).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const modelKnown = currentModel && models.includes(currentModel);
+  modelSelect.innerHTML = [
+    `<option value="">${models.length ? "Seleccionar modelo" : "Sin boquillas cargadas"}</option>`,
+    currentModel && !modelKnown ? `<option value="${htmlAttr(currentModel)}" selected>${escapeHtml(currentModel)} - guardado actualmente</option>` : "",
+    ...models.map((model) => `<option value="${htmlAttr(model)}" ${model === currentModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
+  ].join("");
+
+  const selectedModel = modelSelect.value || currentModel;
+  const specs = nozzles
+    .filter((nozzle) => !selectedModel || nozzle.model === selectedModel)
+    .sort((a, b) => String(a.spec).localeCompare(String(b.spec), "es", { numeric: true }));
+  const currentSpec = specSelect.value || parsed.spec;
+  const specKnown = currentSpec && specs.some((nozzle) => nozzle.spec === currentSpec);
+  specSelect.innerHTML = [
+    `<option value="">${specs.length ? "Seleccionar especificacion" : "Sin especificaciones"}</option>`,
+    currentSpec && !specKnown ? `<option value="${htmlAttr(currentSpec)}" selected>${escapeHtml(currentSpec)} - guardada actualmente</option>` : "",
+    ...specs.map((nozzle) => `<option value="${htmlAttr(nozzle.spec)}" ${nozzle.spec === currentSpec ? "selected" : ""}>${escapeHtml(nozzle.spec)}${nozzle.type ? ` - ${escapeHtml(nozzle.type)}` : ""}</option>`)
+  ].join("");
 }
 
 async function loadCloudData(options = {}) {
@@ -16286,7 +16657,7 @@ async function loadCloudData(options = {}) {
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, programProductRows, fields, harvestFieldRows, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
+  const [seasons, programs, programProductRows, fields, harvestFieldRows, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, workers, nozzles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
     loadPlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programa_productos", "select=*&order=programa_id.asc,orden.asc").catch((error) => {
@@ -16307,6 +16678,14 @@ async function loadCloudData(options = {}) {
     loadApplications ? sbSelect("vehiculos", "select=*&order=codigo.asc").catch((error) => {
       console.warn("Tabla vehiculos no disponible. Ejecuta supabase_vehiculos.sql", error);
       return [];
+    }) : Promise.resolve(null),
+    loadApplications ? loadApplicationOperatorsFromSupabase().catch((error) => {
+      console.warn("No se pudieron cargar aplicadores desde public.trabajador", error);
+      return null;
+    }) : Promise.resolve(null),
+    loadApplications ? sbSelectAll("boquillas", "select=id,modo,modelo,tipo,especificacion,uso,activo&activo=eq.true&order=modo.asc,modelo.asc,especificacion.asc", 1000).catch((error) => {
+      console.warn("Tabla boquillas no disponible. Ejecuta supabase_bd_vehiculos_boquillas_tractoristas.sql", error);
+      return null;
     }) : Promise.resolve(null),
     loadCalicatas ? sbSelect("calicatas", "select=*&order=created_at.desc").catch((error) => {
       console.warn("No se pudieron cargar calicatas", error);
@@ -16673,7 +17052,13 @@ async function loadCloudData(options = {}) {
       sackPrice: Number(product.precio_saco) || 0,
       kgPerSack: Number(product.kg_por_saco) || 0,
       lot: product.lote,
-      expires: product.fecha_vencimiento
+      expires: product.fecha_vencimiento,
+      normalizedName: product.nombre_normalizado || "",
+      sagName: product.nombre_sag || "",
+      sagNumber: product.numero_sag || "",
+      sagType: product.tipo_producto_sag || "",
+      sagConcentration: product.concentracion_sag || "",
+      sagLabelColor: product.color_etiqueta_sag || ""
     }));
   }
   if (loadPlanning && (Array.isArray(programs) || Array.isArray(programProductRows) || Array.isArray(products)) && (!officialPrograms().length || !state.programProducts.length)) {
@@ -16740,6 +17125,13 @@ async function loadCloudData(options = {}) {
       code: String(vehicle.codigo || "")
     }));
   }
+  if (Array.isArray(workers)) {
+    const applicationOperators = workers.map((worker) => worker.name ? worker : mapWorkerToOperator(worker)).filter((operator) => operator.id && operator.name);
+    state.operators = applicationOperators;
+  }
+  if (Array.isArray(nozzles)) {
+    state.nozzles = nozzles.map(mapNozzleRow).filter((nozzle) => nozzle.model && nozzle.spec);
+  }
   const productsByOrder = groupBy(orderProducts || [], "orden_id");
   const dispatchProductsByDispatch = groupBy(dispatchProducts || [], "despacho_id");
   const dispatchesByOrder = groupBy(dispatches || [], "orden_id");
@@ -16797,6 +17189,7 @@ async function loadCloudData(options = {}) {
       type: dispatch.tipo,
       date: dispatch.fecha,
       time: dispatch.hora_salida || extractTimeValue(dispatch.fecha) || extractTimeValue(dispatch.creado_en || dispatch.created_at),
+      endTime: dispatch.hora_termino || "",
       createdAt: dispatch.creado_en || dispatch.created_at || "",
       liters: Number(dispatch.litros) || 0,
       tractorCode: dispatch.codigo_tractor || dispatch.tractor || dispatch.tractor_code || "",
@@ -16889,7 +17282,7 @@ function cloudModulesForRealtimeTable(table = "") {
   if (table === "cosecha_analisis") return ["harvestAnalysis"];
   if (table === "exportacion_analisis") return ["harvestExport"];
   if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes", "programa_fertilizante"].includes(table)) return ["fertilizers"];
-  if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos"].includes(table)) return ["fields", "applications"];
+  if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos", "trabajador", "boquillas"].includes(table)) return ["fields", "applications"];
   return cloudModulesForView(currentView);
 }
 
@@ -16949,6 +17342,8 @@ function startCloudSync() {
     "programas",
     "programa_productos",
     "vehiculos",
+    "trabajador",
+    "boquillas",
     "usuarios"
   ];
 
@@ -17161,6 +17556,7 @@ async function cloudSaveDispatch(order, dispatch) {
 
   const traceSpanish = {
     hora_salida: dispatch.time || null,
+    hora_termino: dispatch.endTime || null,
     codigo_tractor: dispatch.tractorCode || null,
     codigo_maquina: dispatch.machineCode || null,
     aplicador_id: dispatch.operatorId || null
@@ -17192,7 +17588,7 @@ async function cloudSaveDispatch(order, dispatch) {
       });
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
@@ -17312,6 +17708,7 @@ async function cloudUpdateDispatch(order, dispatch) {
 
   const traceSpanish = {
     hora_salida: dispatch.time || null,
+    hora_termino: dispatch.endTime || null,
     codigo_tractor: dispatch.tractorCode || null,
     codigo_maquina: dispatch.machineCode || null,
     aplicador_id: dispatch.operatorId || null
@@ -17344,7 +17741,7 @@ async function cloudUpdateDispatch(order, dispatch) {
       updated = true;
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
@@ -17451,23 +17848,31 @@ function renderWarehouse() {
           <label class="inline-filter">Estado
             <select id="warehouseStatusFilter">${statusFilterOptions(warehouseStatusFilter)}</select>
           </label>
-          <label class="inline-filter">Desde
+          <label class="inline-filter warehouse-order-search">Buscar orden
+            <input id="warehouseOrderSearch" type="search" inputmode="numeric" value="${htmlAttr(warehouseOrderSearch)}" placeholder="Ej. 1694" autocomplete="off">
+          </label>
+          <label class="inline-filter">Creada desde
             <input id="warehouseDateFromFilter" type="date" value="${warehouseDateFromFilter}">
           </label>
-          <label class="inline-filter">Hasta
+          <label class="inline-filter">Creada hasta
             <input id="warehouseDateToFilter" type="date" value="${warehouseDateToFilter}">
           </label>
           <button class="secondary-button" data-action="clear-warehouse-filter">Limpiar</button>
         </div>
       </div>
-      <div class="order-grid">
+      <div class="warehouse-order-list">
         ${warehouseOrders.map(warehouseCard).join("") || `<div class="empty">No hay ordenes para bodega con los filtros actuales.</div>`}
+        <div class="empty warehouse-search-empty" hidden>No se encontro ese numero de orden.</div>
       </div>
     </section>
   `;
   document.getElementById("warehouseStatusFilter")?.addEventListener("change", (event) => {
     warehouseStatusFilter = event.target.value;
     renderWarehouse();
+  });
+  document.getElementById("warehouseOrderSearch")?.addEventListener("input", (event) => {
+    warehouseOrderSearch = event.target.value;
+    applyWarehouseOrderSearch();
   });
   document.getElementById("warehouseDateFromFilter")?.addEventListener("change", (event) => {
     warehouseDateFromFilter = event.target.value;
@@ -17477,6 +17882,20 @@ function renderWarehouse() {
     warehouseDateToFilter = event.target.value;
     renderWarehouse();
   });
+  applyWarehouseOrderSearch();
+}
+
+function applyWarehouseOrderSearch() {
+  const query = normalizeText(warehouseOrderSearch).replace(/^orden\s*/, "").replace(/^#/, "").trim();
+  const cards = [...views.warehouse.querySelectorAll(".warehouse-order-card")];
+  let visible = 0;
+  cards.forEach((card) => {
+    const matches = !query || normalizeText(card.dataset.orderNumber).includes(query);
+    card.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const empty = views.warehouse.querySelector(".warehouse-search-empty");
+  if (empty) empty.hidden = !query || visible > 0 || cards.length === 0;
 }
 
 function warehouseCard(order) {
@@ -17486,11 +17905,12 @@ function warehouseCard(order) {
   const remaining = Math.max(0, total - dispatched);
   const pct = total ? Math.min(100, dispatched / total * 100) : 0;
   return `
-    <article class="order-card warehouse-order-card ${isNewOrder(order) ? "is-new-order" : ""} ${status === "closed" ? "is-complete-order" : ""}">
+    <article class="order-card warehouse-order-card ${isNewOrder(order) ? "is-new-order" : ""} ${status === "closed" ? "is-complete-order" : ""}" data-order-status="${htmlAttr(status)}" data-order-number="${htmlAttr(order.number)}">
       <div class="order-card-head">
         <div>
           <span class="overline">Orden #${order.number}</span>
           <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
+          <small class="warehouse-created-at">Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</small>
         </div>
         <div class="order-status-stack">
           ${newOrderMark(order)}
@@ -17508,25 +17928,33 @@ function warehouseCard(order) {
         <div><strong>N programa</strong><span>${programNumbersLabel(order)}</span></div>
         <div><strong>Objetivo</strong><span>${order.objective || "-"}</span></div>
       </div>
-      <div class="table-wrap compact-table warehouse-product-table">
-        <table>
-          <thead><tr><th>Producto</th><th>kg/L ha</th><th>Plan</th><th>Salido neto</th><th>Costo</th></tr></thead>
-          <tbody>
-            ${order.recipe.map((line) => {
-              const product = getProduct(line.productId);
-              const qty = dispatchedProduct(order, line.productId);
-              return `<tr><td data-label="Producto">${product?.name}</td><td data-label="kg/L ha">${number(productHaFromDose(order, line))}</td><td data-label="Plan">${number(plannedProduct(order, line))}</td><td data-label="Salido neto">${number(qty)} ${product?.unit}</td><td data-label="Costo">${money(qty * (product?.cost || 0))}</td></tr>`;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
-      <div class="table-wrap compact-table warehouse-history-table">
-        <table>
-          <thead><tr><th>Fecha</th><th>Hora</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquina</th><th>Aplicador</th><th>Accion</th></tr></thead>
-          <tbody>
-            ${warehouseDispatchRows(order)}
-          </tbody>
-        </table>
+      <div class="warehouse-detail-grid">
+        <details class="application-order-details warehouse-order-details">
+          <summary><span>Productos</span><strong>${order.recipe.length}</strong></summary>
+          <div class="table-wrap compact-table warehouse-product-table">
+            <table>
+              <thead><tr><th>Producto</th><th>kg/L ha</th><th>Plan</th><th>Salido neto</th><th>Costo</th></tr></thead>
+              <tbody>
+                ${order.recipe.map((line) => {
+                  const product = getProduct(line.productId);
+                  const qty = dispatchedProduct(order, line.productId);
+                  return `<tr><td data-label="Producto">${escapeHtml(product?.name || "Producto")}</td><td data-label="kg/L ha">${number(productHaFromDose(order, line))}</td><td data-label="Plan">${number(plannedProduct(order, line))}</td><td data-label="Salido neto">${number(qty)} ${escapeHtml(product?.unit || "")}</td><td data-label="Costo">${money(qty * (product?.cost || 0))}</td></tr>`;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <details class="application-order-details warehouse-order-details">
+          <summary><span>Historial de salidas</span><strong>${order.dispatches.length}</strong></summary>
+          <div class="table-wrap compact-table warehouse-history-table">
+            <table>
+              <thead><tr><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Accion</th></tr></thead>
+              <tbody>
+                ${warehouseDispatchRows(order)}
+              </tbody>
+            </table>
+          </div>
+        </details>
       </div>
       <div class="card-actions warehouse-actions">
         ${status !== "closed" ? `<button class="primary-button warehouse-dispatch-button" data-action="open-dispatch" data-id="${order.id}">Nueva salida</button>` : `<button class="primary-button warehouse-complete-button" type="button" disabled>Orden completa</button>`}
@@ -17538,15 +17966,16 @@ function warehouseCard(order) {
 }
 
 function warehouseDispatchRows(order) {
-  if (!order.dispatches.length) return `<tr><td colspan="8" data-label="Salidas">Sin salidas registradas aun.</td></tr>`;
+  if (!order.dispatches.length) return `<tr><td colspan="9" data-label="Salidas">Sin salidas registradas aun.</td></tr>`;
   return order.dispatches.map((dispatch) => `
     <tr>
       <td data-label="Fecha">${dispatch.date || "-"}</td>
-      <td data-label="Hora">${dispatchDisplayTime(dispatch)}</td>
+      <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
+      <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
       <td data-label="Tipo">${dispatch.type === "devolucion" ? "Devolucion" : "Salida"}</td>
       <td data-label="Mojamiento">${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)} L</td>
       <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
-      <td data-label="Maquina">${dispatch.machineCode || "-"}</td>
+      <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
       <td data-label="Aplicador">${dispatch.operatorId ? getOperator(dispatch.operatorId) : "-"}</td>
       <td data-label="Accion"><div class="dispatch-row-actions"><button class="secondary-button small-button" type="button" data-action="edit-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Modificar</button><button class="danger-button small-button" type="button" data-action="delete-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Borrar</button></div></td>
     </tr>
@@ -19021,9 +19450,9 @@ function openOrderDialog(orderId, presetProgramId = "") {
   const selectedRecipe = order?.recipe || [];
   const potreros = uniquePotreros();
   const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
-  const selectedPrograms = selectedOfficialProgram
-    ? [selectedOfficialProgram.number]
-    : order?.programNumbers?.length ? order.programNumbers : [order?.programNumber].filter(Boolean);
+  const selectedPrograms = order?.programNumbers?.length
+    ? order.programNumbers
+    : selectedOfficialProgram ? [selectedOfficialProgram.number] : [order?.programNumber].filter(Boolean);
   const initialPotrero = order?.classification === "P"
     ? firstPotreroFromSelection(order?.blocks, order?.potrero) || order?.potrero || ""
     : order?.potrero || "";
@@ -19049,9 +19478,10 @@ function openOrderDialog(orderId, presetProgramId = "") {
                 ${officialProgramOrderOptions(selectedOfficialProgram?.id || "")}
               </select>
             </label>
-            <button type="button" class="secondary-button" id="applyOfficialProgram">Cargar programa</button>
+            <button type="button" class="secondary-button" id="applyOfficialProgram">Añadir programa</button>
           </div>
           <div id="selectedPrograms" class="selected-blocks"></div>
+          <p class="field-hint">Puedes añadir más de una aplicación oficial a la misma orden.</p>
         </div>
         <label class="full">Objetivo<input name="objective" value="${order?.objective || ""}" placeholder="Control plaga, calibre, stress, foliar"></label>
         <label>Clasificacion
@@ -19084,7 +19514,12 @@ function openOrderDialog(orderId, presetProgramId = "") {
         <label>Mojamiento L/ha<input name="waterHa" type="number" step="1" value="${order?.waterHa || 1500}" required></label>
         <label>Presion bar<input name="pressure" type="number" step="0.1" value="${order?.pressure || ""}" placeholder="18"></label>
         <label>Velocidad km/h<input name="speed" type="number" step="0.1" value="${order?.speed || ""}" placeholder="4.5"></label>
-        <label>Boquilla<input name="nozzle" value="${order?.nozzle || ""}" placeholder="ATR 80, cono, abanico"></label>
+        <label>Boquilla
+          <select name="nozzle" id="nozzleModelSelect"></select>
+        </label>
+        <label>Especificacion
+          <select name="nozzleSpec" id="nozzleSpecSelect"></select>
+        </label>
         <label>Dosificador<input name="dosifier" value="${order?.dosifier || ""}" placeholder="Si / No / codigo"></label>
       </div>
       <div class="recipe-editor">
@@ -19110,12 +19545,25 @@ function openOrderDialog(orderId, presetProgramId = "") {
       </div>
     </form>
   `;
+  const formElement = document.getElementById("orderForm");
+  formElement.dataset.savedNozzle = order?.nozzle || "";
   dialog.showModal();
   renderOrderProgramPicker(selectedPrograms);
   renderOrderBlockPicker(order?.blocks || []);
+  renderOrderNozzlePicker();
   document.querySelector('[name="classification"]').addEventListener("change", () => {
     const form = document.getElementById("orderForm");
     renderOrderBlockPicker(form.classification.value === "P" ? normalizeBlocksForPulverization(selectedOrderBlocks(), form.potrero.value) : []);
+    form.dataset.savedNozzle = "";
+    document.getElementById("nozzleModelSelect").value = "";
+    document.getElementById("nozzleSpecSelect").value = "";
+    renderOrderNozzlePicker();
+  });
+  document.getElementById("nozzleModelSelect")?.addEventListener("change", () => {
+    const form = document.getElementById("orderForm");
+    form.dataset.savedNozzle = "";
+    document.getElementById("nozzleSpecSelect").value = "";
+    renderOrderNozzlePicker();
   });
   document.getElementById("potreroSelect").addEventListener("change", () => {
     const form = document.getElementById("orderForm");
@@ -19129,12 +19577,31 @@ function openOrderDialog(orderId, presetProgramId = "") {
   document.getElementById("addBlockToOrder").addEventListener("click", addSelectedBlockToOrder);
   document.getElementById("applyOfficialProgram").addEventListener("click", applyOfficialProgramToOrder);
   document.getElementById("addRecipeLine").addEventListener("click", () => {
-    document.getElementById("recipeLines").insertAdjacentHTML("beforeend", recipeLineHtml({ productId: state.products[0].id, dose100: state.products[0].dose100 }, selectedOrderPrograms()));
-    updateOrderRecipeCalculations();
+    if (!state.products.length) {
+      showToast("No hay productos activos para agregar");
+      return;
+    }
+    const recipeLines = document.getElementById("recipeLines");
+    recipeLines.insertAdjacentHTML("beforeend", recipeLineHtml({ productId: "", dose100: 0 }, selectedOrderPrograms()));
+    openRecipeProductDialog(recipeLines.lastElementChild);
   });
   document.querySelector('[name="waterHa"]').addEventListener("input", updateOrderRecipeCalculations);
   document.getElementById("recipeLines").addEventListener("input", (event) => {
+    if (event.target.matches('[name="productSearch"]')) {
+      syncRecipeProductPicker(event.target.closest(".recipe-line"));
+      updateOrderRecipeCalculations();
+    }
     if (event.target.matches('[name="dose100"]')) updateOrderRecipeCalculations();
+  });
+  document.getElementById("recipeLines").addEventListener("change", (event) => {
+    if (event.target.matches('[name="productSearch"]')) {
+      syncRecipeProductPicker(event.target.closest(".recipe-line"));
+      updateOrderRecipeCalculations();
+    }
+  });
+  document.getElementById("recipeLines").addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-open-recipe-product]");
+    if (trigger) openRecipeProductDialog(trigger.closest(".recipe-line"));
   });
   dialog.addEventListener("click", removeRecipeLine);
   dialog.addEventListener("click", removeOrderBlock);
@@ -19165,22 +19632,45 @@ function applyOfficialProgramToOrder(programId = "") {
     return;
   }
   const lines = programProductsFor(program.id);
-  form.programId.value = program.id;
-  form.seasonId.value = program.seasonId;
-  form.programNumbers.value = String(program.number);
-  form.objective.value = program.objective || "";
-  if (program.waterHa) form.waterHa.value = program.waterHa;
-  renderOrderProgramPicker([program.number]);
   const recipeContainer = document.getElementById("recipeLines");
-  recipeContainer.querySelectorAll(".recipe-line:not(.recipe-line-head)").forEach((line) => line.remove());
+  const existingRecipeRows = [...recipeContainer.querySelectorAll(".recipe-line:not(.recipe-line-head)")];
+  const currentPrograms = selectedOrderPrograms();
+  const isFirstProgram = existingRecipeRows.length === 0;
+  if (!isFirstProgram && String(form.seasonId.value) !== String(program.seasonId)) {
+    showToast("Los programas de una misma orden deben pertenecer a la misma temporada");
+    return;
+  }
+  const firstOfficialProgram = state.programs.find((item) => String(item.id) === String(form.programId.value));
+  if (!isFirstProgram && firstOfficialProgram && normalizeCatalogText(firstOfficialProgram.crop) !== normalizeCatalogText(program.crop)) {
+    showToast("Los programas de una misma orden deben corresponder a la misma especie");
+    return;
+  }
+  const currentCrop = normalizeCatalogText(form.crop.value).split(",").map((item) => item.trim()).filter(Boolean);
+  if (currentCrop.length && !currentCrop.includes(normalizeCatalogText(program.crop))) {
+    showToast(`El programa seleccionado corresponde a ${program.crop}; revisa la especie de la orden`);
+    return;
+  }
+
+  if (!form.programId.value) form.programId.value = program.id;
+  if (isFirstProgram) form.seasonId.value = program.seasonId;
+  const objectives = String(form.objective.value || "").split(" / ").map((item) => item.trim()).filter(Boolean);
+  if (program.objective && !objectives.includes(program.objective)) objectives.push(program.objective);
+  form.objective.value = objectives.join(" / ");
+  if (isFirstProgram && program.waterHa) form.waterHa.value = program.waterHa;
+  const nextPrograms = [...new Set([...currentPrograms, Number(program.number)].filter(Boolean))];
+  renderOrderProgramPicker(nextPrograms);
+
+  const existingKeys = new Set(existingRecipeRows.map((row) => {
+    const productId = row.querySelector('[name="productId"]')?.value || "";
+    const programNumber = row.querySelector('[name="lineProgramNumber"]')?.value || "";
+    return `${programNumber}:${productId}`;
+  }));
   const missingProducts = lines.filter((line) => !line.productId).length;
   const recipeLines = [...new Map(lines
     .filter((line) => line.productId && !line.incomplete && Number(line.dose) > 0)
     .map((line) => [line.productId, line])).values()];
   recipeLines.forEach((line) => {
-    if (!line.productId) {
-      return;
-    }
+    if (!line.productId || existingKeys.has(`${program.number}:${line.productId}`)) return;
     recipeContainer.insertAdjacentHTML("beforeend", recipeLineHtml({
       productId: line.productId,
       programProductId: line.id,
@@ -19192,13 +19682,16 @@ function applyOfficialProgramToOrder(programId = "") {
       outputUnit: line.outputUnit,
       divisor: line.divisor,
       incomplete: line.incomplete
-    }, [program.number]));
+    }, nextPrograms));
   });
+  const officialSelect = document.getElementById("officialProgramSelect");
+  if (officialSelect) officialSelect.value = "";
   updateOrderRecipeCalculations();
   const warnings = [];
   if (missingProducts) warnings.push(`${missingProducts} producto(s) sin vínculo al maestro`);
   if (lines.some((line) => line.incomplete)) warnings.push("las líneas incompletas quedaron fuera de la receta");
   if (warnings.length) showToast(warnings.join("; "));
+  else showToast(`Programa ${program.number} añadido a la orden`);
 }
 
 function firstPotreroFromSelection(blocks = [], potreroText = "") {
@@ -19360,7 +19853,15 @@ function addProgramToOrder() {
 function removeOrderProgram(event) {
   if (event.target.closest("[data-action]")?.dataset.action !== "remove-order-program") return;
   const program = Number(event.target.closest("[data-action]").dataset.program);
-  renderOrderProgramPicker(selectedOrderPrograms().filter((item) => item !== program));
+  const remaining = selectedOrderPrograms().filter((item) => item !== program);
+  document.querySelectorAll('.recipe-line:not(.recipe-line-head)').forEach((line) => {
+    if (Number(line.querySelector('[name="lineProgramNumber"]')?.value) === program) line.remove();
+  });
+  renderOrderProgramPicker(remaining);
+  const form = document.getElementById("orderForm");
+  const nextOfficial = state.programs.find((item) => String(item.seasonId) === String(form?.seasonId.value) && Number(item.number) === Number(remaining[0]));
+  if (form) form.programId.value = nextOfficial?.id || "";
+  updateOrderRecipeCalculations();
 }
 
 function programOptions(programs, selected) {
@@ -19368,7 +19869,188 @@ function programOptions(programs, selected) {
   return values.map((program) => `<option value="${program}" ${String(program) === String(selected) ? "selected" : ""}>Programa ${program}</option>`).join("");
 }
 
+function resolveRecipeProductByText(value = "") {
+  const text = normalizeCatalogText(value);
+  if (!text) return null;
+  const products = state.products || [];
+  return products.find((product) => String(product.id) === String(value))
+    || products.find((product) => normalizeCatalogText(product.name) === text)
+    || products.find((product) => normalizeCatalogText(product.name).startsWith(text))
+    || (() => {
+      const matches = products.filter((product) => normalizeCatalogText(product.name).includes(text));
+      return matches.length === 1 ? matches[0] : null;
+    })();
+}
+
+function syncRecipeProductPicker(line) {
+  const search = line?.querySelector('[name="productSearch"]');
+  const hidden = line?.querySelector('[name="productId"]');
+  if (!search || !hidden) return null;
+  const product = getProduct(hidden.value) || resolveRecipeProductByText(search.value);
+  hidden.value = product?.id || "";
+  search.value = product?.name || search.value;
+  const unitLabel = line.querySelector(".recipe-result-control small");
+  if (unitLabel && product) unitLabel.textContent = `${product.unit || "kg/L"}/ha`;
+  return product;
+}
+
+function syncAllRecipeProductPickers() {
+  document.querySelectorAll(".recipe-line").forEach((line) => {
+    if (line.querySelector('[name="productSearch"]')) syncRecipeProductPicker(line);
+  });
+}
+
+function recipeProductSecondaryText(product) {
+  return [product?.ingredient, product?.sagNumber ? `SAG ${product.sagNumber}` : ""]
+    .filter(Boolean)
+    .join(" · ") || "Sin ingrediente activo informado";
+}
+
+function recipeProductSearchText(product) {
+  return normalizeCatalogText([
+    product?.name,
+    product?.sagName,
+    product?.ingredient,
+    product?.sagNumber,
+    product?.sagType,
+    product?.sagConcentration
+  ].filter(Boolean).join(" "));
+}
+
+function recipeProductTypeOptions() {
+  return [...new Set((state.products || []).flatMap((product) => String(product.sagType || "")
+    .split("/")
+    .map((value) => value.trim())
+    .filter(Boolean)))]
+    .sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function renderRecipeProductCatalog(query = "", type = "Todos") {
+  const list = document.getElementById("recipeProductCatalogList");
+  const count = document.getElementById("recipeProductCatalogCount");
+  if (!list || !count) return;
+  const normalizedQuery = normalizeCatalogText(query);
+  const selectedId = activeRecipeProductLine?.querySelector('[name="productId"]')?.value || "";
+  const products = (state.products || [])
+    .filter((product) => (!normalizedQuery || recipeProductSearchText(product).includes(normalizedQuery))
+      && (type === "Todos" || String(product.sagType || "").split("/").map((value) => value.trim()).includes(type)))
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { numeric: true }));
+  count.textContent = `${products.length} producto${products.length === 1 ? "" : "s"}`;
+  list.innerHTML = products.length ? products.map((product) => `
+    <button type="button" class="recipe-product-option ${String(product.id) === String(selectedId) ? "is-selected" : ""}" data-recipe-product-id="${htmlAttr(product.id)}">
+      <span class="recipe-product-option-copy">
+        <strong>${escapeHtml(product.name)}</strong>
+        <small>${escapeHtml(recipeProductSecondaryText(product))}</small>
+        ${product.sagConcentration ? `<em>${escapeHtml(product.sagConcentration)}</em>` : ""}
+      </span>
+      <span class="recipe-product-option-meta">
+        <b>${escapeHtml(product.unit || "kg/L")}</b>
+        ${product.sagType ? `<small>${escapeHtml(product.sagType)}</small>` : ""}
+      </span>
+    </button>
+  `).join("") : `
+    <div class="recipe-product-empty">
+      <strong>Sin coincidencias</strong>
+      <span>Prueba con otro nombre, ingrediente activo o número SAG.</span>
+    </div>
+  `;
+}
+
+function selectRecipeProduct(productId) {
+  const line = activeRecipeProductLine;
+  const product = getProduct(productId);
+  if (!line?.isConnected || !product) return;
+  const previousId = line.querySelector('[name="productId"]')?.value || "";
+  line.querySelector('[name="productId"]').value = product.id;
+  line.querySelector('[name="productSearch"]').value = product.name;
+  const trigger = line.querySelector("[data-open-recipe-product]");
+  if (trigger) {
+    trigger.querySelector("strong").textContent = product.name;
+    trigger.querySelector("small").textContent = recipeProductSecondaryText(product);
+    trigger.querySelector("b").textContent = product.unit || "kg/L";
+    trigger.classList.add("has-product");
+  }
+  if (String(previousId) !== String(product.id)) {
+    const programProduct = line.querySelector('[name="programProductId"]');
+    const doseBasis = line.querySelector('[name="doseBasis"]');
+    const doseUnit = line.querySelector('[name="doseUnit"]');
+    const outputUnit = line.querySelector('[name="outputUnit"]');
+    const divisor = line.querySelector('[name="doseDivisor"]');
+    const dose = line.querySelector('[name="dose100"]');
+    if (programProduct) programProduct.value = "";
+    if (doseBasis) doseBasis.value = "per_100l";
+    if (doseUnit) doseUnit.value = `${product.unit || "kg/L"} por 100 L`;
+    if (outputUnit) outputUnit.value = product.unit || "";
+    if (divisor) divisor.value = "1000";
+    if (dose) dose.value = Number(product.dose100) || 0;
+  }
+  const doseLabel = line.querySelector(".recipe-dose-control small");
+  const resultLabel = line.querySelector(".recipe-result-control small");
+  if (doseLabel) doseLabel.textContent = `${product.unit || "kg/L"} por 100 L`;
+  if (resultLabel) resultLabel.textContent = `${product.unit || "kg/L"}/ha`;
+  document.getElementById("recipeProductDialog")?.close();
+  updateOrderRecipeCalculations();
+}
+
+function openRecipeProductDialog(line) {
+  if (!line || !state.products.length) return;
+  activeRecipeProductLine = line;
+  const dialog = document.getElementById("recipeProductDialog");
+  const types = recipeProductTypeOptions();
+  dialog.innerHTML = `
+    <div class="modal-body recipe-product-catalog">
+      <div class="modal-head">
+        <div>
+          <h2>Seleccionar producto</h2>
+          <p>Catálogo fitosanitario</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="recipe-product-catalog-tools">
+        <label class="recipe-product-search">Buscar
+          <input id="recipeProductCatalogSearch" type="search" placeholder="Nombre, ingrediente activo o número SAG" autocomplete="off">
+        </label>
+        <label>Tipo
+          <select id="recipeProductCatalogType">
+            <option value="Todos">Todos</option>
+            ${types.map((type) => `<option value="${htmlAttr(type)}">${escapeHtml(type)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div class="recipe-product-catalog-summary"><strong id="recipeProductCatalogCount">0 productos</strong></div>
+      <div id="recipeProductCatalogList" class="recipe-product-catalog-list" role="listbox" aria-label="Productos disponibles"></div>
+    </div>
+  `;
+  const search = dialog.querySelector("#recipeProductCatalogSearch");
+  const type = dialog.querySelector("#recipeProductCatalogType");
+  const refresh = () => renderRecipeProductCatalog(search.value, type.value);
+  search.addEventListener("input", refresh);
+  type.addEventListener("change", refresh);
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      dialog.querySelector("[data-recipe-product-id]")?.focus();
+    }
+    if (event.key === "Enter") {
+      const first = dialog.querySelector("[data-recipe-product-id]");
+      if (first) {
+        event.preventDefault();
+        selectRecipeProduct(first.dataset.recipeProductId);
+      }
+    }
+  });
+  dialog.querySelector("#recipeProductCatalogList").addEventListener("click", (event) => {
+    const option = event.target.closest("[data-recipe-product-id]");
+    if (option) selectRecipeProduct(option.dataset.recipeProductId);
+  });
+  dialog.addEventListener("close", () => { activeRecipeProductLine = null; }, { once: true });
+  renderRecipeProductCatalog();
+  dialog.showModal();
+  requestAnimationFrame(() => search.focus());
+}
+
 function recipeLineHtml(line, programs = []) {
+  const product = getProduct(line.productId);
   const doseValue = line.dose ?? line.dose100 ?? 0;
   const basis = line.doseBasis || "per_100l";
   const unit = line.doseUnit || (basis === "per_100l" ? "kg/L por 100 L" : "");
@@ -19379,7 +20061,14 @@ function recipeLineHtml(line, programs = []) {
       <input type="hidden" name="doseUnit" value="${htmlAttr(unit)}">
       <input type="hidden" name="outputUnit" value="${htmlAttr(line.outputUnit || "")}">
       <input type="hidden" name="doseDivisor" value="${Number(line.divisor) || (basis === "per_100l" ? 1000 : 1)}">
-      <select name="productId">${state.products.map((product) => `<option value="${product.id}" ${product.id === line.productId ? "selected" : ""}>${product.name}</option>`).join("")}</select>
+      <div class="recipe-product-picker">
+        <button type="button" class="recipe-product-trigger ${product ? "has-product" : ""}" data-open-recipe-product aria-label="${product ? `Cambiar ${htmlAttr(product.name)}` : "Seleccionar producto"}">
+          <span><strong>${escapeHtml(product?.name || line.name || "Seleccionar producto")}</strong><small>${escapeHtml(product ? recipeProductSecondaryText(product) : "Abrir catálogo")}</small></span>
+          <b>${escapeHtml(product?.unit || "-")}</b>
+        </button>
+        <input type="hidden" name="productSearch" value="${htmlAttr(product?.name || line.name || "")}">
+        <input type="hidden" name="productId" value="${htmlAttr(line.productId || "")}">
+      </div>
       <select name="lineProgramNumber">${programOptions(programs, line.programNumber || programs[0] || "")}</select>
       <label class="recipe-dose-control"><input name="dose100" type="number" step="0.01" value="${doseValue}" aria-label="Dosis oficial"><small>${escapeHtml(unit || "Unidad pendiente")}</small></label>
       <label class="recipe-result-control"><input name="productHaProgram" type="number" step="0.001" value="" aria-label="Gasto por producto y hectarea" title="Calculado desde la base de dosis oficial" readonly><small>${escapeHtml(line.outputUnit || getProduct(line.productId)?.unit || "kg/L")}/ha</small></label>
@@ -19414,6 +20103,7 @@ function removeRecipeLine(event) {
 async function saveOrder(orderId) {
   const form = document.getElementById("orderForm");
   if (!form.reportValidity()) return;
+  syncAllRecipeProductPickers();
   const data = Object.fromEntries(new FormData(form));
   const selectedBlocks = data.blocks.split(",").map((item) => item.trim()).filter(Boolean);
   const selectedPrograms = data.programNumbers.split(",").map((item) => Number(item.trim())).filter(Boolean);
@@ -19436,10 +20126,11 @@ async function saveOrder(orderId) {
     showToast("La fecha termino no puede ser anterior al inicio");
     return;
   }
-  const recipe = [...document.querySelectorAll(".recipe-line")]
+  const recipeRows = [...document.querySelectorAll(".recipe-line")]
     .filter((line) => line.querySelector('[name="productId"]'))
     .map((line) => ({
     productId: line.querySelector('[name="productId"]').value,
+    productSearch: line.querySelector('[name="productSearch"]')?.value || "",
     programProductId: line.querySelector('[name="programProductId"]')?.value || "",
     programNumber: Number(line.querySelector('[name="lineProgramNumber"]').value) || selectedPrograms[0],
     dose100: Number(line.querySelector('[name="dose100"]').value),
@@ -19449,7 +20140,13 @@ async function saveOrder(orderId) {
     outputUnit: line.querySelector('[name="outputUnit"]')?.value || "",
     divisor: Number(line.querySelector('[name="doseDivisor"]')?.value) || 1,
     productHaProgram: Number(line.querySelector('[name="productHaProgram"]').value) || 0
-  })).filter((line) => line.productId && line.dose100 > 0);
+  }));
+  const unresolvedProduct = recipeRows.find((line) => line.productSearch && !line.productId);
+  if (unresolvedProduct) {
+    showToast(`Selecciona un producto valido para "${unresolvedProduct.productSearch}"`);
+    return;
+  }
+  const recipe = recipeRows.filter((line) => line.productId && line.dose100 > 0);
 
   if (!recipe.length) {
     showToast("La orden necesita al menos un producto con dosis válida");
@@ -19486,7 +20183,7 @@ async function saveOrder(orderId) {
     waterHa: Number(data.waterHa),
     pressure: data.pressure,
     speed: data.speed,
-    nozzle: data.nozzle,
+    nozzle: orderNozzleText(data.nozzle, data.nozzleSpec),
     dosifier: data.dosifier,
     tractorCode: "",
     machineCode: "",
@@ -19544,7 +20241,7 @@ function openTankDialog(orderId) {
         <label>Presion real bar<input name="pressure" type="number" step="0.1" value="${order.pressure || ""}"></label>
         <label>Velocidad real km/h<input name="speed" type="number" step="0.1" value="${order.speed || ""}"></label>
         <label>Boquilla usada<input name="nozzle" value="${order.nozzle || ""}"></label>
-        <label>Codigo maquina<input name="machineCode" value="${order.machineCode || getEquipment(order.sprayerId)}"></label>
+        <label>Codigo maquinaria<input name="machineCode" value="${order.machineCode || getEquipment(order.sprayerId)}"></label>
       </div>
       <div class="recipe-editor">
         <h3>Productos cargados</h3>
@@ -19665,7 +20362,7 @@ async function cancelOrder(orderId) {
 
 function dispatchInfoRows(order) {
   if (!order?.dispatches?.length) {
-    return `<tr><td colspan="8" data-label="Salidas">Sin salidas registradas para esta orden.</td></tr>`;
+    return `<tr><td colspan="9" data-label="Salidas">Sin salidas registradas para esta orden.</td></tr>`;
   }
   return order.dispatches.map((dispatch) => {
     const products = Object.entries(dispatch.products || {})
@@ -19677,11 +20374,12 @@ function dispatchInfoRows(order) {
     return `
       <tr>
         <td data-label="Fecha">${dispatch.date || "-"}</td>
-        <td data-label="Hora">${dispatchDisplayTime(dispatch)}</td>
+        <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
+        <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
         <td data-label="Tipo">${dispatch.type === "devolucion" ? "Devolución" : "Salida"}</td>
         <td data-label="Mojamiento">${number(dispatch.liters || 0, 0)} L</td>
         <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
-        <td data-label="Máquina">${dispatch.machineCode || "-"}</td>
+        <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
         <td data-label="Aplicador">${dispatch.operatorId ? getOperator(dispatch.operatorId) : "-"}</td>
         <td data-label="Productos">${products}</td>
       </tr>
@@ -19717,7 +20415,7 @@ function openDispatchInfoDialog(orderId) {
       <div class="progress"><i style="width:${pct}%"></i></div>
       <div class="table-wrap compact-table dispatch-info-table">
         <table>
-          <thead><tr><th>Fecha</th><th>Hora</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Máquina</th><th>Aplicador</th><th>Productos</th></tr></thead>
+          <thead><tr><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Productos</th></tr></thead>
           <tbody>${dispatchInfoRows(order)}</tbody>
         </table>
       </div>
@@ -19805,7 +20503,15 @@ function bindDispatchProductCalculator(orderId, form, preserveValues = false) {
   refreshDispatchProductCalculator(orderId, form, !preserveValues);
 }
 
-function openEditDispatchDialog(orderId, dispatchId) {
+async function openEditDispatchDialog(orderId, dispatchId) {
+  if (supabaseSession) {
+    try {
+      await loadApplicationOperatorsFromSupabase();
+    } catch (error) {
+      console.warn("No se pudieron refrescar aplicadores antes de editar salida", error);
+      showToast("No se pudieron cargar aplicadores desde Supabase");
+    }
+  }
   const order = state.orders.find((item) => item.id === orderId);
   const dispatch = order?.dispatches?.find((item) => String(item.id) === String(dispatchId));
   if (!order || !dispatch) return;
@@ -19818,18 +20524,18 @@ function openEditDispatchDialog(orderId, dispatchId) {
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
-        <label>Fecha<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Hora salida<input name="time" type="time" value="${dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue()}" required></label>
+        <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
+        <label>Hora de inicio<input name="time" type="time" value="${dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue()}" required></label>
+        <label>Hora de termino<input name="endTime" type="time" value="${dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : ""}"></label>
         <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquina<input name="machineCode" value="${dispatch.machineCode || ""}" placeholder="N-01"></label>
+        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor">${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
+        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine">${machineCodeOptions(dispatch.machineCode || "")}</select></label>
         <label>Aplicador<select name="operatorId">
-          <option value="">Seleccionar</option>
-          ${state.operators.map((operator) => `<option value="${operator.id}" ${operator.id === dispatch.operatorId ? "selected" : ""}>${operator.name}</option>`).join("")}
+          ${operatorOptions(dispatch.operatorId || "")}
         </select></label>
       </div>
       <div class="recipe-editor dispatch-product-calculator">
@@ -19850,7 +20556,8 @@ function openEditDispatchDialog(orderId, dispatchId) {
     </form>
   `;
   dialog.showModal();
-  refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), dispatch.tractorCode || "");
+  refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), dispatch.tractorCode || "", "tractor");
+  refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), dispatch.machineCode || "", "machine");
   bindDispatchProductCalculator(orderId, document.getElementById("editDispatchForm"), true);
   updateEditDispatchPreview(orderId);
   document.querySelector('#editDispatchForm [name="liters"]')?.addEventListener("input", () => updateEditDispatchPreview(orderId));
@@ -19886,6 +20593,12 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
 
   const data = new FormData(form);
   const newLiters = Number(data.get("liters")) || 0;
+  const startTime = String(data.get("time") || "");
+  const endTime = String(data.get("endTime") || "");
+  if (endTime && startTime && endTime < startTime) {
+    showToast("La hora de termino no puede ser anterior a la hora de inicio");
+    return;
+  }
   const otherDispatched = (order.dispatches || [])
     .filter((item) => String(item.id) !== String(dispatchId))
     .reduce((sum, item) => sum + (item.type === "devolucion" ? -(Number(item.liters) || 0) : (Number(item.liters) || 0)), 0);
@@ -19898,6 +20611,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   const previous = {
     date: dispatch.date,
     time: dispatch.time,
+    endTime: dispatch.endTime,
     liters: dispatch.liters,
     tractorCode: dispatch.tractorCode,
     machineCode: dispatch.machineCode,
@@ -19924,6 +20638,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
 
   dispatch.date = data.get("date");
   dispatch.time = data.get("time") || currentTimeValue();
+  dispatch.endTime = data.get("endTime") || "";
   dispatch.liters = newLiters;
   dispatch.tractorCode = data.get("tractorCode");
   dispatch.machineCode = data.get("machineCode");
@@ -20008,7 +20723,14 @@ async function deleteDispatch(orderId, dispatchId) {
 }
 
 async function openDispatchDialog(orderId, type = "salida") {
-  await ensureVehicleCodesLoaded();
+  await Promise.all([
+    ensureVehicleCodesLoaded(),
+    supabaseSession ? loadApplicationOperatorsFromSupabase().catch((error) => {
+      console.warn("No se pudieron refrescar aplicadores antes de crear salida", error);
+      showToast("No se pudieron cargar aplicadores desde Supabase");
+      return [];
+    }) : Promise.resolve([])
+  ]);
   const order = state.orders.find((item) => item.id === orderId);
   if (!order) return;
   const remaining = Math.max(0, plannedLiters(order) - dispatchedLiters(order));
@@ -20022,18 +20744,18 @@ async function openDispatchDialog(orderId, type = "salida") {
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
-        <label>Fecha<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Hora salida<input name="time" type="time" value="${currentTimeValue()}" required></label>
+        <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+        <label>Hora de inicio<input name="time" type="time" value="${currentTimeValue()}" required></label>
+        <label>Hora de termino<input name="endTime" type="time"></label>
         <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquina<input name="machineCode" value="${lastDispatch.machineCode || ""}" placeholder="N-01"></label>
+        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor">${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
+        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine">${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
         <label>Aplicador<select name="operatorId">
-          <option value="">Seleccionar</option>
-          ${state.operators.map((operator) => `<option value="${operator.id}" ${operator.id === lastDispatch.operatorId ? "selected" : ""}>${operator.name}</option>`).join("")}
+          ${operatorOptions(lastDispatch.operatorId || "")}
         </select></label>
       </div>
       <div class="recipe-editor dispatch-product-calculator">
@@ -20055,7 +20777,8 @@ async function openDispatchDialog(orderId, type = "salida") {
     </form>
   `;
   dialog.showModal();
-  refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), lastDispatch.tractorCode || "");
+  refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), lastDispatch.tractorCode || "", "tractor");
+  refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), lastDispatch.machineCode || "", "machine");
   bindDispatchProductCalculator(orderId, document.getElementById("dispatchForm"), false);
   updateDispatchProductQuantities(orderId);
   document.querySelector('#dispatchForm [name="liters"]').addEventListener("input", () => updateDispatchProductQuantities(orderId));
@@ -20088,6 +20811,12 @@ async function saveDispatch(orderId, type, dialog) {
   if (!form.reportValidity()) return;
   const data = new FormData(form);
   const liters = Number(data.get("liters")) || 0;
+  const startTime = String(data.get("time") || "");
+  const endTime = String(data.get("endTime") || "");
+  if (endTime && startTime && endTime < startTime) {
+    showToast("La hora de termino no puede ser anterior a la hora de inicio");
+    return;
+  }
   if (type === "salida" && dispatchedLiters(order) + liters > plannedLiters(order) * 1.03) {
     showToast("La salida supera el total autorizado");
     return;
@@ -20121,6 +20850,7 @@ async function saveDispatch(orderId, type, dialog) {
     type,
     date: data.get("date"),
     time: data.get("time") || currentTimeValue(),
+    endTime: data.get("endTime") || "",
     liters,
     tractorCode: data.get("tractorCode"),
     machineCode: data.get("machineCode"),
@@ -20472,6 +21202,134 @@ function pdfDrawCheckList(page, x, top, width, height, title, items, font, boldF
   });
 }
 
+async function loadApplicationOrderPdfLogo(pdfDoc) {
+  try {
+    const response = await fetch("./logo-canelillo.png", { cache: "force-cache" });
+    if (!response.ok) return null;
+    return pdfDoc.embedPng(await response.arrayBuffer());
+  } catch (error) {
+    console.warn("No se pudo cargar el logo para la orden PDF", error);
+    return null;
+  }
+}
+
+function applicationOrderWeatherTargetDate(order) {
+  return orderStartDate(order) || latestDispatch(order)?.date || "";
+}
+
+async function loadApplicationOrderWeather(order) {
+  const targetDate = applicationOrderWeatherTargetDate(order);
+  if (!targetDate) return null;
+  if (!supabaseSession) return null;
+  try {
+    const rows = await sbSelectAll(
+      "estacion_climatica",
+      `select=fecha,temp_out,hi_temp,low_temp&fecha=eq.${targetDate}`,
+      500
+    );
+    const finiteValues = (column) => rows
+      .map((row) => row[column])
+      .filter((value) => value !== null && value !== undefined && value !== "")
+      .map(Number)
+      .filter(Number.isFinite);
+    const observedTemperatures = finiteValues("temp_out");
+    const minimumValues = finiteValues("low_temp");
+    const maximumValues = finiteValues("hi_temp");
+    const minimum = Math.min(...(minimumValues.length ? minimumValues : observedTemperatures));
+    const maximum = Math.max(...(maximumValues.length ? maximumValues : observedTemperatures));
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum)) return null;
+    return { date: targetDate, minimum, maximum };
+  } catch (error) {
+    console.warn("No se pudo consultar estacion_climatica para la orden PDF", error);
+    return null;
+  }
+}
+
+async function loadApplicationOrderTemperatureReadings(order) {
+  const dates = [...new Set((order.dispatches || [])
+    .filter((dispatch) => dispatch.type !== "devolucion" && dispatch.date)
+    .map((dispatch) => String(dispatch.date).slice(0, 10)))];
+  if (!dates.length) return [];
+  const localLatest = state.weatherStationLatest;
+  const fallback = localLatest?.date && dates.includes(String(localLatest.date).slice(0, 10))
+    ? [{ date: localLatest.date, time: localLatest.time, tempOut: Number(localLatest.tempOut) }]
+    : [];
+  if (!supabaseSession) return fallback;
+
+  try {
+    const groups = await Promise.all(dates.map((date) => sbSelectAll(
+      "estacion_climatica",
+      `select=fecha,hora,temp_out&fecha=eq.${date}&temp_out=not.is.null&order=hora.asc`,
+      500
+    )));
+    return groups.flat().map((row) => ({
+      date: row.fecha,
+      time: row.hora,
+      tempOut: Number(row.temp_out)
+    })).filter((row) => row.date && row.time && Number.isFinite(row.tempOut));
+  } catch (error) {
+    console.warn("No se pudo consultar la temperatura horaria para la orden PDF", error);
+    return fallback;
+  }
+}
+
+function applicationOrderTemperatureForDispatch(dispatch, readings = []) {
+  if (!dispatch?.date) return null;
+  const date = String(dispatch.date).slice(0, 10);
+  const startTime = dispatchDisplayTime(dispatch);
+  if (!startTime || startTime === "-") return null;
+  const timeToMinutes = (value) => {
+    const match = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+    return hours * 60 + minutes;
+  };
+  const targetMinutes = timeToMinutes(startTime);
+  if (targetMinutes === null) return null;
+  return readings
+    .filter((row) => String(row.date).slice(0, 10) === date)
+    .map((row) => ({
+      ...row,
+      distanceMinutes: (() => {
+        const readingMinutes = timeToMinutes(row.time);
+        return readingMinutes === null ? null : Math.abs(readingMinutes - targetMinutes);
+      })()
+    }))
+    .filter((row) => Number.isFinite(row.distanceMinutes) && row.distanceMinutes <= 30)
+    .sort((a, b) => a.distanceMinutes - b.distanceMinutes)[0] || null;
+}
+
+function applicationOrderTemperatureLabel(dispatch, readings = []) {
+  const reading = applicationOrderTemperatureForDispatch(dispatch, readings);
+  if (!reading) return "Sin lectura +/-30 min";
+  return `${number(reading.tempOut, 1)} °C ${printDate(reading.date)} ${String(reading.time).slice(0, 5)}`;
+}
+
+function applicationOrderAppliedLiters(order) {
+  const confirmed = appliedLiters(order);
+  return confirmed > 0 ? confirmed : Math.max(0, dispatchedLiters(order));
+}
+
+function pdfDrawOperationTable(page, top, widths, headers, rows, style) {
+  const groupHeight = 14;
+  const warehouseColumns = style.warehouseColumns || 4;
+  const warehouseWidth = widths.slice(0, warehouseColumns).reduce((sum, width) => sum + width, 0);
+  const fieldWidth = widths.slice(warehouseColumns).reduce((sum, width) => sum + width, 0);
+  pdfDrawCell(page, {
+    x: style.x, top, width: warehouseWidth, height: groupHeight, text: "BODEGA",
+    font: style.font, boldFont: style.boldFont, size: 7, fill: style.groupFill,
+    border: style.border, align: "center", bold: true, maxLines: 1
+  });
+  pdfDrawCell(page, {
+    x: style.x + warehouseWidth, top, width: fieldWidth, height: groupHeight, text: "TERRENO",
+    font: style.font, boldFont: style.boldFont, size: 7, fill: style.groupFill,
+    border: style.border, align: "center", bold: true, maxLines: 1
+  });
+  return pdfDrawTable(page, top - groupHeight, widths, headers, rows, style);
+}
+
 async function downloadApplicationOrderPdf(orderId) {
   const order = state.orders.find((item) => item.id === orderId);
   if (!order) return;
@@ -20489,6 +21347,11 @@ async function downloadApplicationOrderPdf(orderId) {
     const page = pdfDoc.addPage([841.89, 595.28]);
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const [logo, weather, temperatureReadings] = await Promise.all([
+      loadApplicationOrderPdfLogo(pdfDoc),
+      loadApplicationOrderWeather(order),
+      loadApplicationOrderTemperatureReadings(order)
+    ]);
     const colors = {
       green: rgb(0.08, 0.42, 0.31),
       darkGreen: rgb(0.06, 0.23, 0.17),
@@ -20504,13 +21367,18 @@ async function downloadApplicationOrderPdf(orderId) {
     let top = page.getHeight() - margin;
     const program = getProgramDefinition(order);
     const latest = latestDispatch(order);
-    const emittedBy = currentProfile?.full_name || currentProfile?.nombre_completo || supabaseSession?.user?.email || "Supervisor encargado";
+    const emittedBy = "Diego Ahumada";
     const blocks = order.blocks?.join(", ") || "-";
     const method = String(order.classification || "").toUpperCase();
+    const appliedTotal = applicationOrderAppliedLiters(order);
 
     page.drawLine({ start: { x: margin, y: top - 40 }, end: { x: margin + contentWidth, y: top - 40 }, thickness: 3, color: colors.green });
-    page.drawText("AGRICOLA EL CANELILLO", { x: margin + 5, y: top - 18, size: 10, font: boldFont, color: colors.green });
-    page.drawText("Gestion agricola en linea", { x: margin + 5, y: top - 29, size: 6.5, font, color: colors.muted });
+    if (logo) {
+      const logoScale = Math.min(48 / logo.width, 34 / logo.height);
+      page.drawImage(logo, { x: margin + 3, y: top - 37, width: logo.width * logoScale, height: logo.height * logoScale });
+    }
+    page.drawText("AGRICOLA EL CANELILLO", { x: margin + 57, y: top - 18, size: 9.5, font: boldFont, color: colors.green });
+    page.drawText("Canelillo AgroCore", { x: margin + 57, y: top - 29, size: 6.5, font, color: colors.muted });
     const title = "Orden de aplicacion de Fitosanitarios y Fertilizantes";
     const titleWidth = boldFont.widthOfTextAtSize(title, 14);
     page.drawText(title, { x: margin + (contentWidth - titleWidth) / 2, y: top - 17, size: 14, font: boldFont, color: colors.darkGreen });
@@ -20525,11 +21393,16 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawText(orderNumber, { x: margin + contentWidth - 8 - orderNumberWidth, y: top - 29, size: 19, font: boldFont, color: colors.darkGreen });
     top -= 46;
 
-    const fieldWidths = [70, 125, 100, 90, 150, 65, 85, 120];
+    const fieldWidths = [70, 115, 85, 145, 60, 130, 125, 75];
+    const weatherAverage = weather ? (Number(weather.minimum) + Number(weather.maximum)) / 2 : null;
+    const weatherValue = Number.isFinite(weatherAverage)
+      ? `${number(weatherAverage, 1)} °C - ${printDate(weather.date)}`
+      : "Sin registro del dia";
     const fieldValues = [
-      ["Fecha", printDate(orderStartDate(order))], ["Para", emittedBy], ["Potrero / Cuartel", potreroListLabel(order.potrero)], ["Bloque(s)", blocks],
+      ["Fecha", printDate(orderStartDate(order))], ["Potrero / Cuartel", potreroListLabel(order.potrero)], ["Bloque(s)", blocks],
       ["Especie / Variedad", [order.crop, order.variety].filter(Boolean).join(" / ") || "-"], ["Hectareas", `${number(order.hectares)} ha`],
-      ["Total litros", `${number(plannedLiters(order), 0)} L`], ["Programa N°", program?.code || programNumbersLabel(order)]
+      ["Litros aplicados / total", `${number(appliedTotal, 0)} / ${number(plannedLiters(order), 0)} L`],
+      ["Temp. promedio diaria", weatherValue], ["Programa N°", program?.code || programNumbersLabel(order)]
     ];
     let fx = margin;
     fieldValues.forEach(([label, value], index) => {
@@ -20598,7 +21471,7 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawRectangle({ x: paramsX, y: top - equipmentHeight, width: 435, height: equipmentHeight, color: colors.white, borderColor: colors.border, borderWidth: 0.55 });
     page.drawText("PARAMETROS DE APLICACION", { x: paramsX + 7, y: top - 11, size: 6.5, font: boldFont, color: colors.green });
     const params = [
-      ["Tractor", order.tractorCode || latest.tractorCode || "-"], ["Maquina", order.machineCode || latest.machineCode || "-"], ["Boquilla", order.nozzle || "-"],
+      ["Tractor", order.tractorCode || latest.tractorCode || "-"], ["Maquinaria", order.machineCode || latest.machineCode || "-"], ["Boquilla", order.nozzle || "-"],
       ["Presion", `${order.pressure || "-"} bar`], ["Velocidad", `${order.speed || "-"} km/h`], ["Dosificador", order.dosifier || "-"]
     ];
     params.forEach(([label, value], index) => {
@@ -20615,14 +21488,23 @@ async function downloadApplicationOrderPdf(orderId) {
     const operationRows = Array.from({ length: operationCount }, (_, index) => {
       const dispatch = order.dispatches?.[index];
       const tank = order.tanks?.[index];
-      const appliedDate = tank?.appliedAt ? String(tank.appliedAt).slice(0, 10) : "";
-      return [dispatch ? String(index + 1) : "", dispatch ? printDate(dispatch.date) : "", dispatch ? dispatchDisplayTime(dispatch) : "", dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
-        appliedDate ? printDate(appliedDate) : "", tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "", tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", tank ? number(tank.liters || 0, 0) : "", dispatch?.operatorId ? getOperator(dispatch.operatorId) : "", [tank?.tractorCode || dispatch?.tractorCode, tank?.machineCode || dispatch?.machineCode].filter(Boolean).join(" / ")];
+      const appliedDate = tank?.appliedAt ? String(tank.appliedAt).slice(0, 10) : dispatch?.date || "";
+      const isReturn = dispatch?.type === "devolucion";
+      const processLiters = tank?.liters ?? dispatch?.liters ?? 0;
+      return [
+        dispatch ? String(index + 1) : "", dispatch ? printDate(dispatch.date) : "",
+        dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${isReturn ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
+        appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
+        dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
+        dispatch || tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch || tank ? `${isReturn ? "-" : ""}${number(processLiters, 0)}` : "",
+        dispatch?.operatorId ? getOperator(dispatch.operatorId) : "-", tank?.tractorCode || dispatch?.tractorCode || "-",
+        tank?.machineCode || dispatch?.machineCode || "-", dispatch ? applicationOrderTemperatureLabel(dispatch, temperatureReadings) : "-"
+      ];
     });
     const operationRowHeight = operationCount > 6 ? Math.max(8, Math.min(11, 65 / operationCount)) : 12;
-    top = pdfDrawTable(page, top, [28, 55, 42, 130, 55, 55, 48, 130, 55, 110, 97], ["Folio", "Fecha bodega", "Hora", "Potrero / Bloque", "Litros entregados", "Fecha terreno", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Maquinas"], operationRows, {
+    top = pdfDrawOperationTable(page, top, [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100], ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"], operationRows, {
       x: margin, headerHeight: 24, rowHeight: operationRowHeight, headerSize: 5.5, rowSize: operationCount > 6 ? 5.2 : 5.8,
-      font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border
+      font, boldFont, warehouseColumns: 4, groupFill: colors.paleGreen, headerFill: colors.softGreen, bodyFill: colors.white, border: colors.border
     });
     top -= 5;
     page.drawLine({ start: { x: margin, y: top }, end: { x: margin + contentWidth, y: top }, thickness: 2, color: colors.green });
@@ -21718,6 +22600,11 @@ document.addEventListener("click", async (event) => {
   if (action === "select-gantt-order") {
     selectedGanttOrderId = id;
     renderManager();
+    requestAnimationFrame(() => {
+      const target = views.manager.querySelector(`[data-manager-order-id="${CSS.escape(id)}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    });
   }
   if (action === "toggle-mobile-gantt") {
     managerGanttMobileOpen = !managerGanttMobileOpen;
@@ -21948,9 +22835,10 @@ document.addEventListener("click", async (event) => {
     renderIrrigation();
   }
   if (action === "clear-warehouse-filter") {
-    warehouseStatusFilter = "in_progress";
+    warehouseStatusFilter = "all";
     warehouseDateFromFilter = "";
     warehouseDateToFilter = "";
+    warehouseOrderSearch = "";
     renderWarehouse();
   }
   if (action === "export-excel") exportExcel();
