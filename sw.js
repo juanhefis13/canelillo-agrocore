@@ -1,5 +1,5 @@
-const CACHE = "canelillo-agrocore-v342-map-p30-complete";
-const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=342-map-p30-complete", "./agricultural-map.js?v=342-map-p30-complete", "./index-color-scales.js?v=342-map-p30-complete", "./app.js?v=342-map-p30-complete", "./manifest.json", "./logo-canelillo.png", "./data/programa_fitosanitario.json", "./data/programa_fertilizante.json?v=3", "./data/canelillo_limites.geojson", "./outputs/potreros.geojson", "./outputs/bloques.geojson", "./outputs/casetas.geojson", "./outputs/tranques.geojson", "./outputs/monitoreo_arboles.json?v=1", "./assets/tree-marker-cc0.png?v=2", "./assets/caseta-map-marker.png", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
+const CACHE = "canelillo-agrocore-v358-calicata-shared-map";
+const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=358-calicata-shared-map", "./agricultural-map.js?v=358-calicata-shared-map", "./index-color-scales.js?v=334-shared-agricultural-map", "./app.js?v=358-calicata-shared-map", "./manifest.json", "./logo-canelillo.png", "./data/programa_fitosanitario.json", "./data/programa_fertilizante.json?v=3", "./data/canelillo_limites.geojson", "./outputs/potreros.geojson", "./outputs/bloques.geojson", "./outputs/casetas.geojson", "./outputs/tranques.geojson", "./outputs/monitoreo_arboles.json?v=1", "./assets/tree-marker-cc0.png?v=2", "./assets/caseta-map-marker.png", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

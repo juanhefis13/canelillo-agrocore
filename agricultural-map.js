@@ -35,6 +35,56 @@
     zIndex: 8
   });
 
+  function stableColorHash(value) {
+    let hash = 2166136261;
+    for (const character of String(value || "")) {
+      hash ^= character.codePointAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function hslToHex(hue, saturation, lightness) {
+    const s = saturation / 100;
+    const l = lightness / 100;
+    const chroma = (1 - Math.abs(2 * l - 1)) * s;
+    const section = ((hue % 360) + 360) % 360 / 60;
+    const secondary = chroma * (1 - Math.abs(section % 2 - 1));
+    const [red, green, blue] = section < 1 ? [chroma, secondary, 0]
+      : section < 2 ? [secondary, chroma, 0]
+        : section < 3 ? [0, chroma, secondary]
+          : section < 4 ? [0, secondary, chroma]
+            : section < 5 ? [secondary, 0, chroma]
+              : [chroma, 0, secondary];
+    const match = l - chroma / 2;
+    return `#${[red, green, blue].map((channel) => Math.round((channel + match) * 255).toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  function blockColorOrdinal(key) {
+    const token = String(key || "").split(":").pop().toLocaleUpperCase("es");
+    const match = token.match(/(\d+)([A-Z]*)$/);
+    if (!match) return stableColorHash(token) % 18;
+    const number = Math.max(1, Number(match[1]) || 1);
+    const suffix = [...(match[2] || "")].reduce((total, character) => total + character.charCodeAt(0) - 64, 0);
+    return number - 1 + suffix * 7;
+  }
+
+  function colorForKey(key, kind = "block", ordinal = null) {
+    const rawKey = String(key || "");
+    const potreroKey = kind === "block" && rawKey.includes(":")
+      ? rawKey.slice(0, rawKey.lastIndexOf(":"))
+      : rawKey;
+    const baseHue = kind === "potrero" && Number.isFinite(Number(ordinal))
+      ? Number(ordinal) * 137.508
+      : ((stableColorHash(`${kind}:${potreroKey}`) % 997) * 137.508);
+    const hue = kind === "block"
+      ? (baseHue + blockColorOrdinal(rawKey) * 137.508) % 360
+      : baseHue % 360;
+    const saturation = kind === "potrero" ? 88 : 92;
+    const lightness = kind === "potrero" ? 58 : 55;
+    return hslToHex(hue, saturation, lightness);
+  }
+
   function ringArea(ring = []) {
     let area = 0;
     for (let index = 0; index < ring.length; index += 1) {
@@ -164,7 +214,8 @@
           .sort((a, b) => (b.priority || 0) - (a.priority || 0))
           .forEach((entry) => {
             const minZoom = Number(entry.minZoom || 0);
-            if (zoom < minZoom) {
+            const maxZoom = Number(entry.maxZoom || 0);
+            if (zoom < minZoom || (maxZoom > 0 && zoom >= maxZoom)) {
               entry.label.setVisible(false);
               return;
             }
@@ -172,7 +223,8 @@
             const element = entry.label.getElement?.();
             if (!element) return;
             const rect = element.getBoundingClientRect();
-            if (!rect.width || !rect.height || (!entry.allowOverlap && occupied.some((item) => overlaps(rect, item)))) {
+            const allowOverlap = entry.allowOverlap || (entry.allowOverlapAtZoom > 0 && zoom >= entry.allowOverlapAtZoom);
+            if (!rect.width || !rect.height || (!allowOverlap && occupied.some((item) => overlaps(rect, item)))) {
               entry.label.setVisible(false);
               return;
             }
@@ -286,6 +338,85 @@
     return [];
   }
 
+  function geometryOuterRings(geometry) {
+    if (!geometry) return [];
+    if (geometry.type === "Polygon") {
+      return geometry.coordinates[0]
+        ? [geometry.coordinates[0].map(([lng, lat]) => [Number(lng), Number(lat)])]
+        : [];
+    }
+    if (geometry.type === "MultiPolygon") {
+      return geometry.coordinates
+        .map((polygon) => polygon?.[0]?.map(([lng, lat]) => [Number(lng), Number(lat)]))
+        .filter((ring) => Array.isArray(ring) && ring.length >= 3);
+    }
+    return [];
+  }
+
+  function horizontalHatchSegments(ring, spacingMeters = 10) {
+    if (!Array.isArray(ring) || ring.length < 3) return [];
+    const latitudes = ring.map((point) => Number(point[1])).filter(Number.isFinite);
+    if (!latitudes.length) return [];
+    const minimum = Math.min(...latitudes);
+    const maximum = Math.max(...latitudes);
+    const step = Math.max(0.00001, spacingMeters / 111320);
+    const segments = [];
+    for (let latitude = minimum + step; latitude < maximum; latitude += step) {
+      const intersections = [];
+      for (let index = 0; index < ring.length; index += 1) {
+        const [lngA, latA] = ring[index];
+        const [lngB, latB] = ring[(index + 1) % ring.length];
+        const crosses = (latA <= latitude && latB > latitude) || (latB <= latitude && latA > latitude);
+        if (!crosses) continue;
+        const ratio = (latitude - latA) / (latB - latA);
+        intersections.push(Number(lngA) + ratio * (Number(lngB) - Number(lngA)));
+      }
+      intersections.sort((first, second) => first - second);
+      for (let index = 0; index + 1 < intersections.length; index += 2) {
+        segments.push([
+          { lat: latitude, lng: intersections[index] },
+          { lat: latitude, lng: intersections[index + 1] }
+        ]);
+      }
+    }
+    return segments;
+  }
+
+  function createCasetaVisibilityControl(maps, map, markers, initialVisible) {
+    const control = document.createElement("label");
+    control.className = "agricultural-map-layer-toggle";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = initialVisible;
+    checkbox.setAttribute("aria-label", "Mostrar casetas");
+    const text = document.createElement("span");
+    text.textContent = "Casetas";
+    control.append(checkbox, text);
+
+    const sync = () => {
+      markers.forEach((marker) => marker.setMap(checkbox.checked ? map : null));
+      try {
+        localStorage.setItem("agrocore:map:casetas", checkbox.checked ? "1" : "0");
+      } catch {
+        // La preferencia sigue funcionando durante la vista actual.
+      }
+    };
+    checkbox.addEventListener("change", sync);
+    const controls = map.controls[maps.ControlPosition.TOP_LEFT];
+    controls.push(control);
+    sync();
+
+    return {
+      setMap(value) {
+        if (value !== null) return;
+        checkbox.removeEventListener("change", sync);
+        const index = controls.getArray().indexOf(control);
+        if (index >= 0) controls.removeAt(index);
+        control.remove();
+      }
+    };
+  }
+
   function renderInfrastructureLayers({
     maps,
     map,
@@ -300,6 +431,7 @@
     const casetaOverlays = [];
     const tranqueOverlays = [];
     const labelOverlays = [];
+    const controlOverlays = [];
 
     if (showTranques) {
       (tranques?.features || []).forEach((feature, index) => {
@@ -337,6 +469,18 @@
           });
           dashedBorder.setMap(map);
           tranqueOverlays.push(polygon, dashedBorder);
+          horizontalHatchSegments(ring).forEach((segment) => {
+            const hatch = new maps.Polyline({
+              path: segment,
+              strokeColor: "#38bdf8",
+              strokeOpacity: 0.82,
+              strokeWeight: 1.2,
+              clickable: false,
+              zIndex: 11
+            });
+            hatch.setMap(map);
+            tranqueOverlays.push(hatch);
+          });
           ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
         });
         const name = featureProperty(feature, ["nombre", "Nombre_Tranque", "Nombre"], `Tranque ${index + 1}`);
@@ -346,8 +490,16 @@
       });
     }
 
-    if (showCasetas) {
-      (casetas?.features || []).forEach((feature, index) => {
+    const casetaFeatures = casetas?.features || [];
+    if (casetaFeatures.length) {
+      let casetasVisible = showCasetas;
+      try {
+        const storedPreference = localStorage.getItem("agrocore:map:casetas");
+        if (storedPreference !== null) casetasVisible = storedPreference !== "0";
+      } catch {
+        // Usa la configuracion entregada por la vista.
+      }
+      casetaFeatures.forEach((feature, index) => {
         const rings = geometryRings(feature.geometry);
         if (!rings.length) return;
         const position = center(rings);
@@ -359,10 +511,11 @@
           className: "agricultural-map-caseta",
           onClick: onCasetaClick ? () => onCasetaClick({ feature, position, maps, map }) : null
         });
-        marker.setMap(map);
+        marker.setMap(casetasVisible ? map : null);
         casetaOverlays.push(marker);
         rings.flat().forEach(([lng, lat]) => bounds.extend({ lat, lng }));
       });
+      controlOverlays.push(createCasetaVisibilityControl(maps, map, casetaOverlays, casetasVisible));
     }
 
     return {
@@ -370,7 +523,8 @@
       casetaOverlays,
       tranqueOverlays,
       labelOverlays,
-      overlays: [...tranqueOverlays, ...labelOverlays, ...casetaOverlays]
+      controlOverlays,
+      overlays: [...tranqueOverlays, ...labelOverlays, ...casetaOverlays, ...controlOverlays]
     };
   }
 
@@ -384,8 +538,11 @@
     blockLabel,
     blockLabelPriority,
     blockLabelMinZoom,
+    blockLabelAllowOverlapAtZoom,
     blockLabelAllowOverlap,
     potreroLabel,
+    potreroLabelPriority,
+    potreroLabelMaxZoom,
     blockStyle,
     potreroStyle,
     onBlockClick,
@@ -393,6 +550,7 @@
     showPotreros = true,
     showBlockLabels = true,
     showPotreroLabels = true,
+    blockLabelEachPolygon = true,
     shiftPotreroLabels = false
   }) {
     const bounds = new maps.LatLngBounds();
@@ -405,7 +563,13 @@
     const potreroGroups = groupRingItems(potreroItems, potreroKey);
 
     blockGroups.forEach((group, index) => {
-      const style = { ...BLOCK_STYLE, ...(blockStyle?.(group, index) || {}) };
+      const blockColor = colorForKey(group.key, "block");
+      const style = {
+        ...BLOCK_STYLE,
+        strokeColor: blockColor,
+        fillColor: blockColor,
+        ...(blockStyle?.(group, index) || {})
+      };
       group.rings.forEach((ring) => {
         const polygon = new maps.Polygon({
           ...style,
@@ -419,20 +583,33 @@
       });
       const text = blockLabel?.(group, index);
       if (showBlockLabels && text) {
-        const label = createLabel(maps, center(group.rings), text, "map-label-block-google");
-        label.setMap(map);
-        labelOverlays.push(label);
-        labelCollisionEntries.push({
-          label,
-          priority: Number(blockLabelPriority?.(group, index)) || 1,
-          minZoom: Number(blockLabelMinZoom?.(group, index)) || 15,
-          allowOverlap: Boolean(blockLabelAllowOverlap?.(group, index))
+        const outerRings = blockLabelEachPolygon
+          ? group.items.flatMap((item) => geometryOuterRings(item.feature?.geometry))
+          : [];
+        const labelPositions = outerRings.length
+          ? outerRings.map((ring) => center([ring]))
+          : [center(group.rings)];
+        labelPositions.forEach((position) => {
+          const label = createLabel(maps, position, text, "map-label-block-google");
+          label.setMap(map);
+          labelOverlays.push(label);
+          labelCollisionEntries.push({
+            label,
+            priority: Number(blockLabelPriority?.(group, index)) || 1,
+            minZoom: Number(blockLabelMinZoom?.(group, index)) || 15,
+            allowOverlapAtZoom: Number(blockLabelAllowOverlapAtZoom?.(group, index)) || 0,
+            allowOverlap: Boolean(blockLabelAllowOverlap?.(group, index))
+          });
         });
       }
     });
 
     potreroGroups.forEach((group, index) => {
-      const style = { ...POTRERO_STYLE, ...(potreroStyle?.(group, index) || {}) };
+      const style = {
+        ...POTRERO_STYLE,
+        strokeColor: colorForKey(group.key, "potrero", index),
+        ...(potreroStyle?.(group, index) || {})
+      };
       group.rings.forEach((ring) => {
         const polygon = new maps.Polygon({
           ...style,
@@ -449,7 +626,12 @@
         const label = createLabel(maps, position, text, "map-label-potrero-google");
         label.setMap(map);
         labelOverlays.push(label);
-        labelCollisionEntries.push({ label, priority: 2, minZoom: 13 });
+        labelCollisionEntries.push({
+          label,
+          priority: Number(potreroLabelPriority?.(group, index)) || 4,
+          minZoom: 13,
+          maxZoom: Number(potreroLabelMaxZoom?.(group, index)) || 16
+        });
       }
     });
 
@@ -485,6 +667,7 @@
     clearOverlays,
     createLabel,
     createIconMarker,
+    colorForKey,
     renderFieldLayers,
     renderInfrastructureLayers,
     addGeoJsonLayer,

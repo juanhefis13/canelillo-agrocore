@@ -8706,7 +8706,7 @@ td span,
 }
 
 .harvest-analysis-filters {
-  grid-template-columns: repeat(4, minmax(120px, 0.8fr)) minmax(220px, 1.2fr) auto;
+  grid-template-columns: repeat(5, minmax(112px, 0.8fr)) minmax(220px, 1.2fr) auto;
 }
 
 .harvest-export-filters {
@@ -10154,6 +10154,29 @@ button.harvest-analytics-bar:hover span {
   min-width: 0;
 }
 
+.harvest-productivity-detail-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #9bcbb7;
+  border-radius: 50%;
+  background: #eff9f4;
+  color: #087756;
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.harvest-productivity-detail-button:hover,
+.harvest-productivity-detail-button:focus-visible {
+  border-color: #087756;
+  background: #dff4e9;
+}
+
 .harvest-productivity-potrero-head strong,
 .harvest-productivity-potrero-head span {
   overflow: hidden;
@@ -10689,13 +10712,37 @@ button.harvest-analytics-bar:hover span {
 
 .map-label-block-google {
   color: #ffd84d;
-  font-size: 12px;
+  font-size: 10px;
   text-shadow:
     -1px -1px 0 #111111,
     1px -1px 0 #111111,
     -1px 1px 0 #111111,
     1px 1px 0 #111111,
     0 1px 4px rgba(0, 0, 0, 0.95);
+}
+
+.agricultural-map-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin: 10px 0 0 10px;
+  padding: 5px 9px;
+  border: 1px solid rgba(20, 72, 55, 0.28);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #153c30;
+  box-shadow: 0 2px 7px rgba(3, 24, 17, 0.24);
+  cursor: pointer;
+  font: 800 12px/1 Arial, sans-serif;
+  user-select: none;
+}
+
+.agricultural-map-layer-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #0d7a5f;
 }
 
 .map-label-tranque-google {
@@ -20911,7 +20958,7 @@ body {
   }
 
   .agricultural-map .map-label-block-google {
-    font-size: 10px;
+    font-size: 9px;
   }
 
   .satellite-controls,
@@ -21819,8 +21866,85 @@ body {
 }
 
 .harvest-analysis-filters select,
+.harvest-analysis-filters input,
 .harvest-analysis-filters button {
   min-height: 34px;
+}
+
+#harvestProductivityDialog {
+  width: min(920px, calc(100vw - 24px));
+}
+
+.harvest-productivity-dialog {
+  display: grid;
+  gap: 12px;
+  max-height: min(84vh, 760px);
+}
+
+.harvest-productivity-dialog-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.harvest-productivity-dialog-summary span {
+  display: grid;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid #cee3d9;
+  border-radius: 7px;
+  background: #f3faf6;
+}
+
+.harvest-productivity-dialog-summary small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.harvest-productivity-dialog-summary strong {
+  color: var(--brand);
+  font-size: 0.9rem;
+}
+
+.harvest-productivity-block-table-wrap {
+  max-height: min(58vh, 520px);
+  border: 1px solid #d4e6dd;
+  border-radius: 7px;
+}
+
+.harvest-productivity-block-table {
+  min-width: 660px;
+}
+
+.harvest-productivity-block-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eaf6f0;
+}
+
+.harvest-productivity-block-table th,
+.harvest-productivity-block-table td {
+  padding: 7px 9px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.harvest-productivity-block-table th:nth-child(3),
+.harvest-productivity-block-table td:nth-child(3) {
+  text-align: left;
+}
+
+.harvest-block-rank {
+  display: inline-grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e2f3eb;
+  color: #087756;
+  font-size: 0.67rem;
 }
 
 .harvest-analysis-filters .harvest-year-checks {

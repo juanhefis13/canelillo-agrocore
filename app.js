@@ -452,6 +452,7 @@ let harvestAnalysisPotreroFilter = "Todos";
 let harvestAnalysisSelectedSpecies = "Todas";
 let harvestAnalysisSelectedYears = new Set();
 let harvestAnalysisMetric = "kg";
+let harvestAnalysisComparisonDate = todayChileIso();
 let harvestAnalysisDbRows = [];
 let harvestContractorExpandedKeys = new Set();
 let harvestAnalysisOpenSections = new Set();
@@ -495,6 +496,7 @@ function isHarvestAnalysisViewTrigger(target) {
 }
 
 let pestMonitoringRecords = null;
+let pestMonitoringUsesLegacyP29Blocks = false;
 let pestMonitoringLoadPromise = null;
 let pestMonitoringLoadError = "";
 let pestMonitoringDataSource = "";
@@ -5592,8 +5594,11 @@ async function renderIrrigationSatelliteMap(blocks, { preserveViewport = false }
       blockLabel: (group) => mapBlockFeatureLabel(group.feature),
       blockLabelPriority: mapBlockLabelPriority,
       blockLabelMinZoom: mapBlockLabelMinZoom,
+      blockLabelAllowOverlapAtZoom: mapBlockLabelAllowOverlapAtZoom,
       blockLabelAllowOverlap: isPriorityMapBlock,
       potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+      potreroLabelPriority: mapPotreroLabelPriority,
+      potreroLabelMaxZoom: mapPotreroLabelMaxZoom,
       showBlocks: irrigationSatelliteShowBlocks,
       showPotreros: irrigationSatelliteShowPotreros,
       showBlockLabels: irrigationSatelliteShowLabels,
@@ -5603,7 +5608,7 @@ async function renderIrrigationSatelliteMap(blocks, { preserveViewport = false }
         const potreroMatches = visiblePotreros.has(normalizePotreroOrderName(field.potrero));
         const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block)) || potreroMatches;
         return {
-          strokeColor: active ? "#ffffff" : "#ffd84d",
+          ...(active ? { strokeColor: "#ffffff" } : {}),
           strokeWeight: active ? 3.2 : 1.8,
           fillColor: active ? activeFillColor : "#dfe8dc",
           fillOpacity: indexLayerActive ? active ? 0.04 : 0.01 : active ? 0.34 : 0.12,
@@ -5749,7 +5754,7 @@ function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = 
         </div>
       </div>
       <div class="irrigation-calicatas-layout">
-        <div id="irrigationCalicataMap" class="geo-map irrigation-calicata-map">
+        <div id="irrigationCalicataMap" class="geo-map agricultural-map harvest-map irrigation-calicata-map" data-agro-map="calicatas">
           <span>Cargando mapa de calicatas...</span>
         </div>
         <aside class="irrigation-calicata-history" aria-label="Historial de calicatas">
@@ -12063,6 +12068,16 @@ async function loadPestMonitoringRecords() {
       console.warn("Monitoreo de plagas usa respaldo local", error);
       pestMonitoringRecords = await loadPestMonitoringFromLocalBackup();
     }
+    pestMonitoringUsesLegacyP29Blocks = pestMonitoringRecords.some((record) => (
+      String(record.potrero || record.canonicalPotrero).trim() === "29"
+      && /^(2A|2B|5A|5B)$/i.test(String(record.excelBlock || record.block || "").trim())
+    ));
+    try {
+      geoJsonCache ||= await loadGeoJson();
+      normalizePestMonitoringBlocksByLocation(pestMonitoringRecords, geoJsonCache?.bloques?.features || []);
+    } catch (error) {
+      console.warn("No se pudo validar espacialmente los bloques del monitoreo", error);
+    }
     pestMonitoringRecords = enrichPestMonitoringFields(pestMonitoringRecords.filter((record) =>
       Number.isFinite(record.latitude) && Number.isFinite(record.longitude)
     ));
@@ -12182,7 +12197,7 @@ function pestMonitoringFilteredRecords({ includePest = true } = {}) {
     if (includePest && pestMonitoringPest !== "Todas" && record.pest !== pestMonitoringPest) return false;
     if (pestMonitoringSpecies !== "Todas" && record.species !== pestMonitoringSpecies) return false;
     if (pestMonitoringPotrero !== "Todos" && record.potrero !== pestMonitoringPotrero) return false;
-    if (pestMonitoringBlock !== "Todos" && String(record.excelBlock || "") !== pestMonitoringBlock) return false;
+    if (pestMonitoringBlock !== "Todos" && String(record.block || record.excelBlock || "") !== pestMonitoringBlock) return false;
     return true;
   });
 }
@@ -12192,10 +12207,61 @@ function pestMonitoringBlockKey(recordOrProperties) {
     const field = geoJsonFeatureField({ properties: recordOrProperties });
     return fieldIdentityKey(field.potrero, field.block);
   }
-  return fieldIdentityKey(
-    recordOrProperties.potrero || recordOrProperties.canonicalPotrero,
-    recordOrProperties.block || recordOrProperties.excelBlock
-  );
+  const potrero = recordOrProperties.potrero || recordOrProperties.canonicalPotrero;
+  const rawBlock = recordOrProperties.block || recordOrProperties.excelBlock;
+  const block = String(potrero).trim() === "29" && pestMonitoringUsesLegacyP29Blocks
+    ? ({ "2A": "2", "2B": "3", "3": "4", "4": "5", "5A": "6", "5B": "7" }[String(rawBlock || "").trim().toLocaleUpperCase("es")] || rawBlock)
+    : rawBlock;
+  return fieldIdentityKey(potrero, block);
+}
+
+function pestMonitoringPointInRing(longitude, latitude, ring = []) {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const [longitudeA, latitudeA] = ring[index];
+    const [longitudeB, latitudeB] = ring[previous];
+    const crosses = (Number(latitudeA) > latitude) !== (Number(latitudeB) > latitude);
+    if (!crosses) continue;
+    const boundary = (Number(longitudeB) - Number(longitudeA)) * (latitude - Number(latitudeA))
+      / ((Number(latitudeB) - Number(latitudeA)) || Number.EPSILON) + Number(longitudeA);
+    if (longitude < boundary) inside = !inside;
+  }
+  return inside;
+}
+
+function pestMonitoringGeometryContains(geometry, longitude, latitude) {
+  const polygons = geometry?.type === "Polygon"
+    ? [geometry.coordinates]
+    : geometry?.type === "MultiPolygon"
+      ? geometry.coordinates
+      : [];
+  return polygons.some((rings) => (
+    pestMonitoringPointInRing(longitude, latitude, rings[0] || [])
+    && !(rings.slice(1) || []).some((hole) => pestMonitoringPointInRing(longitude, latitude, hole))
+  ));
+}
+
+function normalizePestMonitoringBlocksByLocation(records, blockFeatures) {
+  const featuresByPotrero = new Map();
+  blockFeatures.forEach((feature) => {
+    const field = geoJsonFeatureField(feature);
+    const key = normalizePotreroOrderName(field.potrero);
+    const rows = featuresByPotrero.get(key) || [];
+    rows.push({ feature, field });
+    featuresByPotrero.set(key, rows);
+  });
+  records.forEach((record) => {
+    if (!Number.isFinite(record.longitude) || !Number.isFinite(record.latitude)) return;
+    const candidates = featuresByPotrero.get(normalizePotreroOrderName(record.potrero || record.canonicalPotrero)) || [];
+    const match = candidates.find(({ feature }) => (
+      pestMonitoringGeometryContains(feature.geometry, record.longitude, record.latitude)
+    ));
+    if (!match) return;
+    record.potrero = match.field.potrero;
+    record.canonicalPotrero = match.field.potrero;
+    record.block = match.field.block;
+    record.mapBlock = match.field.block;
+  });
 }
 
 function pestMonitoringBlockSummaries(records) {
@@ -12225,7 +12291,7 @@ function pestMonitoringBlockSummaries(records) {
     if (observedTotal > 0) summary.positives += 1;
     if (record.date > summary.latest) summary.latest = record.date;
     summary.pests.add(record.pest);
-    if (record.excelBlock) summary.excelBlocks.add(String(record.excelBlock));
+    if (record.block || record.excelBlock) summary.excelBlocks.add(String(record.block || record.excelBlock));
     if (record.tree) summary.trees.add(record.tree);
     if (record.monitoringOrder) summary.orders.add(record.monitoringOrder);
     if (record.foundAt) summary.foundAt.set(record.foundAt, (summary.foundAt.get(record.foundAt) || 0) + 1);
@@ -12703,10 +12769,10 @@ function pestMonitoringLatestPotreroRows(records) {
     if (record.date > summary.latestDate) {
       summary.latestDate = record.date;
       summary.latestSamples = 1;
-      summary.latestBlocks = new Set(record.excelBlock ? [String(record.excelBlock)] : []);
+      summary.latestBlocks = new Set(record.block || record.excelBlock ? [String(record.block || record.excelBlock)] : []);
     } else if (record.date === summary.latestDate) {
       summary.latestSamples += 1;
-      if (record.excelBlock) summary.latestBlocks.add(String(record.excelBlock));
+      if (record.block || record.excelBlock) summary.latestBlocks.add(String(record.block || record.excelBlock));
     }
     grouped.set(key, summary);
   });
@@ -12874,7 +12940,7 @@ function refreshPestMonitoring() {
       .filter((record) => record.pest === pestMonitoringPest)
       .filter((record) => pestMonitoringSpecies === "Todas" || record.species === pestMonitoringSpecies)
       .filter((record) => pestMonitoringPotrero === "Todos" || record.potrero === pestMonitoringPotrero)
-      .map((record) => String(record.excelBlock || ""));
+      .map((record) => String(record.block || record.excelBlock || ""));
     const matchingTreeBlocks = pestMonitoringTrees
       .filter((tree) => pestMonitoringSpecies === "Todas" || tree.species === pestMonitoringSpecies)
       .filter((tree) => pestMonitoringPotrero === "Todos" || tree.potrero === pestMonitoringPotrero)
@@ -12958,8 +13024,11 @@ async function renderPestMonitoringMap(records, summaries, scale, trees) {
         blockLabel: (group) => mapBlockFeatureLabel(group.feature),
         blockLabelPriority: mapBlockLabelPriority,
         blockLabelMinZoom: mapBlockLabelMinZoom,
+        blockLabelAllowOverlapAtZoom: mapBlockLabelAllowOverlapAtZoom,
         blockLabelAllowOverlap: isPriorityMapBlock,
         potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+        potreroLabelPriority: mapPotreroLabelPriority,
+        potreroLabelMaxZoom: mapPotreroLabelMaxZoom,
         blockStyle: () => ({ fillColor: "#6e8f83", fillOpacity: 0.04, zIndex: 2 }),
         potreroStyle: () => ({ zIndex: 4 }),
         onBlockClick: ({ event, group }) => showPestMonitoringBlockInfo(group.key, event.latLng, pestMonitoringCurrentSummaries, maps)
@@ -13374,16 +13443,16 @@ const HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS = {
   merma_kg: 0,
   x_kg: 0,
   porcentaje_expo: 6,
-  calibres_kg_total: 0,
-  calibres_cajas_total: 0
+  calibres_kg_total: 3,
+  calibres_cajas_total: 3
 };
 
 function harvestSyncCompareDigits(column) {
   if (Object.prototype.hasOwnProperty.call(HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS, column)) {
     return HARVEST_EXCEL_NUMERIC_COMPARE_DIGITS[column];
   }
-  if (column === "calibres_kg") return 0;
-  if (column === "calibres_cajas") return 0;
+  if (column === "calibres_kg") return 3;
+  if (column === "calibres_cajas") return 3;
   return 6;
 }
 
@@ -13503,7 +13572,7 @@ function harvestSyncCalibreLabel(header, isCaja = false) {
     text = text.replace(/^CAT\s+(\d+)/, "$1");
     text = text.replace(/^C(\d+)$/, "$1");
   }
-  return text;
+  return text.replace(/\bCAT\s+([12])\b/g, "CAT$1");
 }
 
 function harvestSyncFindSheetRows(workbook, sheetName, requiredAliases) {
@@ -15345,16 +15414,15 @@ function harvestMonthDayValue(dateValue) {
   return Number(match[1]) * 100 + Number(match[2]);
 }
 
-function harvestTodayDayMonthLabel() {
-  const today = todayChileIso();
-  const match = today.match(/^\d{4}-(\d{2})-(\d{2})$/);
+function harvestComparisonDayMonthLabel() {
+  const match = String(harvestAnalysisComparisonDate || todayChileIso()).match(/^\d{4}-(\d{2})-(\d{2})$/);
   return match ? `${match[2]}-${match[1]}` : "hoy";
 }
 
 function harvestAnalysisRowInComparison(row, year, untilToday = false) {
   if (String(row.year) !== String(year)) return false;
   if (!untilToday) return true;
-  const todayMonthDay = harvestMonthDayValue(todayChileIso());
+  const todayMonthDay = harvestMonthDayValue(harvestAnalysisComparisonDate || todayChileIso());
   const monthDay = harvestMonthDayValue(row.date);
   return monthDay !== null && monthDay <= todayMonthDay;
 }
@@ -15390,7 +15458,7 @@ const HARVEST_ANALYSIS_SECTION_META = {
 
 function harvestAnalysisCacheKey(sectionKey, extra = "") {
   const years = [...harvestAnalysisSelectedYears].sort((a, b) => Number(a) - Number(b)).join(",");
-  return [sectionKey, harvestAnalysisSpeciesFilter, harvestAnalysisVarietyFilter, harvestAnalysisPotreroFilter, harvestAnalysisMetric, years, todayChileIso(), extra].join("|");
+  return [sectionKey, harvestAnalysisSpeciesFilter, harvestAnalysisVarietyFilter, harvestAnalysisPotreroFilter, harvestAnalysisMetric, years, harvestAnalysisComparisonDate, extra].join("|");
 }
 
 function harvestAnalysisCachedMarkup(sectionKey, renderer, extra = "") {
@@ -15926,6 +15994,7 @@ function renderHarvestAnalysis() {
           <option value="kg" ${harvestAnalysisMetric === "kg" ? "selected" : ""}>Kg totales</option>
           <option value="bins" ${harvestAnalysisMetric === "bins" ? "selected" : ""}>Bins</option>
         </select></label>
+        <label>Fecha comparacion<input data-harvest-analysis-filter="comparison-date" type="date" value="${htmlAttr(harvestAnalysisComparisonDate || todayChileIso())}"></label>
         <div class="harvest-year-checks" aria-label="Años">
           ${years.map((year) => `<label><input data-harvest-analysis-year="${htmlAttr(year)}" type="checkbox" ${harvestAnalysisSelectedYears.has(year) ? "checked" : ""}>${escapeHtml(year)}</label>`).join("")}
         </div>
@@ -15933,7 +16002,7 @@ function renderHarvestAnalysis() {
       </div>
       <div class="harvest-analytics-grid">
         ${renderHarvestAnalysisSection("annual", () => renderHarvestVarietyYearComparison(`Comparacion por variedad - total anual - ${harvestAnalysisMetricLabel()}`, rows, { subtitle: "Suma completa de cada ano seleccionado" }))}
-        ${renderHarvestAnalysisSection("progress", () => renderHarvestVarietyYearComparison(`Comparacion por variedad - avance al ${harvestTodayDayMonthLabel()} - ${harvestAnalysisMetricLabel()}`, rows, { untilToday: true, showDifference: true, subtitle: "Suma hasta la misma fecha calendario de cada ano" }))}
+        ${renderHarvestAnalysisSection("progress", () => renderHarvestVarietyYearComparison(`Comparacion por variedad - avance al ${harvestComparisonDayMonthLabel()} - ${harvestAnalysisMetricLabel()}`, rows, { untilToday: true, showDifference: true, subtitle: "Suma hasta la fecha calendario seleccionada en cada ano" }))}
         ${renderHarvestAnalysisSection("start", () => renderHarvestStartDatesPanel(rows, allRows, years))}
         ${renderHarvestAnalysisSection("productivity", () => renderHarvestPotreroBlockSummary(rows))}
         ${renderHarvestAnalysisSection("contractors", () => renderHarvestContractorRanking(rows), { cache: false })}
@@ -16007,6 +16076,7 @@ function renderHarvestPotreroBlockSummary(rows) {
                   <div class="harvest-productivity-potrero-row">
                     <div class="harvest-productivity-potrero-head">
                       <strong title="${htmlAttr(potreroLabel(potrero.potrero))}">${potreroRanks.has(potrero.potrero) ? `<span class="harvest-rank-medal rank-${potreroRanks.get(potrero.potrero)}" aria-label="Puesto ${potreroRanks.get(potrero.potrero)} por ${showProductivity ? "Kg/ha" : harvestAnalysisMetricLabel()}">${potreroRanks.get(potrero.potrero)}</span>` : ""}${escapeHtml(potreroLabel(potrero.potrero))}</strong>
+                      <button class="harvest-productivity-detail-button" type="button" data-action="open-harvest-productivity-blocks" data-species="${htmlAttr(speciesEntry.species)}" data-variety="${htmlAttr(entry.variety)}" data-potrero="${htmlAttr(potrero.potrero)}" aria-label="Ver productividad por bloque de ${htmlAttr(potreroLabel(potrero.potrero))}" title="Ver desglose por bloque">+</button>
                       <span>${number(potrero.total, decimals)}${unit}</span>
                     </div>
                     <div class="harvest-productivity-years">
@@ -16067,6 +16137,70 @@ function renderHarvestPotreroBlockSummary(rows) {
     </article>`;
 }
 
+function openHarvestProductivityBlocks(species, variety, potrero) {
+  const dialog = document.getElementById("harvestProductivityDialog");
+  if (!dialog) return;
+  const entries = new Map();
+  harvestAnalysisFilteredRows().forEach((row) => {
+    if (harvestCleanValue(row.species, "Sin especie") !== species) return;
+    if (harvestCleanValue(row.variety, "Sin variedad") !== variety) return;
+    if (harvestAnalysisDisplayPotrero(row) !== potrero) return;
+    const year = String(row.year || "");
+    if (!year || (harvestAnalysisSelectedYears.size && !harvestAnalysisSelectedYears.has(year))) return;
+    const field = harvestAnalysisFieldForRow(row);
+    const block = field?.block || row.block || row.bloque_normalizado || row.excelBlock || row.bloque_excel || "Sin relacion";
+    const fieldKey = field?.id || fieldIdentityKey(potrero, block);
+    const key = `${year}|${fieldKey}`;
+    const hectares = harvestNumericValue(field?.hectares);
+    const plants = harvestNumericValue(field?.plants)
+      || (hectares && harvestNumericValue(field?.plantsPerHa) ? hectares * harvestNumericValue(field.plantsPerHa) : 0);
+    const entry = entries.get(key) || { year, block, kg: 0, bins: 0, hectares, plants };
+    entry.kg += harvestNumericValue(row.kgTotal);
+    entry.bins += harvestNumericValue(row.totalBins);
+    entries.set(key, entry);
+  });
+  const rows = [...entries.values()]
+    .map((entry) => ({
+      ...entry,
+      kgHa: entry.hectares ? entry.kg / entry.hectares : 0,
+      kgPlant: entry.plants ? entry.kg / entry.plants : 0
+    }))
+    .sort((a, b) => b.kgHa - a.kgHa || b.kg - a.kg || Number(b.year) - Number(a.year)
+      || String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
+  const totalKg = rows.reduce((sum, row) => sum + row.kg, 0);
+  dialog.innerHTML = `
+    <div class="modal-body harvest-productivity-dialog">
+      <div class="modal-head">
+        <div>
+          <h2>${escapeHtml(variety)} · ${escapeHtml(potreroLabel(potrero))}</h2>
+          <p>${escapeHtml(species)} · bloques ordenados por mayor productividad Kg/ha</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cerrar">x</button>
+      </div>
+      <div class="harvest-productivity-dialog-summary">
+        <span><small>Kg seleccionados</small><strong>${number(totalKg, 0)} kg</strong></span>
+        <span><small>Registros por bloque y ano</small><strong>${number(rows.length, 0)}</strong></span>
+      </div>
+      <div class="table-wrap harvest-productivity-block-table-wrap">
+        <table class="harvest-productivity-block-table">
+          <thead><tr><th>Pos.</th><th>Ano</th><th>Bloque</th><th>Kg</th><th>Ha</th><th>Kg/ha</th><th>Kg/planta</th></tr></thead>
+          <tbody>${rows.map((row, index) => `<tr>
+            <td><b class="harvest-block-rank">${index + 1}</b></td>
+            <td>${escapeHtml(row.year)}</td>
+            <td><strong>Bloque ${escapeHtml(row.block)}</strong></td>
+            <td>${number(row.kg, 0)}</td>
+            <td>${row.hectares ? number(row.hectares, 3) : "-"}</td>
+            <td><strong>${row.hectares ? number(row.kgHa, 0) : "-"}</strong></td>
+            <td>${row.plants ? number(row.kgPlant, 0) : "-"}</td>
+          </tr>`).join("") || `<tr><td colspan="7"><div class="empty">Sin bloques relacionados para este potrero.</div></td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-action="close-dialog">Cerrar</button></div>
+    </div>`;
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+}
+
 function wireHarvestAnalysisFilters() {
   document.querySelectorAll("[data-harvest-analysis-filter]").forEach((control) => {
     control.addEventListener("change", (event) => {
@@ -16080,6 +16214,7 @@ function wireHarvestAnalysisFilters() {
       if (target.dataset.harvestAnalysisFilter === "variety") harvestAnalysisVarietyFilter = target.value;
       if (target.dataset.harvestAnalysisFilter === "potrero") harvestAnalysisPotreroFilter = target.value;
       if (target.dataset.harvestAnalysisFilter === "metric") harvestAnalysisMetric = target.value;
+      if (target.dataset.harvestAnalysisFilter === "comparison-date") harvestAnalysisComparisonDate = target.value || todayChileIso();
       renderHarvestAnalysis();
     });
   });
@@ -18565,8 +18700,11 @@ async function renderGoogleGeoJsonMap(el, layers) {
     blockLabel: (group) => mapBlockFeatureLabel(group.feature),
     blockLabelPriority: mapBlockLabelPriority,
     blockLabelMinZoom: mapBlockLabelMinZoom,
+    blockLabelAllowOverlapAtZoom: mapBlockLabelAllowOverlapAtZoom,
     blockLabelAllowOverlap: isPriorityMapBlock,
     potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+    potreroLabelPriority: mapPotreroLabelPriority,
+    potreroLabelMaxZoom: mapPotreroLabelMaxZoom,
     blockStyle: (group) => {
       const activeBlock = active.has(group.key);
       const related = activePotreros.has(group.key.split(":")[0]);
@@ -18772,8 +18910,11 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
       blockLabel: (group) => mapBlockFeatureLabel(group.feature),
       blockLabelPriority: mapBlockLabelPriority,
       blockLabelMinZoom: mapBlockLabelMinZoom,
+      blockLabelAllowOverlapAtZoom: mapBlockLabelAllowOverlapAtZoom,
       blockLabelAllowOverlap: isPriorityMapBlock,
       potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+      potreroLabelPriority: mapPotreroLabelPriority,
+      potreroLabelMaxZoom: mapPotreroLabelMaxZoom,
       blockStyle: () => ({ fillColor: "#dfe8dc", fillOpacity: 0.13 })
     });
     const infrastructureLayers = renderAgriculturalInfrastructure(maps, harvestMap, layers);
@@ -18828,26 +18969,6 @@ function harvestInfoField(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
-function irrigationCalicataBlockColor(key, index = 0) {
-  const palette = [
-    "#2dd4bf",
-    "#60a5fa",
-    "#a78bfa",
-    "#f59e0b",
-    "#34d399",
-    "#fb7185",
-    "#38bdf8",
-    "#c084fc",
-    "#facc15",
-    "#4ade80",
-    "#f97316",
-    "#22c55e"
-  ];
-  const text = String(key || "");
-  const hash = [...text].reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, index);
-  return palette[hash % palette.length];
-}
-
 async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
   const el = document.getElementById("irrigationCalicataMap");
   if (!el) return;
@@ -18856,72 +18977,60 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
     const maps = await loadGoogleMaps();
     const records = filteredIrrigationCalicatas(blocks, monthPrefix)
       .filter((item) => Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude)));
-    if (irrigationCalicataMapElement !== el) {
-      irrigationCalicataMap = null;
-      irrigationCalicataMapElement = el;
-    }
-    irrigationCalicataOverlays.forEach((overlay) => overlay.setMap?.(null));
-    irrigationCalicataOverlays = [];
+    const previousElement = irrigationCalicataMapElement;
+    if (previousElement !== el) irrigationCalicataMap = null;
+    irrigationCalicataOverlays = globalThis.AgroMap.clearOverlays(irrigationCalicataOverlays);
     irrigationCalicataMarkers = new Map();
     irrigationCalicataInfoWindow?.close();
-    if (!irrigationCalicataMap) {
-      irrigationCalicataMap = new maps.Map(el, {
-        mapTypeId: "satellite",
-        disableDefaultUI: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-        mapTypeControl: true,
+    const mapResult = globalThis.AgroMap.ensureMap({
+      maps,
+      element: el,
+      currentMap: irrigationCalicataMap,
+      currentElement: previousElement,
+      options: {
         gestureHandling: "greedy",
         scrollwheel: true,
-        tilt: 0
-      });
-    }
-    irrigationCalicataMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
-    const bounds = new maps.LatLngBounds();
-    const visibleKeys = new Set(blocks.map((block) => `${block.potrero}:${block.block}`));
-    const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
-    const potreroRings = geoFeaturesToRings(geoJsonCache?.potreros?.features || []);
-    blockRings.forEach((item, index) => {
-      const key = blockFeatureKey(item.feature);
-      const active = visibleKeys.has(key);
-      const color = irrigationCalicataBlockColor(key, index);
-      item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: active ? "#ffffff" : "#cbd5ce",
-          strokeOpacity: active ? 0.98 : 0.65,
-          strokeWeight: active ? 2.8 : 1.4,
-          fillColor: active ? color : "#dfe8dc",
-          fillOpacity: active ? 0.46 : 0.10,
-          zIndex: active ? 5 : 1
-        });
-        polygon.setMap(irrigationCalicataMap);
-        irrigationCalicataOverlays.push(polygon);
-        ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
-      });
-      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), blockFeatureName(item.feature), "map-label-block-google");
-      label.setMap(irrigationCalicataMap);
-      irrigationCalicataOverlays.push(label);
-    });
-    potreroRings.forEach((item, index) => {
-      item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: ["#073b2c", "#7c2d12", "#1e3a8a", "#581c87"][index % 4],
-          strokeOpacity: 1,
-          strokeWeight: 3.4,
-          fillOpacity: 0,
-          zIndex: 8
-        });
-        polygon.setMap(irrigationCalicataMap);
-        irrigationCalicataOverlays.push(polygon);
-      });
-      if (irrigationCalicataShowPotreroLabels) {
-        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
-        label.setMap(irrigationCalicataMap);
-        irrigationCalicataOverlays.push(label);
+        draggable: true,
+        keyboardShortcuts: true
       }
     });
+    irrigationCalicataMap = mapResult.map;
+    irrigationCalicataMapElement = el;
+    const bounds = new maps.LatLngBounds();
+    const visibleKeys = new Set(blocks.map((block) => fieldIdentityKey(block.potrero, block.block)));
+    const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
+    const potreroRings = geoFeaturesToRings(geoJsonCache?.potreros?.features || []);
+    const fieldLayers = globalThis.AgroMap.renderFieldLayers({
+      maps,
+      map: irrigationCalicataMap,
+      blockItems: blockRings,
+      potreroItems: potreroRings,
+      blockKey: (item) => {
+        const field = geoJsonFeatureField(item.feature);
+        return fieldIdentityKey(field.potrero, field.block);
+      },
+      potreroKey: (item) => potreroFeatureName(item.feature),
+      blockLabel: (group) => mapBlockFeatureLabel(group.feature),
+      blockLabelPriority: mapBlockLabelPriority,
+      blockLabelMinZoom: mapBlockLabelMinZoom,
+      blockLabelAllowOverlapAtZoom: mapBlockLabelAllowOverlapAtZoom,
+      blockLabelAllowOverlap: isPriorityMapBlock,
+      potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+      potreroLabelPriority: mapPotreroLabelPriority,
+      potreroLabelMaxZoom: mapPotreroLabelMaxZoom,
+      showPotreroLabels: irrigationCalicataShowPotreroLabels,
+      blockStyle: (group) => {
+        const active = visibleKeys.has(group.key);
+        return active
+          ? { strokeOpacity: 0.98, strokeWeight: 2.8, fillOpacity: 0.4, zIndex: 5 }
+          : { strokeOpacity: 0.5, strokeWeight: 1.2, fillColor: "#dfe8dc", fillOpacity: 0.07, zIndex: 1 };
+      },
+      potreroStyle: () => ({ strokeOpacity: 1, strokeWeight: 3.4, zIndex: 8 })
+    });
+    const infrastructureLayers = renderAgriculturalInfrastructure(maps, irrigationCalicataMap, geoJsonCache);
+    irrigationCalicataOverlays = [...fieldLayers.overlays, ...infrastructureLayers.overlays];
+    if (!fieldLayers.bounds.isEmpty()) bounds.union(fieldLayers.bounds);
+    if (!infrastructureLayers.bounds.isEmpty()) bounds.union(infrastructureLayers.bounds);
     records.forEach((item) => {
       const position = { lat: Number(item.latitude), lng: Number(item.longitude) };
       const averageValue = calicataAverageValue(item);
@@ -18937,8 +19046,9 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
       irrigationCalicataOverlays.push(marker);
       bounds.extend(position);
     });
-    if (!bounds.isEmpty()) irrigationCalicataMap.fitBounds(bounds, 24);
+    if (mapResult.created && !bounds.isEmpty()) irrigationCalicataMap.fitBounds(bounds, 24);
   } catch (error) {
+    console.error("No se pudo renderizar el mapa compartido de calicatas:", error);
     el.innerHTML = `<span>No se pudo cargar el mapa de calicatas.</span>`;
   }
 }
@@ -19183,6 +19293,17 @@ function geoJsonFieldAlias(value) {
 
 function geoJsonFeatureField(feature) {
   const properties = feature?.properties || {};
+  const alreadyNormalized = Boolean(
+    properties.normalizacion_estado
+    || properties.campo_id
+    || Array.isArray(properties.campo_ids)
+  );
+  if (alreadyNormalized) {
+    return {
+      potrero: String(properties.potrero_oficial || properties.potrero || "").trim(),
+      block: String(properties.bloque_label || properties.bloque || "").trim()
+    };
+  }
   let rawPotrero = String(
     properties["Potrero_Alias:"] || properties.Potrero_Alias
     || properties["Alias:"] || properties.Alias || properties.alias
@@ -19192,17 +19313,24 @@ function geoJsonFeatureField(feature) {
   if (!rawPotrero && !String(properties.bloque || properties.Bloque || properties.BLOQUE || properties.block || properties.BLOCK || "").trim()) {
     return { potrero: "5", block: "1" };
   }
-  if (!rawPotrero && Number(properties.fid) === 125) rawPotrero = "Unidad E";
+  if (!rawPotrero) {
+    rawPotrero = {
+      125: "Unidad E"
+    }[Number(properties.fid)] || "";
+  }
   const potrero = geoJsonFieldAlias(rawPotrero);
   const rawBlock = String(properties.bloque || properties.Bloque || properties.BLOQUE || properties.block || properties.BLOCK || "").trim();
   let block = /^[D-J]$/i.test(potrero) && rawBlock && !rawBlock.toLocaleUpperCase("es").startsWith(potrero.toLocaleUpperCase("es"))
     ? `${potrero}${rawBlock}`
     : rawBlock;
   const blockOverride = {
+    "5:1": "1A",
     "29:2A": "2",
-    "29:2B": "2",
-    "29:5A": "5",
-    "29:5B": "5",
+    "29:2B": "3",
+    "29:3": "4",
+    "29:4": "5",
+    "29:5A": "6",
+    "29:5B": "7",
     "19:1": "4",
     "6:1": "3"
   }[`${potrero}:${block.toLocaleUpperCase("es")}`];
@@ -19223,7 +19351,7 @@ function blockFeatureName(feature) {
 }
 
 function mapBlockFeatureLabel(feature) {
-  const block = blockFeatureName(feature).toLocaleUpperCase("es");
+  const block = String(feature?.properties?.bloque_label || blockFeatureName(feature)).toLocaleUpperCase("es");
   if (!block) return "";
   if (/^[D-J]\d+[A-Z]*$/i.test(block) || block.startsWith("B")) return block;
   return `B${block}`;
@@ -19231,15 +19359,32 @@ function mapBlockFeatureLabel(feature) {
 
 function isPriorityMapBlock(group) {
   const field = geoJsonFeatureField(group?.feature);
-  return field.potrero === "30" && ["4", "5", "6", "7"].includes(field.block);
+  return (field.potrero === "30" && ["4", "5", "6", "7"].includes(field.block))
+    || (field.potrero === "28" && field.block === "3")
+    || (field.potrero === "5" && field.block === "1A")
+    || field.potrero === "Mirador 3";
 }
 
 function mapBlockLabelPriority(group) {
   return isPriorityMapBlock(group) ? 3 : 1;
 }
 
+function mapPotreroLabelPriority(group) {
+  const potrero = normalizePotreroOrderName(potreroFeatureName(group?.feature));
+  return potrero === normalizePotreroOrderName("Los pinos Paltos") ? 12 : 4;
+}
+
+function mapPotreroLabelMaxZoom(group) {
+  const potrero = normalizePotreroOrderName(potreroFeatureName(group?.feature));
+  return potrero === normalizePotreroOrderName("Los pinos Paltos") ? 19 : 16;
+}
+
 function mapBlockLabelMinZoom(group) {
-  return isPriorityMapBlock(group) ? 13 : 15;
+  return 16;
+}
+
+function mapBlockLabelAllowOverlapAtZoom() {
+  return 16;
 }
 
 function blockFeatureKey(feature) {
@@ -22924,6 +23069,7 @@ document.addEventListener("click", async (event) => {
     harvestAnalysisSelectedSpecies = "Todas";
     harvestAnalysisSelectedYears = new Set(harvestAnalysisYears());
     harvestAnalysisMetric = "kg";
+    harvestAnalysisComparisonDate = todayChileIso();
     renderHarvestAnalysis();
   }
   if (action === "open-harvest-excel-sync") {
@@ -22956,6 +23102,13 @@ document.addEventListener("click", async (event) => {
     if (harvestAnalysisOpenSections.has(section)) harvestAnalysisOpenSections.delete(section);
     else harvestAnalysisOpenSections.add(section);
     renderHarvestAnalysis();
+  }
+  if (action === "open-harvest-productivity-blocks") {
+    openHarvestProductivityBlocks(
+      actionTarget.dataset.species || "Sin especie",
+      actionTarget.dataset.variety || "Sin variedad",
+      actionTarget.dataset.potrero || "Sin potrero"
+    );
   }
   if (action === "toggle-harvest-contractors") {
     const key = actionTarget.dataset.key || "";

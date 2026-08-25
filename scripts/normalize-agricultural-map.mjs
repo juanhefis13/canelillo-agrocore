@@ -57,12 +57,23 @@ const POTRERO_ALIASES = Object.freeze({
 });
 
 const BLOCK_OVERRIDES = Object.freeze({
+  "5:1": "1A",
   "29:2A": "2",
-  "29:2B": "2",
-  "29:5A": "5",
-  "29:5B": "5",
+  "29:2B": "3",
+  "29:3": "4",
+  "29:4": "5",
+  "29:5A": "6",
+  "29:5B": "7",
   "19:1": "4",
   "6:1": "3"
+});
+
+const SHARED_BLOCKS = Object.freeze({
+  "5:1": ["1A", "1B"]
+});
+
+const BLOCK_POTRERO_FID_ALIASES = Object.freeze({
+  125: "Unidad E"
 });
 
 function clean(value) {
@@ -284,10 +295,16 @@ const normalizedBlocks = bloquesSource.features.map((feature, index) => {
   const properties = feature.properties || {};
   const rawPotreroName = readProperty(properties, ["Potrero_Nombre", "Nombre", "potrero"]);
   const sourcePotreroAlias = readProperty(properties, ["Potrero_Alias:", "Potrero_Alias", "Alias:", "Alias", "alias"]);
-  const rawPotreroAlias = sourcePotreroAlias || (Number(properties.fid) === 125 ? "Unidad E" : "");
+  const rawPotreroAlias = sourcePotreroAlias || BLOCK_POTRERO_FID_ALIASES[Number(properties.fid)] || "";
   const rawBlock = readProperty(properties, ["Bloque", "bloque", "BLOQUE", "block"]);
   const potreroMatch = resolvePotrero(rawPotreroAlias, rawPotreroName, officialByNormalized);
-  const blockMatch = resolveBlock(potreroMatch.official, rawBlock, officialFields);
+  const sharedBlockNames = SHARED_BLOCKS[`${potreroMatch.official}:${clean(rawBlock).toLocaleUpperCase("es")}`] || [];
+  const sharedFields = sharedBlockNames
+    .map((block) => officialFields.get(identity(potreroMatch.official, block)))
+    .filter(Boolean);
+  const blockMatch = sharedFields.length === sharedBlockNames.length && sharedFields.length
+    ? { status: "COINCIDENCIA", field: sharedFields[0], block: sharedFields[0].bloque }
+    : resolveBlock(potreroMatch.official, rawBlock, officialFields);
   const status = potreroMatch.status === "SIN_COINCIDENCIA" ? "POTRERO_SIN_COINCIDENCIA" : blockMatch.status;
   const field = blockMatch.field;
   const row = {
@@ -298,6 +315,8 @@ const normalizedBlocks = bloquesSource.features.map((feature, index) => {
     potrero_supabase: field?.potrero || (potreroMatch.status === "SIN_COINCIDENCIA" ? "" : potreroMatch.official),
     bloque_supabase: field?.bloque || "",
     campo_id: field?.id || "",
+    bloques_supabase_relacionados: sharedFields.map((item) => item.bloque).join(" / "),
+    campo_ids_relacionados: sharedFields.map((item) => item.id).join(" / "),
     estado: status,
     especie_geojson: clean(properties.Potrero_Especie),
     especie_supabase: clean(field?.especie),
@@ -308,7 +327,9 @@ const normalizedBlocks = bloquesSource.features.map((feature, index) => {
     diferencia_hectareas: field ? (numeric(properties.HAS) || 0) - (numeric(field.hectareas) || 0) : null,
     plantas_geojson: numeric(properties.Plantas),
     plantas_supabase: numeric(field?.plantas),
-    observacion: status === "COINCIDENCIA" ? "" : status === "POTRERO_SIN_COINCIDENCIA" ? "El potrero no existe en campos." : "El bloque no existe para este potrero en campos."
+    observacion: sharedFields.length
+      ? `Geometria compartida por los bloques ${sharedFields.map((item) => item.bloque).join(" / ")}.`
+      : status === "COINCIDENCIA" ? "" : status === "POTRERO_SIN_COINCIDENCIA" ? "El potrero no existe en campos." : "El bloque no existe para este potrero en campos."
   };
   blockRows.push(row);
   const officialPotrero = field?.potrero || potreroMatch.official;
@@ -326,6 +347,9 @@ const normalizedBlocks = bloquesSource.features.map((feature, index) => {
       Bloque: officialBlock,
       bloque: officialBlock,
       campo_id: field?.id || null,
+      campo_ids: sharedFields.length ? sharedFields.map((item) => item.id) : (field?.id ? [field.id] : []),
+      bloques_supabase: sharedFields.length ? sharedFields.map((item) => item.bloque) : (field?.bloque ? [field.bloque] : []),
+      bloque_label: sharedFields.length ? sharedFields.map((item) => item.bloque).join(" / ") : officialBlock,
       especie: field?.especie || clean(properties.Potrero_Especie),
       variedad: field?.variedad || clean(properties.Variedad),
       hectareas: numeric(field?.hectareas) ?? numeric(properties.HAS),
@@ -357,7 +381,13 @@ const normalizedCollections = {
 };
 
 const representedPotreros = new Set(potreroRows.map((row) => row.potrero_supabase).filter(Boolean));
-const representedFields = new Set(blockRows.filter((row) => row.campo_id).map((row) => identity(row.potrero_supabase, row.bloque_supabase)));
+const representedFields = new Set();
+blockRows.forEach((row) => {
+  if (row.campo_id) representedFields.add(identity(row.potrero_supabase, row.bloque_supabase));
+  clean(row.bloques_supabase_relacionados).split("/").map((item) => clean(item)).filter(Boolean).forEach((block) => {
+    representedFields.add(identity(row.potrero_supabase, block));
+  });
+});
 const missingOfficialPotreros = officialPotreros.filter((potrero) => !representedPotreros.has(potrero)).map((potrero) => ({
   potrero_supabase: potrero,
   bloques_supabase: (officialByPotrero.get(potrero) || []).length,
