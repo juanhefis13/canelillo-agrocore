@@ -5589,7 +5589,10 @@ async function renderIrrigationSatelliteMap(blocks, { preserveViewport = false }
       potreroItems: potreroRings,
       blockKey: (item) => fieldIdentityKey(geoJsonFeatureField(item.feature).potrero, geoJsonFeatureField(item.feature).block),
       potreroKey: (item) => normalizePotreroOrderName(potreroFeatureName(item.feature)),
-      blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+      blockLabel: (group) => mapBlockFeatureLabel(group.feature),
+      blockLabelPriority: mapBlockLabelPriority,
+      blockLabelMinZoom: mapBlockLabelMinZoom,
+      blockLabelAllowOverlap: isPriorityMapBlock,
       potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
       showBlocks: irrigationSatelliteShowBlocks,
       showPotreros: irrigationSatelliteShowPotreros,
@@ -12952,7 +12955,10 @@ async function renderPestMonitoringMap(records, summaries, scale, trees) {
         potreroItems: potreroRings,
         blockKey: (item) => pestMonitoringBlockKey(item.feature.properties || {}),
         potreroKey: (item) => potreroFeatureName(item.feature),
-        blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+        blockLabel: (group) => mapBlockFeatureLabel(group.feature),
+        blockLabelPriority: mapBlockLabelPriority,
+        blockLabelMinZoom: mapBlockLabelMinZoom,
+        blockLabelAllowOverlap: isPriorityMapBlock,
         potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
         blockStyle: () => ({ fillColor: "#6e8f83", fillOpacity: 0.04, zIndex: 2 }),
         potreroStyle: () => ({ zIndex: 4 }),
@@ -18556,7 +18562,10 @@ async function renderGoogleGeoJsonMap(el, layers) {
     potreroItems: potreroRings,
     blockKey: (item) => blockFeatureKey(item.feature),
     potreroKey: (item) => potreroFeatureName(item.feature),
-    blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+    blockLabel: (group) => mapBlockFeatureLabel(group.feature),
+    blockLabelPriority: mapBlockLabelPriority,
+    blockLabelMinZoom: mapBlockLabelMinZoom,
+    blockLabelAllowOverlap: isPriorityMapBlock,
     potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
     blockStyle: (group) => {
       const activeBlock = active.has(group.key);
@@ -18760,7 +18769,10 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
       potreroItems: potreroRings,
       blockKey: (item) => blockFeatureKey(item.feature),
       potreroKey: (item) => potreroFeatureName(item.feature),
-      blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+      blockLabel: (group) => mapBlockFeatureLabel(group.feature),
+      blockLabelPriority: mapBlockLabelPriority,
+      blockLabelMinZoom: mapBlockLabelMinZoom,
+      blockLabelAllowOverlap: isPriorityMapBlock,
       potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
       blockStyle: () => ({ fillColor: "#dfe8dc", fillOpacity: 0.13 })
     });
@@ -19208,6 +19220,26 @@ function potreroFeatureName(feature) {
 
 function blockFeatureName(feature) {
   return geoJsonFeatureField(feature).block;
+}
+
+function mapBlockFeatureLabel(feature) {
+  const block = blockFeatureName(feature).toLocaleUpperCase("es");
+  if (!block) return "";
+  if (/^[D-J]\d+[A-Z]*$/i.test(block) || block.startsWith("B")) return block;
+  return `B${block}`;
+}
+
+function isPriorityMapBlock(group) {
+  const field = geoJsonFeatureField(group?.feature);
+  return field.potrero === "30" && ["4", "5", "6", "7"].includes(field.block);
+}
+
+function mapBlockLabelPriority(group) {
+  return isPriorityMapBlock(group) ? 3 : 1;
+}
+
+function mapBlockLabelMinZoom(group) {
+  return isPriorityMapBlock(group) ? 13 : 15;
 }
 
 function blockFeatureKey(feature) {

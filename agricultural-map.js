@@ -172,7 +172,7 @@
             const element = entry.label.getElement?.();
             if (!element) return;
             const rect = element.getBoundingClientRect();
-            if (!rect.width || !rect.height || occupied.some((item) => overlaps(rect, item))) {
+            if (!rect.width || !rect.height || (!entry.allowOverlap && occupied.some((item) => overlaps(rect, item)))) {
               entry.label.setVisible(false);
               return;
             }
@@ -382,6 +382,9 @@
     blockKey,
     potreroKey,
     blockLabel,
+    blockLabelPriority,
+    blockLabelMinZoom,
+    blockLabelAllowOverlap,
     potreroLabel,
     blockStyle,
     potreroStyle,
@@ -419,7 +422,12 @@
         const label = createLabel(maps, center(group.rings), text, "map-label-block-google");
         label.setMap(map);
         labelOverlays.push(label);
-        labelCollisionEntries.push({ label, priority: 1, minZoom: 15 });
+        labelCollisionEntries.push({
+          label,
+          priority: Number(blockLabelPriority?.(group, index)) || 1,
+          minZoom: Number(blockLabelMinZoom?.(group, index)) || 15,
+          allowOverlap: Boolean(blockLabelAllowOverlap?.(group, index))
+        });
       }
     });
 
