@@ -2,11 +2,14 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
+import indexColorScaleConfig from "./index-color-scales.js";
 
 const root = process.cwd();
 const port = Number(process.env.PORT || 8787);
 const sentinelHubTokenUrl = process.env.SENTINEL_HUB_TOKEN_URL || "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
 const sentinelHubProcessUrl = process.env.SENTINEL_HUB_PROCESS_URL || "https://sh.dataspace.copernicus.eu/api/v1/process";
+const sentinelHubCatalogUrl = process.env.SENTINEL_HUB_CATALOG_URL || "https://sh.dataspace.copernicus.eu/catalog/v1/search";
+const sentinelHubStatisticsUrl = process.env.SENTINEL_HUB_STATISTICS_URL || "https://sh.dataspace.copernicus.eu/statistics/v1";
 const sentinelHubClientId = process.env.SENTINEL_HUB_CLIENT_ID || "";
 const sentinelHubClientSecret = process.env.SENTINEL_HUB_CLIENT_SECRET || "";
 const planetApiKey = process.env.PLANET_API_KEY || process.env.PL_API_KEY || "";
@@ -14,8 +17,11 @@ const planetBasemapsUrl = process.env.PLANET_BASEMAPS_URL || "https://api.planet
 const planetTileBaseUrl = process.env.PLANET_TILE_BASE_URL || "https://tiles0.planet.com/basemaps/v1/planet-tiles";
 let sentinelHubToken = { value: "", expiresAt: 0 };
 const satelliteTileCache = new Map();
+const satelliteAvailabilityCache = new Map();
+const satelliteStatisticsCache = new Map();
 const satelliteTileCacheMax = Number(process.env.SATELLITE_TILE_CACHE_MAX || 900);
 const satelliteTileCacheTtlMs = Number(process.env.SATELLITE_TILE_CACHE_TTL_MS || 1000 * 60 * 60 * 6);
+const satellitePreferredCloudMax = satelliteNormalizedCloud(process.env.SATELLITE_PREFERRED_CLOUD_MAX, 35);
 const satelliteTileDiskCacheDir = process.env.SATELLITE_TILE_DISK_CACHE_DIR || join(root, ".cache", "satellite-tiles");
 const satelliteAoiGeoJsonPath = process.env.SATELLITE_AOI_GEOJSON || join(root, "data", "canelillo_limites.geojson");
 const transparentPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
@@ -24,26 +30,13 @@ const types = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  ".geojson": "application/geo+json; charset=utf-8",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".png": "image/png"
 };
 
-const vegetationPalettes = {
-  standard: [[-0.1, [0.46, 0.05, 0.08]], [0.2, [0.88, 0.24, 0.12]], [0.35, [0.96, 0.70, 0.14]], [0.5, [0.64, 0.78, 0.24]], [0.7, [0.08, 0.55, 0.24]], [0.85, [0.00, 0.32, 0.14]]],
-  contrast: [[-0.1, [0.64, 0.00, 0.05]], [0.2, [0.96, 0.12, 0.05]], [0.35, [1.00, 0.55, 0.00]], [0.5, [1.00, 0.86, 0.10]], [0.62, [0.43, 0.78, 0.18]], [0.78, [0.02, 0.58, 0.20]], [0.9, [0.00, 0.26, 0.10]]],
-  alerts: [[-0.1, [0.55, 0.00, 0.05]], [0.18, [0.82, 0.00, 0.06]], [0.3, [1.00, 0.28, 0.00]], [0.42, [1.00, 0.78, 0.06]], [0.56, [0.78, 0.88, 0.10]], [0.72, [0.05, 0.62, 0.18]], [0.9, [0.00, 0.34, 0.10]]]
-};
-
-const moisturePalettes = {
-  standard: [[-0.35, [0.52, 0.08, 0.07]], [-0.1, [0.86, 0.34, 0.08]], [0.1, [0.95, 0.76, 0.18]], [0.25, [0.52, 0.75, 0.35]], [0.45, [0.10, 0.42, 0.76]], [0.65, [0.02, 0.20, 0.48]]],
-  contrast: [[-0.35, [0.68, 0.00, 0.04]], [-0.1, [0.95, 0.20, 0.00]], [0.08, [1.00, 0.70, 0.00]], [0.22, [0.72, 0.86, 0.18]], [0.42, [0.00, 0.55, 0.82]], [0.65, [0.00, 0.10, 0.55]]],
-  alerts: [[-0.35, [0.70, 0.00, 0.04]], [-0.12, [1.00, 0.22, 0.00]], [0.08, [1.00, 0.78, 0.00]], [0.25, [0.20, 0.72, 0.78]], [0.45, [0.00, 0.34, 0.82]], [0.65, [0.00, 0.08, 0.55]]]
-};
-
-const waterPalettes = {
-  standard: [[-0.8, [0.00, 0.48, 0.16]], [-0.2, [0.83, 0.78, 0.40]], [0, [1.00, 1.00, 1.00]], [0.2, [0.45, 0.74, 0.90]], [0.5, [0.00, 0.25, 0.80]], [0.8, [0.00, 0.05, 0.45]]],
-  contrast: [[-0.8, [0.42, 0.20, 0.06]], [-0.2, [0.98, 0.48, 0.00]], [0, [1.00, 0.88, 0.16]], [0.18, [0.30, 0.82, 0.88]], [0.45, [0.00, 0.34, 0.95]], [0.8, [0.00, 0.02, 0.55]]],
-  alerts: [[-0.8, [0.70, 0.00, 0.04]], [-0.2, [1.00, 0.22, 0.00]], [0, [1.00, 0.78, 0.00]], [0.2, [0.30, 0.82, 0.88]], [0.5, [0.00, 0.24, 0.90]], [0.8, [0.00, 0.02, 0.50]]]
-};
+const { INDEX_COLOR_SCALES, getIndexThresholds } = indexColorScaleConfig;
 
 const layerStyles = {
   native: { alpha: 0.74 },
@@ -53,16 +46,16 @@ const layerStyles = {
 };
 
 const satelliteIndexes = {
-  NDVI: { expression: "safeIndex(sample.B08, sample.B04)", palettes: vegetationPalettes },
-  NDMI: { expression: "safeIndex(sample.B08, sample.B11)", palettes: moisturePalettes },
-  NDRE: { expression: "safeIndex(sample.B08, sample.B05)", palettes: vegetationPalettes },
-  GNDVI: { expression: "safeIndex(sample.B08, sample.B03)", palettes: vegetationPalettes },
-  SAVI: { expression: "1.5 * (sample.B08 - sample.B04) / Math.max(0.0001, sample.B08 + sample.B04 + 0.5)", palettes: vegetationPalettes },
-  NDWI: { expression: "safeIndex(sample.B03, sample.B08)", palettes: waterPalettes },
-  MSAVI2: { expression: "(2 * sample.B08 + 1 - Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - 8 * (sample.B08 - sample.B04)))) / 2", palettes: vegetationPalettes },
-  VARI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 - sample.B02)", palettes: vegetationPalettes },
-  MTVI2: { expression: "(1.5 * (1.2 * (sample.B08 - sample.B03) - 2.5 * (sample.B04 - sample.B03))) / Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - (6 * sample.B08 - 5 * Math.sqrt(Math.max(0, sample.B04))) - 0.5))", palettes: vegetationPalettes },
-  TGI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 + sample.B02)", palettes: vegetationPalettes }
+  NDVI: { expression: "safeIndex(sample.B08, sample.B04)" },
+  NDMI: { expression: "safeIndex(sample.B08, sample.B11)" },
+  NDRE: { expression: "safeIndex(sample.B08, sample.B05)" },
+  GNDVI: { expression: "safeIndex(sample.B08, sample.B03)" },
+  SAVI: { expression: "1.5 * (sample.B08 - sample.B04) / Math.max(0.0001, sample.B08 + sample.B04 + 0.5)" },
+  NDWI: { expression: "safeIndex(sample.B03, sample.B08)" },
+  MSAVI2: { expression: "(2 * sample.B08 + 1 - Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - 8 * (sample.B08 - sample.B04)))) / 2" },
+  VARI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 - sample.B02)" },
+  MTVI2: { expression: "(1.5 * (1.2 * (sample.B08 - sample.B03) - 2.5 * (sample.B04 - sample.B03))) / Math.sqrt(Math.max(0.0001, Math.pow(2 * sample.B08 + 1, 2) - (6 * sample.B08 - 5 * Math.sqrt(Math.max(0, sample.B04))) - 0.5))" },
+  TGI: { expression: "(sample.B03 - sample.B04) / Math.max(0.0001, sample.B03 + sample.B04 + sample.B02)" }
 };
 
 function sendJson(res, status, payload) {
@@ -218,6 +211,7 @@ async function satelliteAoiMeta() {
       if (!lngs.length || !lats.length) return null;
       return {
         bbox: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)],
+        geometry,
         geometryMercator: geometryToMercator(geometry),
         points: points.length
       };
@@ -434,6 +428,175 @@ async function sentinelAccessToken() {
   return sentinelHubToken.value;
 }
 
+function satelliteShiftedDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function satelliteNormalizedCloud(value, fallback = 35) {
+  if (value == null || String(value).trim() === "") return Math.min(100, Math.max(0, Number(fallback) || 35));
+  const parsed = Number(value);
+  return Math.min(100, Math.max(0, Number.isFinite(parsed) ? parsed : fallback));
+}
+
+async function sentinelCatalogScenes(from, to, maxCloud) {
+  const meta = await satelliteAoiMeta();
+  if (!meta?.bbox) return [];
+  const response = await fetch(sentinelHubCatalogUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await sentinelAccessToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      collections: ["sentinel-2-l2a"],
+      bbox: meta.bbox,
+      datetime: `${from}T00:00:00Z/${to}T23:59:59Z`,
+      limit: 100,
+      filter: `eo:cloud_cover <= ${maxCloud}`,
+      "filter-lang": "cql2-text",
+      fields: { include: ["properties.datetime", "properties.eo:cloud_cover"], exclude: ["assets", "links"] }
+    }),
+    signal: AbortSignal.timeout(16000)
+  });
+  if (!response.ok) throw new Error(`Catalogo Sentinel ${response.status}: ${(await response.text()).slice(0, 260)}`);
+  const payload = await response.json();
+  return (Array.isArray(payload.features) ? payload.features : []).map((feature) => ({
+    id: String(feature.id || ""),
+    datetime: String(feature.properties?.datetime || ""),
+    date: String(feature.properties?.datetime || "").slice(0, 10),
+    cloud: satelliteNormalizedCloud(feature.properties?.["eo:cloud_cover"], 100)
+  })).filter((scene) => /^\d{4}-\d{2}-\d{2}$/.test(scene.date));
+}
+
+function selectAutomaticSentinelScene(scenes, allowCloudyFallback = true) {
+  const newestFirst = [...scenes].sort((a, b) => b.datetime.localeCompare(a.datetime));
+  return newestFirst.find((scene) => scene.cloud <= satellitePreferredCloudMax)
+    || (allowCloudyFallback ? newestFirst[0] : null)
+    || null;
+}
+
+async function handleSentinelAvailability(res, url) {
+  const from = String(url.searchParams.get("from") || "").slice(0, 10);
+  const to = String(url.searchParams.get("to") || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    sendJson(res, 400, { available: false, message: "Rango de fecha invalido" });
+    return true;
+  }
+  const key = satelliteTileCacheKey("availability", { from, to, strategy: "automatic-latest", satellitePreferredCloudMax });
+  const cached = satelliteAvailabilityCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    sendJson(res, 200, cached.payload);
+    return true;
+  }
+  let scenes = await sentinelCatalogScenes(from, to, 100);
+  let fallback = false;
+  let searchFrom = from;
+  let selected = selectAutomaticSentinelScene(scenes, false);
+  if (!selected) {
+    fallback = true;
+    searchFrom = satelliteShiftedDate(to, -120);
+    scenes = await sentinelCatalogScenes(searchFrom, to, 100);
+    selected = selectAutomaticSentinelScene(scenes);
+  }
+  const cloudLimit = selected
+    ? Math.min(100, Math.max(satellitePreferredCloudMax, Math.ceil(selected.cloud)))
+    : satellitePreferredCloudMax;
+  const payload = selected ? {
+    available: true,
+    fallback,
+    requested: { from, to },
+    searched: { from: searchFrom, to },
+    effective: { from: selected.date, to: selected.date, date: selected.date, cloud: selected.cloud, cloudLimit, id: selected.id },
+    sceneCount: scenes.length,
+    message: fallback
+      ? `Sin imagen utilizable en el rango solicitado. Se usara la ultima escena disponible del ${selected.date}.`
+      : `Escena Sentinel disponible del ${selected.date}.`
+  } : {
+    available: false,
+    fallback,
+    requested: { from, to },
+    searched: { from: searchFrom, to },
+    sceneCount: 0,
+    message: "No hay escenas Sentinel disponibles en los ultimos 120 dias."
+  };
+  satelliteAvailabilityCache.set(key, { payload, expiresAt: Date.now() + 10 * 60 * 1000 });
+  sendJson(res, 200, payload);
+  return true;
+}
+
+function satelliteStatisticsEvalscript(indexName) {
+  const definition = satelliteIndexes[indexName];
+  return `//VERSION=3
+function setup() {
+  return {
+    input: ["B02", "B03", "B04", "B05", "B08", "B11", "SCL", "dataMask"],
+    output: [
+      { id: "index", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
+  };
+}
+function safeIndex(a, b) {
+  var denominator = a + b;
+  return Math.abs(denominator) < 0.0001 ? -1 : (a - b) / denominator;
+}
+function maskedScl(value) {
+  return value === 0 || value === 1 || value === 3 || value === 7 || value === 8 || value === 9 || value === 10 || value === 11;
+}
+function evaluatePixel(sample) {
+  var valid = sample.dataMask !== 0 && !maskedScl(sample.SCL);
+  return { index: [${definition.expression}], dataMask: [valid ? 1 : 0] };
+}`;
+}
+
+async function sentinelRelativeThresholds(indexName, from, to, maxCloud, mosaickingOrder) {
+  const key = satelliteTileCacheKey("statistics", { indexName, from, to, maxCloud, mosaickingOrder });
+  const cached = satelliteStatisticsCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.payload;
+  const meta = await satelliteAoiMeta();
+  if (!meta?.bbox) throw new Error("No se pudo cargar el limite del campo para calcular percentiles");
+  const [minX, minY] = lonLatToMercatorCoordinate([meta.bbox[0], meta.bbox[1]]);
+  const [maxX, maxY] = lonLatToMercatorCoordinate([meta.bbox[2], meta.bbox[3]]);
+  const payload = {
+    input: {
+      bounds: {
+        bbox: [minX, minY, maxX, maxY],
+        geometry: meta.geometryMercator,
+        properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/3857" }
+      },
+      data: [{
+        type: "sentinel-2-l2a",
+        dataFilter: { maxCloudCoverage: maxCloud, mosaickingOrder }
+      }]
+    },
+    aggregation: {
+      timeRange: { from: `${from}T00:00:00Z`, to: `${satelliteShiftedDate(to, 1)}T00:00:00Z` },
+      aggregationInterval: { of: "P1D" },
+      evalscript: satelliteStatisticsEvalscript(indexName),
+      resx: 20,
+      resy: 20
+    },
+    calculations: {
+      default: { statistics: { default: { percentiles: { k: [20, 40, 60, 80] } } } }
+    }
+  };
+  const response = await fetch(sentinelHubStatisticsUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await sentinelAccessToken()}`, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(24000)
+  });
+  if (!response.ok) throw new Error(`Estadisticas Sentinel ${response.status}: ${(await response.text()).slice(0, 320)}`);
+  const result = await response.json();
+  const stats = (result.data || []).map((item) => item?.outputs?.index?.bands?.B0?.stats).find((item) => item?.percentiles);
+  const percentiles = stats?.percentiles || {};
+  const thresholds = [20, 40, 60, 80].map((keyValue) => Number(percentiles[`${keyValue}.0`] ?? percentiles[String(keyValue)]));
+  if (thresholds.some((value) => !Number.isFinite(value))) throw new Error("Sentinel no devolvio percentiles validos para TGI");
+  const resultPayload = { index: indexName, relative: true, thresholds, percentiles: [20, 40, 60, 80], sampleCount: Number(stats.sampleCount) || 0, noDataCount: Number(stats.noDataCount) || 0 };
+  satelliteStatisticsCache.set(key, { payload: resultPayload, expiresAt: Date.now() + 1000 * 60 * 60 * 6 });
+  return resultPayload;
+}
+
 function tileToMercatorBbox(x, y, z) {
   const scale = 2 ** z;
   const origin = 20037508.342789244;
@@ -455,11 +618,18 @@ async function sentinelHubTileBounds(x, y, z) {
   return bounds;
 }
 
-function satelliteEvalscript(indexName, styleName = "contrast") {
+function hexToRgbUnit(hex) {
+  const normalized = String(hex || "").replace("#", "");
+  return [0, 2, 4].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16) / 255);
+}
+
+function satelliteEvalscript(indexName, styleName = "contrast", relativeThresholds = []) {
   const definition = satelliteIndexes[indexName];
   const style = layerStyles[styleName] || layerStyles.contrast;
-  const paletteKey = styleName === "native" ? "standard" : styleName;
-  const stops = definition.palettes?.[paletteKey] || definition.palettes?.standard || definition.palettes?.contrast || vegetationPalettes.standard;
+  const scale = INDEX_COLOR_SCALES[indexName];
+  const thresholds = getIndexThresholds(indexName, relativeThresholds);
+  if (thresholds.length !== 4) throw new Error(`Faltan umbrales de clasificacion para ${indexName}`);
+  const colors = scale.levels.map((level) => hexToRgbUnit(level.color));
   return `//VERSION=3
 function setup() {
   return {
@@ -472,30 +642,21 @@ function safeIndex(a, b) {
   return Math.abs(denominator) < 0.0001 ? -1 : (a - b) / denominator;
 }
 function maskedScl(value) {
-  return value === 0 || value === 1 || value === 3 || value === 8 || value === 9 || value === 10 || value === 11;
+  return value === 0 || value === 1 || value === 3 || value === 7 || value === 8 || value === 9 || value === 10 || value === 11;
 }
-var stops = ${JSON.stringify(stops)};
+var thresholds = ${JSON.stringify(thresholds)};
+var colors = ${JSON.stringify(colors)};
 var alpha = ${Number(style.alpha).toFixed(2)};
-function ramp(value) {
-  if (value <= stops[0][0]) return stops[0][1];
-  for (var i = 1; i < stops.length; i++) {
-    if (value <= stops[i][0]) {
-      var previous = stops[i - 1];
-      var current = stops[i];
-      var amount = (value - previous[0]) / Math.max(0.0001, current[0] - previous[0]);
-      return [
-        previous[1][0] + (current[1][0] - previous[1][0]) * amount,
-        previous[1][1] + (current[1][1] - previous[1][1]) * amount,
-        previous[1][2] + (current[1][2] - previous[1][2]) * amount
-      ];
-    }
+function classifiedColor(value) {
+  for (var i = 0; i < thresholds.length; i++) {
+    if (value <= thresholds[i]) return colors[i];
   }
-  return stops[stops.length - 1][1];
+  return colors[colors.length - 1];
 }
 function evaluatePixel(sample) {
   if (sample.dataMask === 0 || maskedScl(sample.SCL)) return [0, 0, 0, 0];
   var value = ${definition.expression};
-  var color = ramp(value);
+  var color = classifiedColor(value);
   return [color[0], color[1], color[2], alpha];
 }`;
 }
@@ -519,13 +680,50 @@ async function handleSentinelHub(req, res, url) {
     sendJson(res, 200, {
       configured: active,
       provider: "Copernicus Data Space - Sentinel Hub Process API",
-      build: "sentinel-palettes-v3-local",
+      build: "sentinel-index-scales-v7-auto-latest-local",
       supportedIndexes: Object.keys(satelliteIndexes),
       supportedStyles: Object.keys(layerStyles),
+      supportedMosaicking: ["leastCC", "mostRecent", "leastRecent"],
+      availability: true,
+      statistics: true,
       aoi: aoi?.bbox ? { bbox: aoi.bbox, points: aoi.points } : null,
       cache: { memoryMax: satelliteTileCacheMax, ttlMs: satelliteTileCacheTtlMs },
       message
     });
+    return true;
+  }
+  if (url.pathname === "/api/sentinel-hub/availability") {
+    if (!sentinelConfigured()) {
+      sendJson(res, 503, { available: false, message: "Faltan credenciales Sentinel Hub en el servidor" });
+      return true;
+    }
+    try {
+      return await handleSentinelAvailability(res, url);
+    } catch (error) {
+      sendJson(res, 502, { available: false, message: error.message || "No se pudo consultar el catalogo Sentinel" });
+      return true;
+    }
+  }
+  if (url.pathname === "/api/sentinel-hub/statistics") {
+    if (!sentinelConfigured()) {
+      sendJson(res, 503, { message: "Faltan credenciales Sentinel Hub en el servidor" });
+      return true;
+    }
+    const indexName = String(url.searchParams.get("index") || "TGI").toUpperCase();
+    const from = String(url.searchParams.get("from") || "").slice(0, 10);
+    const to = String(url.searchParams.get("to") || "").slice(0, 10);
+    const maxCloud = satelliteNormalizedCloud(url.searchParams.get("maxCloud"));
+    const requestedMosaicking = String(url.searchParams.get("mosaicking") || "leastCC");
+    const mosaickingOrder = ["leastCC", "mostRecent", "leastRecent"].includes(requestedMosaicking) ? requestedMosaicking : "leastCC";
+    if (!INDEX_COLOR_SCALES[indexName]?.relative) {
+      sendJson(res, 200, { index: indexName, relative: false, thresholds: getIndexThresholds(indexName) });
+      return true;
+    }
+    try {
+      sendJson(res, 200, await sentinelRelativeThresholds(indexName, from, to, maxCloud, mosaickingOrder));
+    } catch (error) {
+      sendJson(res, 502, { index: indexName, relative: true, thresholds: [], message: error.message || "No se pudieron calcular percentiles" });
+    }
     return true;
   }
   if (url.pathname !== "/api/sentinel-hub/tile") return false;
@@ -540,7 +738,11 @@ async function handleSentinelHub(req, res, url) {
   const styleName = String(url.searchParams.get("style") || "contrast").toLowerCase();
   const from = String(url.searchParams.get("from") || "").slice(0, 10);
   const to = String(url.searchParams.get("to") || "").slice(0, 10);
-  const maxCloud = Math.min(100, Math.max(0, Number(url.searchParams.get("maxCloud")) || 35));
+  const maxCloud = satelliteNormalizedCloud(url.searchParams.get("maxCloud"));
+  const requestedMosaicking = String(url.searchParams.get("mosaicking") || "leastCC");
+  const mosaickingOrder = ["leastCC", "mostRecent", "leastRecent"].includes(requestedMosaicking) ? requestedMosaicking : "leastCC";
+  const relativeThresholds = String(url.searchParams.get("breaks") || "").split(",").map(Number).filter(Number.isFinite);
+  const clientVersion = String(url.searchParams.get("v") || "").slice(0, 200);
   if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y) || z < 0 || z > 22) {
     sendText(res, 400, "Tile invalido");
     return true;
@@ -553,13 +755,17 @@ async function handleSentinelHub(req, res, url) {
     sendText(res, 400, `Indice Sentinel no soportado: ${indexName}`);
     return true;
   }
+  if (INDEX_COLOR_SCALES[indexName]?.relative && relativeThresholds.length !== 4) {
+    sendText(res, 400, `Faltan percentiles relativos para ${indexName}`);
+    return true;
+  }
   try {
     if (await satelliteTileOutsideAoi(x, y, z)) {
       sendImage(res, transparentPng, "image/png", "AOI-SKIP");
       return true;
     }
     const outputSize = 256;
-    const cacheKey = satelliteTileCacheKey("sentinel", { z, x, y, indexName, styleName, outputSize, from, to, maxCloud });
+    const cacheKey = satelliteTileCacheKey("sentinel", { z, x, y, indexName, styleName, outputSize, from, to, maxCloud, mosaickingOrder, relativeThresholds: relativeThresholds.join(","), clientVersion });
     const cached = getSatelliteTileFromCache(cacheKey);
     if (cached) {
       sendImage(res, cached.image, cached.contentType, "HIT");
@@ -579,7 +785,7 @@ async function handleSentinelHub(req, res, url) {
           dataFilter: {
             timeRange: { from: `${from}T00:00:00Z`, to: `${to}T23:59:59Z` },
             maxCloudCoverage: maxCloud,
-            mosaickingOrder: "mostRecent"
+            mosaickingOrder
           }
         }]
       },
@@ -588,7 +794,7 @@ async function handleSentinelHub(req, res, url) {
         height: outputSize,
         responses: [{ identifier: "default", format: { type: "image/png" } }]
       },
-      evalscript: satelliteEvalscript(indexName, styleName)
+      evalscript: satelliteEvalscript(indexName, styleName, relativeThresholds)
     };
     const response = await fetch(sentinelHubProcessUrl, {
       method: "POST",

@@ -220,10 +220,14 @@ let irrigationStationFilter = "Todas";
 let irrigationBandejaScrollLeft = 0;
 let irrigationBandejaScrollTop = 0;
 let irrigationBandejaFocusPending = true;
+let irrigationBandejaView = "matrix";
+let irrigationBandejaAnalysisYears = new Set();
+let irrigationBandejaAnalysisYearsInitialized = false;
+let irrigationBandejaShowHistoricalAverage = true;
 let irrigationBalancePotreroFilter = "Todos";
 let irrigationBalanceSelectedPotreros = new Set();
 const IRRIGATION_SATELLITE_STAC_URL = "https://earth-search.aws.element84.com/v1/search";
-const IRRIGATION_SATELLITE_COLLECTION = "sentinel-2-l2a";
+const IRRIGATION_SATELLITE_COLLECTION = "sentinel-2-c1-l2a";
 const IRRIGATION_SATELLITE_DEFAULT_BBOX = [-71.29, -32.83, -71.24, -32.79];
 const IRRIGATION_SATELLITE_PROXY_LOCAL = "/api/sentinel-hub";
 const IRRIGATION_SATELLITE_PROXY_SUPABASE = "/api/sentinel-hub";
@@ -234,200 +238,113 @@ const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
 const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
   native: {
-    name: "Normal del mapa",
-    use: "Paleta base propia de cada indice."
+    name: "Estándar",
+    use: "Colores oficiales del índice."
   },
   standard: {
-    name: "Agricola",
-    use: "Rojo a verde tradicional para decision agricola."
+    name: "Suave",
+    use: "Mismos colores con menor intensidad."
   },
   contrast: {
-    name: "Alto contraste",
-    use: "Colores mas saturados para revisar diferencias al hacer zoom."
+    name: "Definida",
+    use: "Mismos colores con mayor presencia."
   },
   alerts: {
-    name: "Criticos",
-    use: "Resalta zonas rojas, amarillas y verdes con mayor fuerza."
+    name: "Intensa",
+    use: "Mismos colores con máxima presencia."
   }
 });
 const IRRIGATION_SATELLITE_LAYER_STRENGTHS = Object.freeze({
-  normal: { name: "Normal", layers: 1, factor: 1 },
-  reinforced: { name: "Reforzada", layers: 2, factor: 0.85 },
-  intense: { name: "Muy reforzada", layers: 3, factor: 0.78 }
+  normal: { name: "Natural", factor: 1 },
+  reinforced: { name: "Definida", factor: 0.92 },
+  intense: { name: "Diagnóstico", factor: 0.86 }
 });
-const IRRIGATION_SATELLITE_PALETTES = Object.freeze({
-  vegetation: {
-    standard: ["#750d14", "#e03d1f", "#f5b324", "#a3c73d", "#148c3d", "#005224"],
-    contrast: ["#a3000d", "#f51f0d", "#ff8c00", "#ffdb1a", "#6ec72e", "#059433", "#00421a"],
-    alerts: ["#8c000d", "#d1000f", "#ff4700", "#ffc70f", "#c7e01a", "#0d9e2e", "#00571a"]
-  },
-  moisture: {
-    standard: ["#851412", "#db5714", "#f2c22e", "#85bf59", "#1a6bc2", "#05337a"],
-    contrast: ["#ad000a", "#f23300", "#ffb300", "#b8db2e", "#008cd1", "#001a8c"],
-    alerts: ["#b3000a", "#ff3800", "#ffc700", "#33b8c7", "#0057d1", "#00148c"]
-  },
-  water: {
-    standard: ["#007a29", "#d4c766", "#ffffff", "#73bde6", "#0040cc", "#000d73"],
-    contrast: ["#6b330f", "#fa7a00", "#ffe029", "#4dd1e0", "#0057f2", "#00058c"],
-    alerts: ["#b3000a", "#ff3800", "#ffc700", "#4dd1e0", "#003de6", "#000580"]
-  }
+const IRRIGATION_SATELLITE_MOSAICKING_OPTIONS = Object.freeze({
+  leastCC: { name: "Menos nubes", use: "Prioriza la escena con menor nubosidad del rango." },
+  mostRecent: { name: "Más reciente", use: "Prioriza la última escena disponible del rango." },
+  leastRecent: { name: "Más antigua", use: "Prioriza la primera escena disponible del rango." }
 });
+const INDEX_COLOR_SCALE_API = globalThis.IndexColorScaleConfig;
+if (!INDEX_COLOR_SCALE_API?.INDEX_COLOR_SCALES) throw new Error("No se pudo cargar la configuracion de colores satelitales");
+const INDEX_COLOR_SCALES = INDEX_COLOR_SCALE_API.INDEX_COLOR_SCALES;
 const IRRIGATION_SATELLITE_INDEX_DEFINITIONS = Object.freeze({
   NDVI: {
     name: "NDVI",
-    palette: "vegetation",
     formula: "(B08 - B04) / (B08 + B04)",
     use: "Vigor vegetal y cobertura activa.",
     bands: ["nir", "red"],
-    planetProc: "ndvi",
-    legend: [
-      ["#9b1c1c", "Muy bajo", "< 0,20"],
-      ["#e8892f", "Bajo", "0,20 - 0,35"],
-      ["#f4d35e", "Medio", "0,35 - 0,50"],
-      ["#86c779", "Bueno", "0,50 - 0,70"],
-      ["#1f7a4d", "Alto", "> 0,70"]
-    ]
+    planetProc: "ndvi"
   },
   NDMI: {
     name: "NDMI",
-    palette: "moisture",
     formula: "(B08 - B11) / (B08 + B11)",
     use: "Humedad de vegetacion y estres hidrico.",
-    bands: ["nir", "swir16"],
-    legend: [
-      ["#8b1e1e", "Muy seco", "< -0,10"],
-      ["#df7e31", "Seco", "-0,10 - 0,10"],
-      ["#f2d45c", "Intermedio", "0,10 - 0,25"],
-      ["#6fbf7a", "Humedo", "0,25 - 0,45"],
-      ["#206aa5", "Muy humedo", "> 0,45"]
-    ]
+    bands: ["nir", "swir16"]
   },
   NDRE: {
     name: "NDRE",
-    palette: "vegetation",
     formula: "(B08 - B05) / (B08 + B05)",
     use: "Clorofila en canopia mas cerrada.",
-    bands: ["nir", "rededge1"],
-    legend: [
-      ["#9b1c1c", "Bajo", "< 0,12"],
-      ["#e8892f", "Vigilar", "0,12 - 0,22"],
-      ["#f4d35e", "Medio", "0,22 - 0,32"],
-      ["#86c779", "Bueno", "0,32 - 0,45"],
-      ["#1f7a4d", "Alto", "> 0,45"]
-    ]
+    bands: ["nir", "rededge1"]
   },
   GNDVI: {
     name: "GNDVI",
-    palette: "vegetation",
     formula: "(B08 - B03) / (B08 + B03)",
     use: "Clorofila y respuesta nitrogenada.",
-    bands: ["nir", "green"],
-    legend: [
-      ["#9b1c1c", "Muy bajo", "< 0,25"],
-      ["#e8892f", "Bajo", "0,25 - 0,40"],
-      ["#f4d35e", "Medio", "0,40 - 0,55"],
-      ["#86c779", "Bueno", "0,55 - 0,72"],
-      ["#1f7a4d", "Alto", "> 0,72"]
-    ]
+    bands: ["nir", "green"]
   },
   SAVI: {
     name: "SAVI",
-    palette: "vegetation",
     formula: "1.5 * (B08 - B04) / (B08 + B04 + 0.5)",
     use: "Vigor con suelo expuesto.",
-    bands: ["nir", "red"],
-    legend: [
-      ["#9b1c1c", "Muy bajo", "< 0,18"],
-      ["#e8892f", "Bajo", "0,18 - 0,32"],
-      ["#f4d35e", "Medio", "0,32 - 0,48"],
-      ["#86c779", "Bueno", "0,48 - 0,65"],
-      ["#1f7a4d", "Alto", "> 0,65"]
-    ]
+    bands: ["nir", "red"]
   },
   NDWI: {
     name: "NDWI",
-    palette: "water",
     formula: "(Green - NIR) / (Green + NIR)",
     use: "Agua superficial y zonas con exceso de humedad.",
     bands: ["green", "nir"],
-    planetProc: "ndwi",
-    legend: [
-      ["#8b1e1e", "Muy seco", "< -0,20"],
-      ["#df7e31", "Seco", "-0,20 - 0,00"],
-      ["#f2d45c", "Intermedio", "0,00 - 0,20"],
-      ["#58a6d6", "Humedo", "0,20 - 0,40"],
-      ["#1459a8", "Agua", "> 0,40"]
-    ]
+    planetProc: "ndwi"
   },
   MSAVI2: {
     name: "MSAVI2",
-    palette: "vegetation",
     formula: "(2*NIR+1-sqrt((2*NIR+1)^2-8*(NIR-Red))) / 2",
     use: "Vigor ajustado para suelo expuesto.",
     bands: ["nir", "red"],
-    planetProc: "msavi2",
-    legend: [
-      ["#9b1c1c", "Muy bajo", "< 0,15"],
-      ["#e8892f", "Bajo", "0,15 - 0,30"],
-      ["#f4d35e", "Medio", "0,30 - 0,45"],
-      ["#86c779", "Bueno", "0,45 - 0,62"],
-      ["#1f7a4d", "Alto", "> 0,62"]
-    ]
+    planetProc: "msavi2"
   },
   VARI: {
     name: "VARI",
-    palette: "vegetation",
     formula: "(Green - Red) / (Green + Red - Blue)",
     use: "Verdor visible usando bandas RGB.",
     bands: ["green", "red", "blue"],
-    planetProc: "vari",
-    legend: [
-      ["#9b1c1c", "Bajo", "< -0,05"],
-      ["#e8892f", "Vigilar", "-0,05 - 0,05"],
-      ["#f4d35e", "Medio", "0,05 - 0,15"],
-      ["#86c779", "Bueno", "0,15 - 0,30"],
-      ["#1f7a4d", "Alto", "> 0,30"]
-    ]
+    planetProc: "vari"
   },
   MTVI2: {
     name: "MTVI2",
-    palette: "vegetation",
     formula: "Indice triangular modificado",
     use: "Clorofila y vigor en canopia.",
     bands: ["nir", "red", "green"],
-    planetProc: "mtvi2",
-    legend: [
-      ["#9b1c1c", "Muy bajo", "< 0,20"],
-      ["#e8892f", "Bajo", "0,20 - 0,35"],
-      ["#f4d35e", "Medio", "0,35 - 0,50"],
-      ["#86c779", "Bueno", "0,50 - 0,68"],
-      ["#1f7a4d", "Alto", "> 0,68"]
-    ]
+    planetProc: "mtvi2"
   },
   TGI: {
     name: "TGI",
-    palette: "vegetation",
     formula: "Triangular Greenness Index",
     use: "Verdor y clorofila con bandas visibles.",
     bands: ["red", "green", "blue"],
-    planetProc: "tgi",
-    legend: [
-      ["#9b1c1c", "Bajo", "< 0,10"],
-      ["#e8892f", "Vigilar", "0,10 - 0,25"],
-      ["#f4d35e", "Medio", "0,25 - 0,45"],
-      ["#86c779", "Bueno", "0,45 - 0,65"],
-      ["#1f7a4d", "Alto", "> 0,65"]
-    ]
+    planetProc: "tgi"
   }
 });
 let irrigationSatelliteDateFrom = "";
 let irrigationSatelliteDateTo = "";
-let irrigationSatelliteCloudMax = 35;
+const IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX = 35;
+const irrigationSatelliteCloudMax = 100;
 let irrigationSatelliteLimit = 10;
 let irrigationSatelliteIndex = "NDVI";
 let irrigationSatelliteLayerOpacity = 82;
-let irrigationSatelliteLayerStyle = "native";
-let irrigationSatelliteLayerStrength = "normal";
+const irrigationSatelliteLayerStyle = "native";
+const irrigationSatelliteLayerStrength = "normal";
+const irrigationSatelliteMosaickingOrder = "mostRecent";
 let irrigationSatellitePaintedLayer = true;
 let irrigationSatelliteShowIndexLayer = true;
 let irrigationSatelliteShowBlocks = true;
@@ -444,6 +361,16 @@ let irrigationSatelliteOverlays = [];
 let irrigationSatelliteInfoWindow = null;
 let irrigationSatelliteTileOverlays = [];
 let irrigationSatelliteTileRevision = 1;
+let irrigationSatelliteMapRenderToken = 0;
+let irrigationSatelliteRefreshTimer = null;
+let irrigationSatelliteUpdateTimer = null;
+let irrigationSatelliteAvailabilityRequest = 0;
+let irrigationSatelliteAvailabilityKey = "";
+let irrigationSatelliteAvailability = { checked: false, checking: false, available: false, fallback: false, effective: null, message: "" };
+let irrigationSatelliteRelativeThresholds = {};
+let irrigationSatelliteRelativeThresholdsKey = "";
+let irrigationSatelliteRelativeThresholdsRequest = 0;
+let irrigationSatelliteRelativeThresholdsError = "";
 let irrigationSatelliteProxyBase = "";
 let irrigationSatelliteProcessingStatus = { checked: false, checking: false, configured: false, providerType: "", message: "Sin revisar", build: "", supportedIndexes: [] };
 let irrigationPlanetMosaics = [];
@@ -3953,6 +3880,234 @@ function irrigationBandejaVisibleYears(focusYear) {
   return Array.from({ length: last - first + 1 }, (_, index) => first + index);
 }
 
+const IRRIGATION_BANDEJA_YEAR_COLORS = [
+  "#176b87",
+  "#7c3aed",
+  "#be185d",
+  "#2563eb",
+  "#a21caf",
+  "#0f766e",
+  "#b45309"
+];
+
+function irrigationBandejaAnalysisDataYears() {
+  const currentYear = new Date().getFullYear();
+  return [...new Set((state.irrigationEvaporation || [])
+    .map((item) => irrigationBandejaYear(item.date))
+    .filter((year) => Number.isInteger(year) && year !== currentYear))]
+    .sort((a, b) => a - b);
+}
+
+function irrigationBandejaEvaporationYears(evaporationMap) {
+  return [...new Set([...evaporationMap.keys()]
+    .map((date) => irrigationBandejaYear(date))
+    .filter((year) => Number.isInteger(year)))]
+    .sort((a, b) => a - b);
+}
+
+function irrigationBandejaEnsureAnalysisYears() {
+  const availableYears = irrigationBandejaAnalysisDataYears();
+  const available = new Set(availableYears);
+  irrigationBandejaAnalysisYears = new Set(
+    [...irrigationBandejaAnalysisYears].filter((year) => available.has(Number(year))).map(Number)
+  );
+  if (!irrigationBandejaAnalysisYearsInitialized) {
+    irrigationBandejaAnalysisYears = new Set(availableYears.slice(-3));
+    irrigationBandejaAnalysisYearsInitialized = true;
+  }
+  return availableYears;
+}
+
+function irrigationBandejaAnalysisVisibleYears() {
+  irrigationBandejaEnsureAnalysisYears();
+  const currentYear = new Date().getFullYear();
+  return [...new Set([...irrigationBandejaAnalysisYears, currentYear])].sort((a, b) => a - b);
+}
+
+function irrigationBandejaYearStats(years, evaporationMap) {
+  const stats = new Map(years.map((year) => [year, {
+    year,
+    months: Array.from({ length: 12 }, () => ({ sum: 0, count: 0, average: null })),
+    sum: 0,
+    count: 0,
+    average: null
+  }]));
+  evaporationMap.forEach((item, date) => {
+    const year = irrigationBandejaYear(date);
+    const monthIndex = Number(String(date).slice(5, 7)) - 1;
+    const value = Number(item.evaporation);
+    const yearStats = stats.get(year);
+    if (!yearStats || monthIndex < 0 || monthIndex > 11 || !Number.isFinite(value)) return;
+    yearStats.months[monthIndex].sum += value;
+    yearStats.months[monthIndex].count += 1;
+    yearStats.sum += value;
+    yearStats.count += 1;
+  });
+  stats.forEach((yearStats) => {
+    yearStats.months.forEach((month) => {
+      month.average = month.count ? month.sum / month.count : null;
+    });
+    yearStats.average = yearStats.count ? yearStats.sum / yearStats.count : null;
+  });
+  return stats;
+}
+
+function irrigationBandejaAnalysisTable(years, stats, metric) {
+  const isAverage = metric === "average";
+  const title = isAverage ? "Promedio mensual" : "Acumulado mensual";
+  const unit = isAverage ? "mm/día" : "mm";
+  const footerLabel = isAverage ? "Promedio anual" : "Acumulado anual";
+  const monthRows = monthOptions().map((month, monthIndex) => `
+    <tr>
+      <th scope="row">${escapeHtml(month.label)}</th>
+      ${years.map((year) => {
+        const monthStats = stats.get(year)?.months?.[monthIndex];
+        const value = isAverage ? monthStats?.average : (monthStats?.count ? monthStats.sum : null);
+        return `<td class="${year === new Date().getFullYear() ? "is-current-year" : ""}">${value === null || value === undefined ? "-" : irrigationBandejaLabel(value)}</td>`;
+      }).join("")}
+    </tr>`).join("");
+  return `
+    <section class="panel irrigation-bandeja-analysis-table-panel">
+      <div class="panel-header">
+        <div><h3>${title}</h3><span>${unit} · todos los años con datos</span></div>
+      </div>
+      <div class="irrigation-bandeja-analysis-table-scroll">
+        <table class="irrigation-bandeja-analysis-table" style="--bandeja-analysis-year-count:${years.length}">
+          <colgroup><col class="is-month-column">${years.map(() => `<col class="is-year-column">`).join("")}</colgroup>
+          <thead><tr><th>Mes</th>${years.map((year) => `<th class="${year === new Date().getFullYear() ? "is-current-year" : ""}">${year}${year === new Date().getFullYear() ? "<small>Actual</small>" : ""}</th>`).join("")}</tr></thead>
+          <tbody>${monthRows}</tbody>
+          <tfoot><tr><th>${footerLabel}</th>${years.map((year) => {
+            const yearStats = stats.get(year);
+            const value = isAverage ? yearStats?.average : (yearStats?.count ? yearStats.sum : null);
+            return `<td class="${year === new Date().getFullYear() ? "is-current-year" : ""}">${value === null || value === undefined ? "-" : `<strong>${irrigationBandejaLabel(value)}</strong>`}</td>`;
+          }).join("")}</tr></tfoot>
+        </table>
+      </div>
+    </section>`;
+}
+
+function irrigationBandejaLineSegments(values, xFor, yFor) {
+  const segments = [];
+  let current = [];
+  values.forEach((value, index) => {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      if (current.length) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push([xFor(index), yFor(Number(value))]);
+  });
+  if (current.length) segments.push(current);
+  return segments;
+}
+
+function irrigationBandejaHistoricalMonthlyAverages(evaporationMap) {
+  const currentYear = new Date().getFullYear();
+  const months = Array.from({ length: 12 }, () => ({ sum: 0, count: 0 }));
+  evaporationMap.forEach((item, date) => {
+    const year = irrigationBandejaYear(date);
+    const monthIndex = Number(String(date).slice(5, 7)) - 1;
+    const value = Number(item.evaporation);
+    if (!Number.isInteger(year) || year > currentYear || monthIndex < 0 || monthIndex > 11 || !Number.isFinite(value)) return;
+    months[monthIndex].sum += value;
+    months[monthIndex].count += 1;
+  });
+  return months.map((month) => month.count ? month.sum / month.count : null);
+}
+
+function irrigationBandejaTrendChart(years, stats, historicalAverageValues) {
+  const currentYear = new Date().getFullYear();
+  const width = 1120;
+  const height = 360;
+  const margin = { top: 34, right: 24, bottom: 48, left: 58 };
+  const chartWidth = width - margin.left - margin.right;
+  const chartHeight = height - margin.top - margin.bottom;
+  const yearSeries = years.map((year, index) => ({
+    year,
+    label: String(year),
+    current: year === currentYear,
+    historical: false,
+    color: year === currentYear ? "#e8790c" : IRRIGATION_BANDEJA_YEAR_COLORS[index % IRRIGATION_BANDEJA_YEAR_COLORS.length],
+    values: stats.get(year)?.months?.map((month) => month.average) || Array(12).fill(null)
+  }));
+  const series = irrigationBandejaShowHistoricalAverage
+    ? [{
+        year: "historical-average",
+        label: "Promedio histórico",
+        current: false,
+        historical: true,
+        color: "#334155",
+        values: historicalAverageValues
+      }, ...yearSeries]
+    : yearSeries;
+  const availableValues = series.flatMap((item) => item.values).filter((value) => Number.isFinite(Number(value))).map(Number);
+  if (!availableValues.length) return `<div class="empty-state compact"><strong>Sin datos para graficar</strong><span>Selecciona años con registros de bandeja.</span></div>`;
+  const maximum = Math.max(...availableValues, 1);
+  const axisMaximum = Math.ceil(maximum * 1.12 * 2) / 2;
+  const xFor = (index) => margin.left + index * chartWidth / 11;
+  const yFor = (value) => margin.top + chartHeight - value / axisMaximum * chartHeight;
+  const grid = Array.from({ length: 6 }, (_, index) => {
+    const value = axisMaximum * index / 5;
+    const y = yFor(value);
+    return `<g><line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" class="irrigation-bandeja-trend-grid"/><text x="${margin.left - 10}" y="${y + 4}" text-anchor="end">${irrigationBandejaLabel(value)}</text></g>`;
+  }).join("");
+  const monthLabels = monthOptions().map((month, index) => `<text x="${xFor(index)}" y="${height - 17}" text-anchor="middle">${escapeHtml(month.label.slice(0, 3))}</text>`).join("");
+  const paths = series.map((item) => {
+    const segments = irrigationBandejaLineSegments(item.values, xFor, yFor);
+    const seriesClass = `${item.current ? "is-current" : ""} ${item.historical ? "is-historical" : ""}`;
+    const linePaths = segments.map((segment) => `<path d="${segment.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}" style="--series-color:${item.color}" class="irrigation-bandeja-trend-line ${seriesClass}"/>`).join("");
+    const points = item.values.map((value, index) => Number.isFinite(Number(value)) ? `<circle cx="${xFor(index)}" cy="${yFor(Number(value))}" r="${item.current ? 4.5 : 3.5}" style="--series-color:${item.color}" class="irrigation-bandeja-trend-point ${seriesClass}"><title>${item.label} · ${monthOptions()[index].label}: ${irrigationBandejaLabel(value)} mm/día</title></circle>` : "").join("");
+    return linePaths + points;
+  }).join("");
+  return `
+    <section class="panel irrigation-bandeja-trend-panel">
+      <div class="panel-header">
+        <div><h3>Tendencia mensual de bandeja</h3><span>Promedio diario por mes</span></div>
+        <div class="irrigation-bandeja-trend-legend">${series.map((item) => `<span class="${item.current ? "is-current" : ""} ${item.historical ? "is-historical" : ""}"><i style="--series-color:${item.color}"></i>${item.label}${item.current ? " · actual" : ""}</span>`).join("")}</div>
+      </div>
+      <div class="irrigation-bandeja-trend-scroll">
+        <svg class="irrigation-bandeja-trend" viewBox="0 0 ${width} ${height}" role="img" aria-label="Promedio mensual de bandeja por año">
+          ${grid}
+          ${monthLabels}
+          <text x="16" y="${margin.top + chartHeight / 2}" transform="rotate(-90 16 ${margin.top + chartHeight / 2})" text-anchor="middle" class="irrigation-bandeja-trend-axis-title">mm/día</text>
+          ${paths}
+        </svg>
+      </div>
+    </section>`;
+}
+
+function renderIrrigationBandejaAnalysis(evaporationMap) {
+  const availableYears = irrigationBandejaEnsureAnalysisYears();
+  const chartYears = irrigationBandejaAnalysisVisibleYears();
+  const tableYears = irrigationBandejaEvaporationYears(evaporationMap);
+  const statsYears = [...new Set([...chartYears, ...tableYears])].sort((a, b) => a - b);
+  const stats = irrigationBandejaYearStats(statsYears, evaporationMap);
+  const historicalAverageValues = irrigationBandejaHistoricalMonthlyAverages(evaporationMap);
+  const currentYear = new Date().getFullYear();
+  return `
+    <div class="irrigation-bandeja-analysis">
+      <section class="panel irrigation-bandeja-analysis-toolbar">
+        <div>
+          <strong>Años del gráfico</strong>
+          <span>El año ${currentYear} permanece visible. Las tablas incluyen todos los años.</span>
+        </div>
+        <div class="irrigation-bandeja-year-checks" role="group" aria-label="Años históricos de bandeja">
+          <label class="is-historical-average"><input type="checkbox" data-irrigation-bandeja-historical-average ${irrigationBandejaShowHistoricalAverage ? "checked" : ""}>Promedio histórico</label>
+          ${[...availableYears].reverse().map((year) => `<label><input type="checkbox" data-irrigation-bandeja-analysis-year="${year}" ${irrigationBandejaAnalysisYears.has(year) ? "checked" : ""}>${year}</label>`).join("") || `<span class="empty-inline">Sin años históricos adicionales</span>`}
+        </div>
+        <div class="irrigation-bandeja-analysis-actions">
+          <button class="secondary-button" type="button" data-action="select-all-irrigation-bandeja-years">Seleccionar todo</button>
+          <button class="secondary-button" type="button" data-action="clear-irrigation-bandeja-years">Solo actual</button>
+        </div>
+      </section>
+      ${irrigationBandejaTrendChart(chartYears, stats, historicalAverageValues)}
+      <div class="irrigation-bandeja-analysis-tables">
+        ${irrigationBandejaAnalysisTable(tableYears, stats, "average")}
+        ${irrigationBandejaAnalysisTable(tableYears, stats, "accumulated")}
+      </div>
+    </div>`;
+}
+
 function irrigationBandejaHistoricalDays(month, evaporationMap) {
   const buckets = new Map();
   evaporationMap.forEach((item, date) => {
@@ -4075,34 +4230,42 @@ function renderIrrigationBandejasPanel({ year }) {
     .map(([date]) => date)
     .sort();
   const rangeLabel = dates.length ? `${dates[0]} a ${dates.at(-1)}` : "Sin registros";
+  const matrixContent = `
+    <div class="irrigation-bandeja-summary">
+      <span><strong>${number(evaporationMap.size, 0)}</strong> dias registrados</span>
+      <span><strong>${number(rainDates.length, 0)}</strong> dias con lluvia</span>
+      <span><strong>${number(dataYears.length, 0)}</strong> anos con datos</span>
+      <span><strong>${escapeHtml(rangeLabel)}</strong> rango disponible</span>
+    </div>
+    <section class="panel irrigation-bandeja-matrix-panel">
+      <div class="irrigation-bandeja-matrix-help">
+        <span>Desplaza verticalmente para cambiar de mes.</span>
+        <span>Izquierda: anos anteriores · Derecha: anos siguientes.</span>
+      </div>
+      <div id="irrigationBandejaMatrixScroll" class="irrigation-bandeja-matrix-scroll">
+        <div class="irrigation-bandeja-matrix-content">
+          ${monthOptions().map((item) => irrigationBandejaMonthMatrix(item.value, years, evaporationMap, rainMap)).join("")}
+        </div>
+      </div>
+    </section>`;
   return `
     <div class="irrigation-subpanel irrigation-bandeja-history-panel">
       <section class="panel irrigation-bandeja-entry-panel">
         <div class="irrigation-bandeja-entry-row">
           <div>
-            <strong>Datos diarios</strong>
-            <span>Bandeja y lluvia se registran por fecha.</span>
+            <strong>${irrigationBandejaView === "analysis" ? "Gráficos y tablas" : "Datos diarios"}</strong>
+            <span>${irrigationBandejaView === "analysis" ? "Comparación histórica de evaporación de bandeja." : "Bandeja y lluvia se registran por fecha."}</span>
           </div>
-          <button class="primary-button" type="button" data-action="open-irrigation-bandeja-dialog">Agregar dato</button>
-        </div>
-      </section>
-      <div class="irrigation-bandeja-summary">
-        <span><strong>${number(evaporationMap.size, 0)}</strong> dias registrados</span>
-        <span><strong>${number(rainDates.length, 0)}</strong> dias con lluvia</span>
-        <span><strong>${number(dataYears.length, 0)}</strong> anos con datos</span>
-        <span><strong>${escapeHtml(rangeLabel)}</strong> rango disponible</span>
-      </div>
-      <section class="panel irrigation-bandeja-matrix-panel">
-        <div class="irrigation-bandeja-matrix-help">
-          <span>Desplaza verticalmente para cambiar de mes.</span>
-          <span>Izquierda: anos anteriores · Derecha: anos siguientes.</span>
-        </div>
-        <div id="irrigationBandejaMatrixScroll" class="irrigation-bandeja-matrix-scroll">
-          <div class="irrigation-bandeja-matrix-content">
-            ${monthOptions().map((item) => irrigationBandejaMonthMatrix(item.value, years, evaporationMap, rainMap)).join("")}
+          <div class="irrigation-bandeja-entry-actions">
+            <div class="irrigation-bandeja-view-switch" role="group" aria-label="Vista de bandeja">
+              <button type="button" data-action="set-irrigation-bandeja-view" data-view="matrix" class="${irrigationBandejaView === "matrix" ? "active" : ""}" aria-pressed="${irrigationBandejaView === "matrix"}">Histórico diario</button>
+              <button type="button" data-action="set-irrigation-bandeja-view" data-view="analysis" class="${irrigationBandejaView === "analysis" ? "active" : ""}" aria-pressed="${irrigationBandejaView === "analysis"}">Gráficos y tablas</button>
+            </div>
+            <button class="primary-button" type="button" data-action="open-irrigation-bandeja-dialog">Agregar dato</button>
           </div>
         </div>
       </section>
+      ${irrigationBandejaView === "analysis" ? renderIrrigationBandejaAnalysis(evaporationMap) : matrixContent}
     </div>`;
 }
 
@@ -4117,6 +4280,19 @@ function focusIrrigationBandejaMatrix(year = irrigationYear, month = irrigationM
 }
 
 function wireIrrigationBandejaMatrix() {
+  views.irrigation.querySelector("[data-irrigation-bandeja-historical-average]")?.addEventListener("change", (event) => {
+    irrigationBandejaShowHistoricalAverage = event.target.checked;
+    renderIrrigation();
+  });
+  views.irrigation.querySelectorAll("[data-irrigation-bandeja-analysis-year]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const year = Number(control.dataset.irrigationBandejaAnalysisYear);
+      if (!Number.isInteger(year)) return;
+      if (control.checked) irrigationBandejaAnalysisYears.add(year);
+      else irrigationBandejaAnalysisYears.delete(year);
+      renderIrrigation();
+    });
+  });
   const scroller = document.getElementById("irrigationBandejaMatrixScroll");
   if (!scroller) return;
   requestAnimationFrame(() => {
@@ -4402,28 +4578,35 @@ function irrigationSatelliteQueryKey(blocks) {
 }
 
 function irrigationSatelliteTileQueryKey() {
+  const effectiveFrom = irrigationSatelliteAvailability.effective?.from || irrigationSatelliteDateFrom;
+  const effectiveTo = irrigationSatelliteAvailability.effective?.to || irrigationSatelliteDateTo;
   return [
-    "aoi-mask-v2",
+    "aoi-mask-v3-mapacampo-20260824",
     irrigationSatelliteProcessingStatus.providerType,
     irrigationPlanetMosaic,
     irrigationSatelliteIndex,
     irrigationSatelliteLayerStyle,
-    irrigationSatelliteLayerStrength,
-    irrigationSatellitePaintedLayer ? "painted" : "raw",
+    irrigationSatelliteMosaickingOrder,
     irrigationSatelliteTileRevision,
-    irrigationSatelliteDateFrom,
-    irrigationSatelliteDateTo,
-    irrigationSatelliteCloudMax
+    effectiveFrom,
+    effectiveTo,
+    irrigationSatelliteCloudMax,
+    (irrigationSatelliteRelativeThresholds[irrigationSatelliteIndex] || []).join(",")
   ].join("::");
 }
 
 function irrigationSatelliteIndexDefinition(index = irrigationSatelliteIndex) {
-  return IRRIGATION_SATELLITE_INDEX_DEFINITIONS[index] || IRRIGATION_SATELLITE_INDEX_DEFINITIONS.NDVI;
+  const definition = IRRIGATION_SATELLITE_INDEX_DEFINITIONS[index] || IRRIGATION_SATELLITE_INDEX_DEFINITIONS.NDVI;
+  const colorScale = INDEX_COLOR_SCALE_API.getIndexScale(definition.name);
+  return { ...definition, use: `${colorScale.description}.`, colorScale };
 }
 
 function irrigationSatelliteMapTypeOptions() {
   return Object.values(IRRIGATION_SATELLITE_INDEX_DEFINITIONS)
-    .map((item) => `<option value="${htmlAttr(item.name)}" ${item.name === irrigationSatelliteIndex ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.use}`)}</option>`)
+    .map((item) => {
+      const scale = INDEX_COLOR_SCALE_API.getIndexScale(item.name);
+      return `<option value="${htmlAttr(item.name)}" ${item.name === irrigationSatelliteIndex ? "selected" : ""}>${escapeHtml(`${item.name} - ${scale.description}.`)}</option>`;
+    })
     .join("");
 }
 
@@ -4435,7 +4618,13 @@ function irrigationSatelliteLayerStyleOptions() {
 
 function irrigationSatelliteLayerStrengthOptions() {
   return Object.entries(IRRIGATION_SATELLITE_LAYER_STRENGTHS)
-    .map(([key, item]) => `<option value="${htmlAttr(key)}" ${key === irrigationSatelliteLayerStrength ? "selected" : ""}>${escapeHtml(`${item.name} - ${item.layers} capa${item.layers === 1 ? "" : "s"}`)}</option>`)
+    .map(([key, item]) => `<option value="${htmlAttr(key)}" ${key === irrigationSatelliteLayerStrength ? "selected" : ""}>${escapeHtml(item.name)}</option>`)
+    .join("");
+}
+
+function irrigationSatelliteMosaickingOptions() {
+  return Object.entries(IRRIGATION_SATELLITE_MOSAICKING_OPTIONS)
+    .map(([key, item]) => `<option value="${htmlAttr(key)}" ${key === irrigationSatelliteMosaickingOrder ? "selected" : ""}>${escapeHtml(item.name)}</option>`)
     .join("");
 }
 
@@ -4469,6 +4658,7 @@ function irrigationPlanetMosaicQueryKey() {
 
 function irrigationSatelliteProcessingWarning() {
   if (irrigationSatelliteProcessingStatus.checking) return "";
+  if (irrigationSatelliteRelativeThresholdsError) return escapeHtml(irrigationSatelliteRelativeThresholdsError);
   if (!irrigationSatelliteProcessingStatus.configured) {
     const message = irrigationSatelliteProcessingStatus.message || "";
     if (/credencial|credential|token|invalid|401/i.test(message)) {
@@ -4642,6 +4832,7 @@ function irrigationSatelliteCopernicusUrl(meta, scene) {
 function irrigationSatelliteIndexCards(scene = null) {
   const providerType = irrigationSatelliteProcessingStatus.providerType;
   return Object.values(IRRIGATION_SATELLITE_INDEX_DEFINITIONS).map((item) => {
+    const scale = INDEX_COLOR_SCALE_API.getIndexScale(item.name);
     const supportedByProvider = providerType !== "planet" || Boolean(item.planetProc);
     const ready = providerType === "planet"
       ? supportedByProvider && Boolean(irrigationPlanetMosaic)
@@ -4656,40 +4847,280 @@ function irrigationSatelliteIndexCards(scene = null) {
         <span>${status}</span>
       </div>
       <code>${escapeHtml(item.formula)}</code>
-      <span>${escapeHtml(item.use)}</span>
+      <span>${escapeHtml(scale.description)}</span>
     </button>`;
   }).join("");
 }
 
-function irrigationSatellitePaletteColors(definition) {
-  const paletteGroup = IRRIGATION_SATELLITE_PALETTES[definition.palette || "vegetation"] || IRRIGATION_SATELLITE_PALETTES.vegetation;
-  const paletteKey = irrigationSatelliteLayerStyle === "native" ? "standard" : irrigationSatelliteLayerStyle;
-  return paletteGroup[paletteKey] || paletteGroup.standard || paletteGroup.contrast || IRRIGATION_SATELLITE_PALETTES.vegetation.standard;
-}
-
-function irrigationSatelliteLegendColor(definition, rowIndex, rowCount) {
-  const colors = irrigationSatellitePaletteColors(definition);
-  if (!colors.length) return definition.legend?.[rowIndex]?.[0] || "#1f7a4d";
-  if (rowCount <= 1) return colors[Math.floor(colors.length / 2)];
-  const position = rowIndex / Math.max(1, rowCount - 1);
-  const colorIndex = Math.round(position * (colors.length - 1));
-  return colors[Math.max(0, Math.min(colors.length - 1, colorIndex))];
-}
-
 function irrigationSatelliteIndexLegend(index = irrigationSatelliteIndex) {
   const definition = irrigationSatelliteIndexDefinition(index);
-  const style = IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle] || IRRIGATION_SATELLITE_LAYER_STYLES.contrast;
-  const legendRows = definition.legend || [];
+  const scale = definition.colorScale;
+  const legendRows = INDEX_COLOR_SCALE_API.getIndexLegend(index);
+  const relativeNote = scale.relative ? `<small>Clasificación relativa por quintiles del raster actual.</small>` : "";
   return `
-    <div class="satellite-decision-legend">
-      <strong>${escapeHtml(definition.name)} - ${escapeHtml(style.name)}</strong>
+    <div class="satellite-decision-legend" data-index="${htmlAttr(definition.name)}">
+      <header><strong>${escapeHtml(definition.name)} - ${escapeHtml(scale.description)}</strong>${relativeNote}</header>
       <div>
-        ${legendRows.map(([, label, range], index) => `
-          <span><i style="background:${htmlAttr(irrigationSatelliteLegendColor(definition, index, legendRows.length))}"></i><b>${escapeHtml(label)}</b><em>${escapeHtml(range)}</em></span>
+        ${legendRows.map((level) => `
+          <span title="${htmlAttr(level.interpretation)}"><i style="--index-level-color:${htmlAttr(level.color)}"></i><b>${escapeHtml(level.label)}</b><em>${escapeHtml(level.range)}</em></span>
         `).join("")}
       </div>
     </div>
   `;
+}
+
+function updateIrrigationSatellitePanelMetadata() {
+  const definition = irrigationSatelliteIndexDefinition();
+  const providerLabel = irrigationSatelliteProviderLabel();
+  const providerSummary = irrigationSatelliteProviderSummary();
+  const summary = document.getElementById("irrigationSatelliteToolbarSummary");
+  if (summary) {
+    const imageDate = irrigationSatelliteAvailability.available && irrigationSatelliteAvailability.effective?.date
+      ? ` - Imagen ${irrigationSatelliteDateLabel(irrigationSatelliteAvailability.effective.date)}`
+      : "";
+    summary.textContent = `${providerLabel} - ${providerSummary} - ${irrigationSatelliteDateFrom} a ${irrigationSatelliteDateTo}${imageDate}`;
+  }
+  const chip = document.getElementById("irrigationSatelliteUseChip");
+  if (chip) {
+    chip.innerHTML = `<strong>${escapeHtml(definition.name)}</strong><span>${escapeHtml(definition.use)}</span><code>${escapeHtml(definition.formula)}</code>`;
+  }
+  const description = document.getElementById("irrigationSatelliteMapDescription");
+  if (description) description.textContent = `${definition.name} procesado sobre los poligonos filtrados.`;
+  const legend = document.querySelector(".satellite-decision-legend");
+  if (legend) legend.outerHTML = irrigationSatelliteIndexLegend(irrigationSatelliteIndex);
+  const mapElement = document.getElementById("irrigationSatelliteMap");
+  if (mapElement) {
+    mapElement.classList.toggle("satellite-map-painted", irrigationSatellitePaintedLayer);
+    Object.keys(IRRIGATION_SATELLITE_LAYER_STRENGTHS).forEach((key) => {
+      mapElement.classList.toggle(`satellite-strength-${key}`, key === irrigationSatelliteLayerStrength);
+    });
+  }
+  const availability = document.getElementById("irrigationSatelliteAvailability");
+  if (availability) {
+    const stateClass = irrigationSatelliteAvailability.available
+      ? irrigationSatelliteAvailability.fallback ? "is-fallback" : "is-ready"
+      : "is-empty";
+    availability.className = `satellite-availability-status ${stateClass}`;
+    availability.hidden = !irrigationSatelliteAvailability.checked && !irrigationSatelliteAvailability.checking;
+    if (irrigationSatelliteAvailability.checking) {
+      availability.innerHTML = `<span class="loading-spinner small" aria-hidden="true"></span><strong>Buscando imagen satelital disponible</strong>`;
+    } else if (irrigationSatelliteAvailability.checked) {
+      const effective = irrigationSatelliteAvailability.effective;
+      if (irrigationSatelliteAvailability.available) {
+        availability.innerHTML = `
+          <strong>${irrigationSatelliteAvailability.fallback ? "Última imagen disponible" : "Imagen seleccionada"}</strong>
+          <span>${escapeHtml(irrigationSatelliteDateLabel(effective?.date || ""))}${Number.isFinite(Number(effective?.cloud)) ? ` · Nubes ${number(effective.cloud, 1)}%` : ""}</span>`;
+      } else {
+        availability.innerHTML = `<strong>Sin imagen disponible</strong><span>${escapeHtml(irrigationSatelliteAvailability.message || "Revisa el rango de fechas seleccionado.")}</span>`;
+      }
+    }
+  }
+}
+
+function setIrrigationSatelliteUpdating(active) {
+  const indicator = document.getElementById("irrigationSatelliteMapUpdate");
+  const search = document.getElementById("irrigationSatelliteSearch");
+  if (indicator) indicator.hidden = !active;
+  if (search) search.disabled = active;
+}
+
+function validateIrrigationSatelliteRange() {
+  if (!irrigationSatelliteDateFrom || !irrigationSatelliteDateTo) {
+    showToast("Selecciona las fechas desde y hasta");
+    return false;
+  }
+  if (irrigationSatelliteDateFrom > irrigationSatelliteDateTo) {
+    showToast("La fecha desde no puede ser posterior a la fecha hasta");
+    return false;
+  }
+  return true;
+}
+
+function irrigationSatelliteAvailabilityQueryKey() {
+  return [irrigationSatelliteProxyBase, irrigationSatelliteDateFrom, irrigationSatelliteDateTo, "automatic-latest", IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX].join("::");
+}
+
+function irrigationSatelliteShiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function selectIrrigationSatelliteScene(scenes, allowCloudyFallback = true) {
+  const newestFirst = [...scenes].sort((a, b) => b.datetime.localeCompare(a.datetime));
+  return newestFirst.find((scene) => scene.cloud <= IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX)
+    || (allowCloudyFallback ? newestFirst[0] : null)
+    || null;
+}
+
+function irrigationSatelliteEffectiveCloudMax() {
+  const selectedCloud = Number(irrigationSatelliteAvailability.effective?.cloud);
+  const requiredLimit = Number.isFinite(selectedCloud) ? Math.ceil(selectedCloud) : IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX;
+  return Math.min(100, Math.max(IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX, requiredLimit));
+}
+
+async function publicIrrigationSatelliteAvailability() {
+  const aoi = await loadIrrigationSatelliteAoi();
+  if (!aoi?.bbox) throw new Error("No se encontraron los limites del campo");
+  const search = async (from, to) => {
+    const response = await fetch(IRRIGATION_SATELLITE_STAC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        collections: ["sentinel-2-c1-l2a"],
+        bbox: aoi.bbox,
+        datetime: `${from}T00:00:00Z/${to}T23:59:59Z`,
+        limit: 100,
+        sortby: [{ field: "properties.datetime", direction: "desc" }],
+        query: { "eo:cloud_cover": { lte: 100 } }
+      }),
+      signal: AbortSignal.timeout(16000)
+    });
+    if (!response.ok) throw new Error(`Catalogo satelital ${response.status}`);
+    const payload = await response.json();
+    return (Array.isArray(payload.features) ? payload.features : []).map((feature) => ({
+      id: String(feature.id || ""),
+      datetime: String(feature.properties?.datetime || ""),
+      date: String(feature.properties?.datetime || "").slice(0, 10),
+      cloud: Number(feature.properties?.["eo:cloud_cover"])
+    })).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date) && Number.isFinite(item.cloud));
+  };
+  let scenes = await search(irrigationSatelliteDateFrom, irrigationSatelliteDateTo);
+  let fallback = false;
+  let searchFrom = irrigationSatelliteDateFrom;
+  let selected = selectIrrigationSatelliteScene(scenes, false);
+  if (!selected) {
+    fallback = true;
+    searchFrom = irrigationSatelliteShiftDate(irrigationSatelliteDateTo, -120);
+    scenes = await search(searchFrom, irrigationSatelliteDateTo);
+    selected = selectIrrigationSatelliteScene(scenes);
+  }
+  const cloudLimit = selected
+    ? Math.min(100, Math.max(IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX, Math.ceil(selected.cloud)))
+    : IRRIGATION_SATELLITE_PREFERRED_CLOUD_MAX;
+  return selected ? {
+    available: true,
+    fallback,
+    requested: { from: irrigationSatelliteDateFrom, to: irrigationSatelliteDateTo },
+    searched: { from: searchFrom, to: irrigationSatelliteDateTo },
+    effective: { from: selected.date, to: selected.date, date: selected.date, cloud: selected.cloud, cloudLimit, id: selected.id },
+    sceneCount: scenes.length,
+    message: fallback
+      ? `No hay una imagen utilizable dentro del rango. Se muestra la ultima disponible del ${irrigationSatelliteDateLabel(selected.date)}.`
+      : `Escena Sentinel disponible del ${irrigationSatelliteDateLabel(selected.date)}.`
+  } : {
+    available: false,
+    fallback,
+    effective: null,
+    sceneCount: 0,
+    message: "No hay escenas Sentinel disponibles en los ultimos 120 dias."
+  };
+}
+
+async function resolveIrrigationSatelliteAvailability(force = false) {
+  if (irrigationSatelliteProcessingStatus.providerType !== "sentinel") return true;
+  const queryKey = irrigationSatelliteAvailabilityQueryKey();
+  if (!force && irrigationSatelliteAvailabilityKey === queryKey && irrigationSatelliteAvailability.checked) {
+    return irrigationSatelliteAvailability.available;
+  }
+  const requestId = ++irrigationSatelliteAvailabilityRequest;
+  irrigationSatelliteAvailability = { checked: false, checking: true, available: false, fallback: false, effective: null, message: "" };
+  updateIrrigationSatellitePanelMetadata();
+  try {
+    const params = new URLSearchParams({
+      from: irrigationSatelliteDateFrom,
+      to: irrigationSatelliteDateTo,
+      strategy: "automatic-latest"
+    });
+    let payload = null;
+    if (irrigationSatelliteProxyBase) {
+      const response = await fetch(`${irrigationSatelliteProxyBase}/availability?${params.toString()}`, { cache: force ? "no-store" : "default" });
+      if (response.ok) payload = await response.json();
+    }
+    payload ||= await publicIrrigationSatelliteAvailability();
+    if (requestId !== irrigationSatelliteAvailabilityRequest) return false;
+    const effectiveDateLabel = irrigationSatelliteDateLabel(payload.effective?.date || "");
+    const availabilityMessage = payload.available
+      ? payload.fallback
+        ? `No hay una imagen utilizable dentro del rango. Se muestra la ultima disponible del ${effectiveDateLabel}.`
+        : "La imagen corresponde al rango seleccionado."
+      : String(payload.message || "No hay imagen satelital disponible para este filtro.");
+    irrigationSatelliteAvailability = {
+      checked: true,
+      checking: false,
+      available: Boolean(payload.available),
+      fallback: Boolean(payload.fallback),
+      effective: payload.effective || null,
+      message: availabilityMessage
+    };
+    irrigationSatelliteAvailabilityKey = queryKey;
+    updateIrrigationSatellitePanelMetadata();
+    return irrigationSatelliteAvailability.available;
+  } catch (error) {
+    if (requestId !== irrigationSatelliteAvailabilityRequest) return false;
+    irrigationSatelliteAvailability = { checked: true, checking: false, available: false, fallback: false, effective: null, message: error.message || "No se pudo consultar el catalogo satelital" };
+    irrigationSatelliteAvailabilityKey = queryKey;
+    updateIrrigationSatellitePanelMetadata();
+    return false;
+  }
+}
+
+async function resolveIrrigationSatelliteRelativeThresholds(force = false) {
+  const scale = INDEX_COLOR_SCALE_API.getIndexScale(irrigationSatelliteIndex);
+  if (!scale.relative || irrigationSatelliteProcessingStatus.providerType !== "sentinel") return true;
+  const effectiveFrom = irrigationSatelliteAvailability.effective?.from || irrigationSatelliteDateFrom;
+  const effectiveTo = irrigationSatelliteAvailability.effective?.to || irrigationSatelliteDateTo;
+  const effectiveCloudMax = irrigationSatelliteEffectiveCloudMax();
+  const queryKey = [irrigationSatelliteIndex, effectiveFrom, effectiveTo, effectiveCloudMax, irrigationSatelliteMosaickingOrder].join("::");
+  const currentThresholds = irrigationSatelliteRelativeThresholds[irrigationSatelliteIndex] || [];
+  if (!force && irrigationSatelliteRelativeThresholdsKey === queryKey && currentThresholds.length === 4) return true;
+  const requestId = ++irrigationSatelliteRelativeThresholdsRequest;
+  irrigationSatelliteRelativeThresholdsError = "";
+  try {
+    const params = new URLSearchParams({
+      index: irrigationSatelliteIndex,
+      from: effectiveFrom,
+      to: effectiveTo,
+      maxCloud: String(effectiveCloudMax),
+      mosaicking: irrigationSatelliteMosaickingOrder
+    });
+    const response = await fetch(`${irrigationSatelliteProxyBase}/statistics?${params.toString()}`, { cache: force ? "no-store" : "default" });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 240) || `Estadisticas Sentinel ${response.status}`);
+    const payload = await response.json();
+    const thresholds = Array.isArray(payload.thresholds) ? payload.thresholds.map(Number).filter(Number.isFinite) : [];
+    if (thresholds.length !== 4) throw new Error(payload.message || "No se obtuvieron los quintiles de TGI");
+    if (requestId !== irrigationSatelliteRelativeThresholdsRequest) return false;
+    irrigationSatelliteRelativeThresholds = { ...irrigationSatelliteRelativeThresholds, [irrigationSatelliteIndex]: thresholds };
+    irrigationSatelliteRelativeThresholdsKey = queryKey;
+    return true;
+  } catch (error) {
+    if (requestId !== irrigationSatelliteRelativeThresholdsRequest) return false;
+    irrigationSatelliteRelativeThresholdsError = error.message || "No se pudieron calcular los quintiles de TGI";
+    irrigationSatelliteRelativeThresholdsKey = "";
+    return false;
+  }
+}
+
+function refreshIrrigationSatelliteMap(blocks, { delay = 0, invalidate = false, preserveViewport = true, resolveAvailability = false, forceAvailability = false } = {}) {
+  clearTimeout(irrigationSatelliteRefreshTimer);
+  clearTimeout(irrigationSatelliteUpdateTimer);
+  updateIrrigationSatellitePanelMetadata();
+  setIrrigationSatelliteUpdating(true);
+  irrigationSatelliteRefreshTimer = setTimeout(async () => {
+    if (resolveAvailability && !await resolveIrrigationSatelliteAvailability(forceAvailability)) {
+      setIrrigationSatelliteUpdating(false);
+      return;
+    }
+    if (!await resolveIrrigationSatelliteRelativeThresholds(forceAvailability)) {
+      updateIrrigationSatellitePanelMetadata();
+      setIrrigationSatelliteUpdating(false);
+      return;
+    }
+    if (invalidate) invalidateIrrigationSatelliteTiles();
+    await renderIrrigationSatelliteMap(blocks, { preserveViewport });
+    irrigationSatelliteUpdateTimer = setTimeout(() => setIrrigationSatelliteUpdating(false), 2200);
+  }, delay);
 }
 
 function irrigationSatelliteSceneCard(scene) {
@@ -4737,7 +5168,7 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
       <div class="satellite-toolbar">
         <div>
           <strong>Indices satelitales</strong>
-          <span>${escapeHtml(providerLabel)} - ${escapeHtml(providerSummary)} - ${irrigationSatelliteDateFrom} a ${irrigationSatelliteDateTo}</span>
+          <span id="irrigationSatelliteToolbarSummary">${escapeHtml(providerLabel)} - ${escapeHtml(providerSummary)} - ${irrigationSatelliteDateFrom} a ${irrigationSatelliteDateTo}</span>
         </div>
         <div class="satellite-controls">
           <label>Desde
@@ -4746,17 +5177,9 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
           <label>Hasta
             <input id="irrigationSatelliteDateTo" type="date" value="${htmlAttr(irrigationSatelliteDateTo)}">
           </label>
-          <label>Nubes max.
-            <input id="irrigationSatelliteCloudMax" type="number" min="0" max="100" step="1" value="${htmlAttr(irrigationSatelliteCloudMax)}">
-          </label>
           <label class="satellite-map-type-control">Tipo de mapa
             <select id="irrigationSatelliteIndex">
               ${irrigationSatelliteMapTypeOptions()}
-            </select>
-          </label>
-          <label class="satellite-layer-style-control">Color capa
-            <select id="irrigationSatelliteLayerStyle">
-              ${irrigationSatelliteLayerStyleOptions()}
             </select>
           </label>
           ${planetActive ? `
@@ -4770,21 +5193,16 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
           <label>Opacidad
             <input id="irrigationSatelliteOpacity" type="range" min="20" max="95" step="5" value="${htmlAttr(irrigationSatelliteLayerOpacity)}">
           </label>
-          <label>Refuerzo
-            <select id="irrigationSatelliteLayerStrength">
-              ${irrigationSatelliteLayerStrengthOptions()}
-            </select>
-          </label>
           <button class="primary-button" type="button" id="irrigationSatelliteSearch">Buscar</button>
           <div class="satellite-layer-toggles" aria-label="Capas satelitales">
-            <label><input id="irrigationSatelliteShowIndexLayer" type="checkbox" ${irrigationSatelliteShowIndexLayer ? "checked" : ""}>Indice</label>
-            <label><input id="irrigationSatellitePaintedLayer" type="checkbox" ${irrigationSatellitePaintedLayer ? "checked" : ""}>Pintado</label>
-            <label><input id="irrigationSatelliteShowBlocks" type="checkbox" ${irrigationSatelliteShowBlocks ? "checked" : ""}>Bloques</label>
-            <label><input id="irrigationSatelliteShowPotreros" type="checkbox" ${irrigationSatelliteShowPotreros ? "checked" : ""}>Potreros</label>
-            <label><input id="irrigationSatelliteShowLabels" type="checkbox" ${irrigationSatelliteShowLabels ? "checked" : ""}>Etiquetas</label>
+            <label title="Muestra u oculta el índice procesado."><input id="irrigationSatelliteShowIndexLayer" type="checkbox" ${irrigationSatelliteShowIndexLayer ? "checked" : ""}>Índice</label>
+            <label title="Suaviza visualmente el raster sin cambiar sus valores."><input id="irrigationSatellitePaintedLayer" type="checkbox" ${irrigationSatellitePaintedLayer ? "checked" : ""}>Suavizar</label>
+            <label title="Dibuja los límites de cada bloque."><input id="irrigationSatelliteShowBlocks" type="checkbox" ${irrigationSatelliteShowBlocks ? "checked" : ""}>Límites bloque</label>
+            <label title="Dibuja los límites de cada potrero."><input id="irrigationSatelliteShowPotreros" type="checkbox" ${irrigationSatelliteShowPotreros ? "checked" : ""}>Límites potrero</label>
+            <label title="Muestra nombres de potreros y bloques."><input id="irrigationSatelliteShowLabels" type="checkbox" ${irrigationSatelliteShowLabels ? "checked" : ""}>Nombres</label>
           </div>
         </div>
-        <div class="satellite-use-chip">
+        <div id="irrigationSatelliteUseChip" class="satellite-use-chip">
           <strong>${escapeHtml(activeDefinition.name)}</strong>
           <span>${escapeHtml(activeDefinition.use)}</span>
           <code>${escapeHtml(activeDefinition.formula)}</code>
@@ -4796,11 +5214,16 @@ function renderIrrigationSatellitePanel({ filteredBlocks, monthPrefix, monthLabe
           <div class="panel-header">
             <div>
               <h2>Area satelital</h2>
-              <p>${escapeHtml(activeDefinition.name)} procesado sobre los poligonos filtrados.</p>
+              <p id="irrigationSatelliteMapDescription">${escapeHtml(activeDefinition.name)} procesado sobre los poligonos filtrados.</p>
             </div>
           </div>
           <div class="satellite-map-wrap">
-            <div id="irrigationSatelliteMap" class="geo-map harvest-map satellite-map ${irrigationSatellitePaintedLayer ? "satellite-map-painted" : ""}"><span>Cargando mapa satelital...</span></div>
+            <div id="irrigationSatelliteMap" class="geo-map agricultural-map harvest-map satellite-map satellite-strength-${htmlAttr(irrigationSatelliteLayerStrength)} ${irrigationSatellitePaintedLayer ? "satellite-map-painted" : ""}" data-agro-map="satellite"><span>Cargando mapa satelital...</span></div>
+            <div id="irrigationSatelliteMapUpdate" class="satellite-map-update" hidden>
+              <span class="loading-spinner small" aria-hidden="true"></span>
+              <strong>Actualizando capa</strong>
+            </div>
+            <div id="irrigationSatelliteAvailability" class="satellite-availability-status" hidden></div>
             <div class="satellite-map-legend">
               <span><i class="good"></i> Bloque filtrado</span>
               <span><i class="medium"></i> Potrero</span>
@@ -4972,94 +5395,142 @@ async function checkIrrigationSatelliteProcessing(force = false) {
   if (currentView === "irrigation" && irrigationTab === "satellite") renderIrrigation();
 }
 
-function irrigationSatelliteTileUrl(coord, zoom) {
-  if (!irrigationSatelliteProcessingStatus.configured || !irrigationSatelliteProxyBase) return "";
-  const providerType = irrigationSatelliteProcessingStatus.providerType;
-  const definition = irrigationSatelliteIndexDefinition();
-  if (providerType === "planet" && (!definition.planetProc || !irrigationPlanetMosaic)) return "";
+function irrigationSatelliteTileUrl(coord, zoom, query = null) {
+  const settings = query || {
+    configured: irrigationSatelliteProcessingStatus.configured,
+    proxyBase: irrigationSatelliteProxyBase,
+    providerType: irrigationSatelliteProcessingStatus.providerType,
+    index: irrigationSatelliteIndex,
+    style: irrigationSatelliteLayerStyle,
+    mosaicking: irrigationSatelliteMosaickingOrder,
+    mosaic: irrigationPlanetMosaic,
+    from: irrigationSatelliteAvailability.effective?.from || irrigationSatelliteDateFrom,
+    to: irrigationSatelliteAvailability.effective?.to || irrigationSatelliteDateTo,
+    maxCloud: irrigationSatelliteEffectiveCloudMax(),
+    relativeThresholds: irrigationSatelliteRelativeThresholds[irrigationSatelliteIndex] || [],
+    revision: irrigationSatelliteTileRevision,
+    version: irrigationSatelliteTileQueryKey()
+  };
+  if (!settings.configured || !settings.proxyBase) return "";
+  const definition = irrigationSatelliteIndexDefinition(settings.index);
+  if (settings.providerType === "planet" && (!definition.planetProc || !settings.mosaic)) return "";
   const scale = 2 ** zoom;
   const x = ((coord.x % scale) + scale) % scale;
   if (coord.y < 0 || coord.y >= scale) return "";
   if (irrigationSatelliteTileOutsideAoi(x, coord.y, zoom)) return IRRIGATION_SATELLITE_TRANSPARENT_TILE;
-  if (providerType === "planet") {
+  if (settings.providerType === "planet") {
     const params = new URLSearchParams({
       z: String(zoom),
       x: String(x),
       y: String(coord.y),
-      mosaic: irrigationPlanetMosaic,
+      mosaic: settings.mosaic,
       proc: definition.planetProc,
-      v: irrigationSatelliteTileQueryKey()
+      v: settings.version
     });
-    return `${irrigationSatelliteProxyBase}/tile?${params.toString()}`;
+    return `${settings.proxyBase}/tile?${params.toString()}`;
   }
   const params = new URLSearchParams({
     z: String(zoom),
     x: String(x),
     y: String(coord.y),
-    index: irrigationSatelliteIndex,
-    style: irrigationSatelliteLayerStyle,
-    smooth: irrigationSatellitePaintedLayer ? "1" : "0",
-    from: irrigationSatelliteDateFrom,
-    to: irrigationSatelliteDateTo,
-    maxCloud: String(irrigationSatelliteCloudMax),
-    rev: String(irrigationSatelliteTileRevision),
-    v: irrigationSatelliteTileQueryKey()
+    index: settings.index,
+    style: settings.style,
+    mosaicking: settings.mosaicking,
+    from: settings.from,
+    to: settings.to,
+    maxCloud: String(settings.maxCloud),
+    rev: String(settings.revision),
+    v: settings.version
   });
-  return `${irrigationSatelliteProxyBase}/tile?${params.toString()}`;
+  if (settings.relativeThresholds?.length) params.set("breaks", settings.relativeThresholds.join(","));
+  return `${settings.proxyBase}/tile?${params.toString()}`;
 }
 
 function invalidateIrrigationSatelliteTiles() {
   irrigationSatelliteTileRevision += 1;
-  clearIrrigationSatelliteTileOverlay();
 }
 
 function clearIrrigationSatelliteTileOverlay() {
-  if (!irrigationSatelliteMap || !irrigationSatelliteTileOverlays.length) return;
+  removeIrrigationSatelliteTileOverlays(irrigationSatelliteTileOverlays);
+  irrigationSatelliteTileOverlays = [];
+}
+
+function removeIrrigationSatelliteTileOverlays(overlaysToRemove) {
+  if (!irrigationSatelliteMap || !overlaysToRemove.length) return;
   const overlays = irrigationSatelliteMap.overlayMapTypes;
   for (let index = overlays.getLength() - 1; index >= 0; index -= 1) {
-    if (irrigationSatelliteTileOverlays.includes(overlays.getAt(index))) overlays.removeAt(index);
+    if (overlaysToRemove.includes(overlays.getAt(index))) overlays.removeAt(index);
   }
-  irrigationSatelliteTileOverlays = [];
 }
 
 function irrigationSatelliteOverlayOpacity() {
   const strength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength] || IRRIGATION_SATELLITE_LAYER_STRENGTHS.reinforced;
   const baseOpacity = Math.max(0, Math.min(1, Number(irrigationSatelliteLayerOpacity) / 100));
-  if (strength.layers <= 1) return baseOpacity;
-  return Math.max(0.18, Math.min(0.78, baseOpacity * strength.factor));
+  return Math.max(0.2, Math.min(0.95, baseOpacity * strength.factor));
 }
 
 function applyIrrigationSatelliteTileOverlay(maps) {
   if (!irrigationSatelliteMap || !maps) return;
-  clearIrrigationSatelliteTileOverlay();
-  if (!irrigationSatelliteShowIndexLayer) return;
-  if (!irrigationSatelliteProcessingStatus.configured) return;
+  if (!irrigationSatelliteShowIndexLayer || !irrigationSatelliteProcessingStatus.configured) {
+    clearIrrigationSatelliteTileOverlay();
+    return;
+  }
+  if (irrigationSatelliteProcessingStatus.providerType === "sentinel" && irrigationSatelliteAvailability.checked && !irrigationSatelliteAvailability.available) return;
   if (irrigationSatelliteProcessingStatus.providerType === "planet") {
     const definition = irrigationSatelliteIndexDefinition();
-    if (!definition.planetProc || !irrigationPlanetMosaic) return;
+    if (!definition.planetProc || !irrigationPlanetMosaic) {
+      clearIrrigationSatelliteTileOverlay();
+      return;
+    }
   }
   const strength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength] || IRRIGATION_SATELLITE_LAYER_STRENGTHS.reinforced;
   const opacity = irrigationSatelliteOverlayOpacity();
-  irrigationSatelliteTileOverlays = Array.from({ length: strength.layers }, (_, index) => new maps.ImageMapType({
-    getTileUrl: irrigationSatelliteTileUrl,
+  const query = {
+    configured: irrigationSatelliteProcessingStatus.configured,
+    proxyBase: irrigationSatelliteProxyBase,
+    providerType: irrigationSatelliteProcessingStatus.providerType,
+    index: irrigationSatelliteIndex,
+    style: irrigationSatelliteLayerStyle,
+    mosaicking: irrigationSatelliteMosaickingOrder,
+    mosaic: irrigationPlanetMosaic,
+    from: irrigationSatelliteAvailability.effective?.from || irrigationSatelliteDateFrom,
+    to: irrigationSatelliteAvailability.effective?.to || irrigationSatelliteDateTo,
+    maxCloud: irrigationSatelliteEffectiveCloudMax(),
+    relativeThresholds: irrigationSatelliteRelativeThresholds[irrigationSatelliteIndex] || [],
+    revision: irrigationSatelliteTileRevision,
+    version: irrigationSatelliteTileQueryKey()
+  };
+  const previousOverlays = [...irrigationSatelliteTileOverlays];
+  const nextOverlay = new maps.ImageMapType({
+    getTileUrl: (coord, zoom) => irrigationSatelliteTileUrl(coord, zoom, query),
     tileSize: new maps.Size(256, 256),
     minZoom: 10,
     maxZoom: 19,
-    name: `${irrigationSatelliteIndex} ${strength.name} ${index + 1}`,
+    name: `${irrigationSatelliteIndex} ${strength.name}`,
     opacity
-  }));
-  irrigationSatelliteTileOverlays.forEach((overlay) => {
-    irrigationSatelliteMap.overlayMapTypes.insertAt(0, overlay);
   });
+  irrigationSatelliteTileOverlays = [nextOverlay];
+  irrigationSatelliteMap.overlayMapTypes.insertAt(irrigationSatelliteMap.overlayMapTypes.getLength(), nextOverlay);
+  if (previousOverlays.length) {
+    setTimeout(() => removeIrrigationSatelliteTileOverlays(previousOverlays), 3200);
+  }
 }
 
-async function renderIrrigationSatelliteMap(blocks) {
+async function renderIrrigationSatelliteMap(blocks, { preserveViewport = false } = {}) {
   const el = document.getElementById("irrigationSatelliteMap");
   if (!el) return;
+  const renderToken = ++irrigationSatelliteMapRenderToken;
+  const isCurrentRender = () => (
+    renderToken === irrigationSatelliteMapRenderToken
+    && document.getElementById("irrigationSatelliteMap") === el
+  );
   try {
     geoJsonCache ||= await loadGeoJson();
+    if (!isCurrentRender()) return;
     const aoi = await loadIrrigationSatelliteAoi();
+    if (!isCurrentRender()) return;
     const maps = await loadGoogleMaps();
+    if (!isCurrentRender()) return;
     const blockRings = geoFeaturesToRings(geoJsonCache?.bloques?.features || []);
     const potreroRings = geoFeaturesToRings(geoJsonCache?.potreros?.features || []);
     if (!blockRings.length && !potreroRings.length) {
@@ -5081,25 +5552,17 @@ async function renderIrrigationSatelliteMap(blocks) {
       irrigationSatelliteMap = null;
       irrigationSatelliteMapElement = el;
     }
-    if (!irrigationSatelliteMap) {
-      irrigationSatelliteMap = new maps.Map(el, {
-        mapTypeId: "satellite",
-        disableDefaultUI: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-        mapTypeControl: true,
-        gestureHandling: "greedy",
-        scrollwheel: true,
-        tilt: 0
-      });
-    }
-    irrigationSatelliteMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
-    maps.event.trigger(irrigationSatelliteMap, "resize");
+    const mapState = globalThis.AgroMap.ensureMap({
+      maps,
+      element: el,
+      currentMap: irrigationSatelliteMap,
+      currentElement: irrigationSatelliteMapElement
+    });
+    irrigationSatelliteMap = mapState.map;
+    const mapCreated = mapState.created;
 
     const activeBounds = new maps.LatLngBounds();
     const baseBounds = new maps.LatLngBounds();
-    const blockPalette = ["#d4a017", "#297f8f", "#7c5bc2"];
-    const potreroPalette = ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"];
     if (aoi?.rings?.length) {
       aoi.rings.forEach((item) => {
         item.rings.forEach((ring) => {
@@ -5119,143 +5582,117 @@ async function renderIrrigationSatelliteMap(blocks) {
         });
       });
     }
-    blockRings.forEach((item, index) => {
-      const field = geoJsonFeatureField(item.feature);
-      const potreroMatches = visiblePotreros.has(normalizePotreroOrderName(field.potrero));
-      const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block)) || potreroMatches;
-      const fillColor = active ? activeFillColor : "#dfe8dc";
-      const strokeColor = active ? "#ffffff" : blockPalette[index % blockPalette.length];
-      item.rings.forEach((ring) => {
-        if (irrigationSatelliteShowBlocks) {
-          const polygon = new maps.Polygon({
-            paths: ring.map(([lng, lat]) => ({ lat, lng })),
-            strokeColor,
-            strokeOpacity: active ? 1 : 0.9,
-            strokeWeight: active ? 3.2 : 2.1,
-            fillColor,
-            fillOpacity: indexLayerActive ? active ? 0.04 : 0.01 : active ? 0.34 : 0.14,
-            zIndex: active ? 8 : 5
-          });
-          polygon.addListener("click", () => {
-            irrigationSatelliteInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
-            irrigationSatelliteInfoWindow.setContent(`
-              <div class="harvest-map-info satellite-map-info">
-                <div class="harvest-map-info-head">
-                  <strong>${escapeHtml(potreroLabel(field.potrero))} - Bloque ${escapeHtml(field.block || "-")}</strong>
-                  <span>${escapeHtml(irrigationSatelliteProviderLabel())}</span>
-                </div>
-                <div class="harvest-map-info-grid">
-                  ${harvestInfoField("Mapa", activeDefinition.name)}
-                  ${harvestInfoField("Uso", activeDefinition.use)}
-                  ${harvestInfoField("Rango", `${irrigationSatelliteDateFrom} / ${irrigationSatelliteDateTo}`)}
-                  ${harvestInfoField("Capa", `${IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle]?.name || "Alto contraste"} / ${IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength]?.name || "Reforzada"}${irrigationSatellitePaintedLayer ? " / Pintado" : ""}`)}
-                  ${harvestInfoField("Estado", planetActive && activeMosaic ? irrigationPlanetMosaicLabel(activeMosaic) : layerLabel)}
-                </div>
-              </div>
-            `);
-            irrigationSatelliteInfoWindow.setPosition(geoLatLngCenter(item.rings));
-            irrigationSatelliteInfoWindow.open({ map: irrigationSatelliteMap });
-          });
-          polygon.setMap(irrigationSatelliteMap);
-          irrigationSatelliteOverlays.push(polygon);
-        }
-        ring.forEach(([lng, lat]) => {
-          baseBounds.extend({ lat, lng });
-          if (active) activeBounds.extend({ lat, lng });
-        });
-      });
-      if (irrigationSatelliteShowLabels) {
-        const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
-        label.setMap(irrigationSatelliteMap);
-        irrigationSatelliteOverlays.push(label);
+    const fieldLayers = globalThis.AgroMap.renderFieldLayers({
+      maps,
+      map: irrigationSatelliteMap,
+      blockItems: blockRings,
+      potreroItems: potreroRings,
+      blockKey: (item) => fieldIdentityKey(geoJsonFeatureField(item.feature).potrero, geoJsonFeatureField(item.feature).block),
+      potreroKey: (item) => normalizePotreroOrderName(potreroFeatureName(item.feature)),
+      blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+      potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+      showBlocks: irrigationSatelliteShowBlocks,
+      showPotreros: irrigationSatelliteShowPotreros,
+      showBlockLabels: irrigationSatelliteShowLabels,
+      showPotreroLabels: irrigationSatelliteShowLabels,
+      blockStyle: (group) => {
+        const field = geoJsonFeatureField(group.feature);
+        const potreroMatches = visiblePotreros.has(normalizePotreroOrderName(field.potrero));
+        const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block)) || potreroMatches;
+        return {
+          strokeColor: active ? "#ffffff" : "#ffd84d",
+          strokeWeight: active ? 3.2 : 1.8,
+          fillColor: active ? activeFillColor : "#dfe8dc",
+          fillOpacity: indexLayerActive ? active ? 0.04 : 0.01 : active ? 0.34 : 0.12,
+          zIndex: active ? 8 : 5
+        };
+      },
+      onBlockClick: ({ group }) => {
+        const field = geoJsonFeatureField(group.feature);
+        irrigationSatelliteInfoWindow ||= new maps.InfoWindow({ maxWidth: 300 });
+        irrigationSatelliteInfoWindow.setContent(`
+          <div class="harvest-map-info satellite-map-info">
+            <div class="harvest-map-info-head">
+              <strong>${escapeHtml(potreroLabel(field.potrero))} - Bloque ${escapeHtml(field.block || "-")}</strong>
+              <span>${escapeHtml(irrigationSatelliteProviderLabel())}</span>
+            </div>
+            <div class="harvest-map-info-grid">
+              ${harvestInfoField("Mapa", activeDefinition.name)}
+              ${harvestInfoField("Uso", activeDefinition.use)}
+              ${harvestInfoField("Rango", `${irrigationSatelliteDateFrom} / ${irrigationSatelliteDateTo}`)}
+              ${harvestInfoField("Capa", `${IRRIGATION_SATELLITE_LAYER_STYLES[irrigationSatelliteLayerStyle]?.name || "Estándar"} / ${IRRIGATION_SATELLITE_LAYER_STRENGTHS[irrigationSatelliteLayerStrength]?.name || "Definida"}${irrigationSatellitePaintedLayer ? " / Pintado" : ""}`)}
+              ${harvestInfoField("Estado", planetActive && activeMosaic ? irrigationPlanetMosaicLabel(activeMosaic) : layerLabel)}
+            </div>
+          </div>
+        `);
+        irrigationSatelliteInfoWindow.setPosition(globalThis.AgroMap.center(group.rings));
+        irrigationSatelliteInfoWindow.open({ map: irrigationSatelliteMap });
       }
     });
-
-    potreroRings.forEach((item, index) => {
-      item.rings.forEach((ring) => {
-        if (irrigationSatelliteShowPotreros) {
-          const polygon = new maps.Polygon({
-            paths: ring.map(([lng, lat]) => ({ lat, lng })),
-            strokeColor: potreroPalette[index % potreroPalette.length],
-            strokeOpacity: 1,
-            strokeWeight: 3.4,
-            fillOpacity: 0,
-            zIndex: 10
-          });
-          polygon.setMap(irrigationSatelliteMap);
-          irrigationSatelliteOverlays.push(polygon);
-        }
-        ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
-      });
-      if (irrigationSatelliteShowLabels) {
-        const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
-        label.setMap(irrigationSatelliteMap);
-        irrigationSatelliteOverlays.push(label);
-      }
+    irrigationSatelliteOverlays.push(...fieldLayers.overlays);
+    if (!fieldLayers.bounds.isEmpty()) baseBounds.union(fieldLayers.bounds);
+    const infrastructureLayers = renderAgriculturalInfrastructure(maps, irrigationSatelliteMap, geoJsonCache);
+    irrigationSatelliteOverlays.push(...infrastructureLayers.overlays);
+    if (!infrastructureLayers.bounds.isEmpty()) baseBounds.union(infrastructureLayers.bounds);
+    fieldLayers.blockGroups.forEach((group) => {
+      const field = geoJsonFeatureField(group.feature);
+      const active = visibleKeys.has(fieldIdentityKey(field.potrero, field.block))
+        || visiblePotreros.has(normalizePotreroOrderName(field.potrero));
+      if (active) group.rings.flat().forEach(([lng, lat]) => activeBounds.extend({ lat, lng }));
     });
 
     const bounds = activeBounds.isEmpty() ? baseBounds : activeBounds;
     applyIrrigationSatelliteTileOverlay(maps);
-    if (!bounds.isEmpty()) {
+    if (!bounds.isEmpty() && (mapCreated || !preserveViewport)) {
       requestAnimationFrame(() => {
+        if (!isCurrentRender()) return;
         maps.event.trigger(irrigationSatelliteMap, "resize");
         irrigationSatelliteMap.fitBounds(bounds, 24);
       });
     }
   } catch (error) {
-    el.innerHTML = `<span>No se pudo cargar el mapa satelital.</span>`;
+    if (isCurrentRender()) el.innerHTML = `<span>No se pudo cargar el mapa satelital.</span>`;
   }
 }
 
 function wireIrrigationSatellitePanel(blocks, monthPrefix) {
   ensureIrrigationSatelliteRange(monthPrefix);
-  const syncControl = (id, setter) => {
+  const syncProcessingControl = (id, setter, delay = 180) => {
     const control = document.getElementById(id);
     control?.addEventListener("change", (event) => {
       setter(event.target.value);
-      invalidateIrrigationSatelliteTiles();
+      if (!validateIrrigationSatelliteRange()) return;
       irrigationSatelliteLastQueryKey = "";
       irrigationPlanetMosaicsLastQueryKey = "";
-      renderIrrigation();
+      irrigationSatelliteAvailabilityKey = "";
+      refreshIrrigationSatelliteMap(blocks, { delay, invalidate: true, preserveViewport: true, resolveAvailability: true });
     });
   };
-  syncControl("irrigationSatelliteDateFrom", (value) => { irrigationSatelliteDateFrom = value; });
-  syncControl("irrigationSatelliteDateTo", (value) => { irrigationSatelliteDateTo = value; });
-  syncControl("irrigationSatelliteCloudMax", (value) => { irrigationSatelliteCloudMax = Math.min(100, Math.max(0, Number(value) || 35)); });
+  syncProcessingControl("irrigationSatelliteDateFrom", (value) => { irrigationSatelliteDateFrom = value; });
+  syncProcessingControl("irrigationSatelliteDateTo", (value) => { irrigationSatelliteDateTo = value; });
   document.getElementById("irrigationSatelliteIndex")?.addEventListener("change", (event) => {
     const value = event.target.value || "NDVI";
     irrigationSatelliteIndex = IRRIGATION_SATELLITE_INDEX_DEFINITIONS[value] ? value : "NDVI";
-    invalidateIrrigationSatelliteTiles();
-    renderIrrigation();
-  });
-  document.getElementById("irrigationSatelliteLayerStyle")?.addEventListener("change", (event) => {
-    const value = event.target.value || "contrast";
-    irrigationSatelliteLayerStyle = IRRIGATION_SATELLITE_LAYER_STYLES[value] ? value : "contrast";
-    invalidateIrrigationSatelliteTiles();
-    renderIrrigation();
-  });
-  document.getElementById("irrigationSatelliteLayerStrength")?.addEventListener("change", (event) => {
-    const value = event.target.value || "reinforced";
-    irrigationSatelliteLayerStrength = IRRIGATION_SATELLITE_LAYER_STRENGTHS[value] ? value : "reinforced";
-    renderIrrigation();
+    refreshIrrigationSatelliteMap(blocks, { invalidate: true, preserveViewport: true });
   });
   document.getElementById("irrigationPlanetMosaic")?.addEventListener("change", (event) => {
     irrigationPlanetMosaic = event.target.value || "";
-    invalidateIrrigationSatelliteTiles();
-    renderIrrigation();
+    refreshIrrigationSatelliteMap(blocks, { invalidate: true, preserveViewport: true });
   });
-  const syncLayerToggle = (id, setter) => {
+  const syncMapToggle = (id, setter) => {
     document.getElementById(id)?.addEventListener("change", (event) => {
       setter(Boolean(event.target.checked));
-      invalidateIrrigationSatelliteTiles();
-      renderIrrigation();
+      refreshIrrigationSatelliteMap(blocks, { preserveViewport: true });
     });
   };
-  syncLayerToggle("irrigationSatelliteShowIndexLayer", (value) => { irrigationSatelliteShowIndexLayer = value; });
-  syncLayerToggle("irrigationSatellitePaintedLayer", (value) => { irrigationSatellitePaintedLayer = value; });
-  syncLayerToggle("irrigationSatelliteShowBlocks", (value) => { irrigationSatelliteShowBlocks = value; });
-  syncLayerToggle("irrigationSatelliteShowPotreros", (value) => { irrigationSatelliteShowPotreros = value; });
-  syncLayerToggle("irrigationSatelliteShowLabels", (value) => { irrigationSatelliteShowLabels = value; });
+  syncMapToggle("irrigationSatelliteShowIndexLayer", (value) => { irrigationSatelliteShowIndexLayer = value; });
+  document.getElementById("irrigationSatellitePaintedLayer")?.addEventListener("change", (event) => {
+    irrigationSatellitePaintedLayer = Boolean(event.target.checked);
+    updateIrrigationSatellitePanelMetadata();
+  });
+  syncMapToggle("irrigationSatelliteShowBlocks", (value) => { irrigationSatelliteShowBlocks = value; });
+  syncMapToggle("irrigationSatelliteShowPotreros", (value) => { irrigationSatelliteShowPotreros = value; });
+  syncMapToggle("irrigationSatelliteShowLabels", (value) => { irrigationSatelliteShowLabels = value; });
   const opacityControl = document.getElementById("irrigationSatelliteOpacity");
   opacityControl?.addEventListener("input", (event) => {
     irrigationSatelliteLayerOpacity = Math.min(95, Math.max(20, Number(event.target.value) || 68));
@@ -5263,14 +5700,21 @@ function wireIrrigationSatellitePanel(blocks, monthPrefix) {
     irrigationSatelliteTileOverlays.forEach((overlay) => overlay.setOpacity(opacity));
   });
   document.getElementById("irrigationSatelliteSearch")?.addEventListener("click", () => {
+    if (!validateIrrigationSatelliteRange()) return;
     irrigationSatelliteLastQueryKey = "";
     irrigationPlanetMosaicsLastQueryKey = "";
-    loadIrrigationPlanetMosaics(true);
-    renderIrrigation();
+    if (irrigationSatelliteProcessingStatus.providerType === "planet") loadIrrigationPlanetMosaics(true);
+    irrigationSatelliteAvailabilityKey = "";
+    refreshIrrigationSatelliteMap(blocks, { invalidate: true, preserveViewport: true, resolveAvailability: true, forceAvailability: true });
   });
   checkIrrigationSatelliteProcessing();
   if (irrigationSatelliteProcessingStatus.providerType === "planet") loadIrrigationPlanetMosaics();
-  renderIrrigationSatelliteMap(blocks);
+  updateIrrigationSatellitePanelMetadata();
+  if (irrigationSatelliteProcessingStatus.providerType === "sentinel" && irrigationSatelliteProcessingStatus.configured) {
+    refreshIrrigationSatelliteMap(blocks, { invalidate: true, preserveViewport: false, resolveAvailability: true });
+  } else {
+    renderIrrigationSatelliteMap(blocks, { preserveViewport: false });
+  }
 }
 
 function renderIrrigationProgramTool(blocks, monthLabel) {
@@ -8042,7 +8486,7 @@ function renderApplicationDashboard() {
             <p>Vista territorial para cruzar potreros, bloques y ordenes.</p>
           </div>
         </div>
-        <div id="geoJsonMap" class="geo-map"><span>Cargando Google Maps...</span></div>
+        <div id="geoJsonMap" class="geo-map agricultural-map" data-agro-map="applications"><span>Cargando Google Maps...</span></div>
       </section>
       <aside class="dashboard-alerts">
         <div class="panel alert-panel">
@@ -8145,7 +8589,7 @@ function renderIrrigation() {
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
   const showIrrigationFilterDrawer = irrigationTab !== "satellite";
-  const irrigationHeaderControls = irrigationTab === "bandejas" ? `
+  const irrigationHeaderControls = irrigationTab === "bandejas" ? (irrigationBandejaView === "matrix" ? `
     <div class="irrigation-bandeja-navigation">
       <button class="icon-button" type="button" data-action="shift-irrigation-bandeja-year" data-delta="-1" title="Ano anterior" aria-label="Ano anterior">&#8592;</button>
       <label>Ano foco
@@ -8156,7 +8600,7 @@ function renderIrrigation() {
         <select id="irrigationBandejaMonthJump">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
       </label>
       <button class="secondary-button" type="button" data-action="focus-current-irrigation-bandeja">Hoy</button>
-    </div>` : `
+    </div>` : `<div class="irrigation-bandeja-analysis-drawer-note"><strong>Comparación histórica</strong><span>Los años se seleccionan dentro de Gráficos y tablas.</span></div>`) : `
     <div class="program-filters irrigation-filters">
       <label>Especie
         <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
@@ -11800,25 +12244,23 @@ function pestMonitoringRiskScale(records) {
     .map(pestMonitoringObservedTotal)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
-  const bounds = [0.2, 0.4, 0.6, 0.8, 1]
-    .map((ratio) => positives[Math.max(0, Math.ceil(positives.length * ratio) - 1)] || 0)
-    .filter((value, index, values) => value > 0 && (index === 0 || value > values[index - 1]));
+  const maximum = positives.at(-1) || 0;
+  const bounds = maximum
+    ? [0.2, 0.4, 0.6, 0.8, 1].map((ratio) => maximum * ratio)
+    : [];
   return {
     bounds,
     thresholds: bounds.slice(0, -1),
     minimum: positives[0] || 0,
-    maximum: positives.at(-1) || 0,
+    maximum,
     positives: positives.length
   };
 }
 
 function pestMonitoringRiskLevel(value, scale) {
   if (value <= 0) return 0;
-  const bounds = scale.bounds?.length ? scale.bounds : [scale.maximum || value];
-  const matchingIndex = bounds.findIndex((bound) => value <= bound);
-  const classIndex = matchingIndex >= 0 ? matchingIndex : bounds.length - 1;
-  if (bounds.length === 1) return 1;
-  return 1 + Math.round(classIndex * 4 / (bounds.length - 1));
+  const maximum = Number(scale.maximum) || value;
+  return Math.max(1, Math.min(5, Math.ceil(value / maximum * 5)));
 }
 
 function pestMonitoringRiskColor(value, scale) {
@@ -11833,14 +12275,12 @@ function pestMonitoringLegend(scale) {
   const bounds = scale.bounds?.length ? scale.bounds : [scale.maximum];
   const items = [[PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"]];
   bounds.forEach((upper, index) => {
-    const level = bounds.length === 1 ? 1 : 1 + Math.round(index * 4 / (bounds.length - 1));
-    const previous = index ? bounds[index - 1] : null;
-    const range = previous === null
-      ? (scale.minimum === upper ? number(upper, 1) : `${number(scale.minimum, 1)} a ${number(upper, 1)}`)
-      : `>${number(previous, 1)} a ${number(upper, 1)}`;
+    const level = Math.min(5, index + 1);
+    const previous = index ? bounds[index - 1] : 0;
+    const range = `>${number(previous, 1)} a ${number(upper, 1)}`;
     items.push([PEST_RISK_COLORS[level], `${levelNames[level]} · ${range}`]);
   });
-  return `<strong>${escapeHtml(pestMonitoringPest)} · mín. ${number(scale.minimum, 1)} · máx. ${number(scale.maximum, 1)}</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+  return `<strong>${escapeHtml(pestMonitoringPest)} · mín. ${number(scale.minimum, 1)} · máx. ${number(scale.maximum, 1)} · 5 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
 }
 
 function pestMonitoringHeatColor(ratio) {
@@ -12343,7 +12783,7 @@ function renderPestMonitoring() {
       <div class="kpi-grid pest-kpis" id="pestMonitoringKpis"></div>
       <div class="pest-monitoring-layout">
         <section class="panel pest-map-panel">
-          <div id="pestMonitoringMap" class="geo-map pest-monitoring-map"><span>Cargando mapa...</span></div>
+          <div id="pestMonitoringMap" class="geo-map agricultural-map pest-monitoring-map" data-agro-map="pests"><span>Cargando mapa...</span></div>
           <label class="pest-tree-layer-control">
             <input type="checkbox" data-pest-layer="trees" ${pestMonitoringTreesVisible ? "checked" : ""}>
             <img class="pest-tree-layer-icon" src="assets/tree-marker-cc0.png?v=2" alt="">
@@ -12495,83 +12935,43 @@ async function renderPestMonitoringMap(records, summaries, scale, trees) {
       pestMonitoringInfoWindow?.close();
       pestMonitoringTreeInfoWindow?.close();
     }
-    if (!pestMonitoringMap) {
-      pestMonitoringMap = new maps.Map(element, {
-        mapTypeId: "satellite",
-        streetViewControl: false,
-        fullscreenControl: true,
-        mapTypeControl: true,
-        clickableIcons: false,
-        gestureHandling: "greedy",
-        scrollwheel: true,
-        tilt: 0
-      });
+    const mapState = globalThis.AgroMap.ensureMap({
+      maps,
+      element,
+      currentMap: pestMonitoringMap,
+      currentElement: pestMonitoringMapElement
+    });
+    pestMonitoringMap = mapState.map;
+    if (mapState.created) {
       const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
-      const blockGroups = new Map();
-      blockRings.forEach((item) => {
-        const sourceKey = pestMonitoringBlockKey(item.feature.properties || {});
-        const field = geoJsonFeatureField(item.feature);
-        const group = blockGroups.get(sourceKey) || { rings: [], label: field.block || blockFeatureName(item.feature) };
-        group.rings.push(...item.rings);
-        blockGroups.set(sourceKey, group);
-        item.rings.forEach((ring) => {
-          const polygon = new maps.Polygon({
-            paths: ring.map(([lng, lat]) => ({ lat, lng })),
-            strokeColor: "#ffffff",
-            strokeOpacity: 0.62,
-            strokeWeight: 1.2,
-            fillColor: "#6e8f83",
-            fillOpacity: 0.05,
-            zIndex: 2
-          });
-          polygon.setMap(pestMonitoringMap);
-          polygon.addListener("click", (event) => showPestMonitoringBlockInfo(sourceKey, event.latLng, pestMonitoringCurrentSummaries, maps));
-          pestMonitoringPolygons.push({ polygon, key: sourceKey });
-        });
+      const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
+      const fieldLayers = globalThis.AgroMap.renderFieldLayers({
+        maps,
+        map: pestMonitoringMap,
+        blockItems: blockRings,
+        potreroItems: potreroRings,
+        blockKey: (item) => pestMonitoringBlockKey(item.feature.properties || {}),
+        potreroKey: (item) => potreroFeatureName(item.feature),
+        blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+        potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+        blockStyle: () => ({ fillColor: "#6e8f83", fillOpacity: 0.04, zIndex: 2 }),
+        potreroStyle: () => ({ zIndex: 4 }),
+        onBlockClick: ({ event, group }) => showPestMonitoringBlockInfo(group.key, event.latLng, pestMonitoringCurrentSummaries, maps)
       });
-      blockGroups.forEach((group) => {
-        const label = createMapLabelOverlay(maps, geoLatLngCenter(group.rings), group.label, "map-label-block-google");
-        label.setMap(pestMonitoringMap);
-        pestMonitoringBaseOverlays.push(label);
-      });
-      const potreroGroups = new Map();
-      geoFeaturesToRings(layers?.potreros?.features || []).forEach((item) => {
-        const name = potreroFeatureName(item.feature);
-        const group = potreroGroups.get(name) || { rings: [] };
-        group.rings.push(...item.rings);
-        potreroGroups.set(name, group);
-      });
-      const potreroPalette = ["#20d49a", "#f5b942", "#67a8ff", "#d58cff", "#52d5dd"];
-      [...potreroGroups.entries()].forEach(([name, group], index) => {
-        group.rings.forEach((ring) => {
-          const boundary = new maps.Polygon({
-            paths: ring.map(([lng, lat]) => ({ lat, lng })),
-            strokeColor: potreroPalette[index % potreroPalette.length],
-            strokeOpacity: 0.95,
-            strokeWeight: 2.8,
-            fillOpacity: 0,
-            clickable: false,
-            zIndex: 4
-          });
-          boundary.setMap(pestMonitoringMap);
-          pestMonitoringBaseOverlays.push(boundary);
-        });
-        const label = createMapLabelOverlay(
-          maps,
-          shiftLatLng(geoLatLngCenter(group.rings), index, 34),
-          potreroLabel(name),
-          "map-label-potrero-google"
-        );
-        label.setMap(pestMonitoringMap);
-        pestMonitoringBaseOverlays.push(label);
-      });
+      pestMonitoringPolygons = fieldLayers.blockEntries.map(({ polygon, key }) => ({ polygon, key }));
+      const infrastructureLayers = renderAgriculturalInfrastructure(maps, pestMonitoringMap, layers);
+      pestMonitoringBaseOverlays = [
+        ...fieldLayers.potreroOverlays,
+        ...fieldLayers.labelOverlays,
+        ...infrastructureLayers.overlays
+      ];
+      const blockGroups = new Map(fieldLayers.blockGroups.map((group) => [group.key, group.rings]));
       pestMonitoringHeatOverlay = createPestMonitoringHeatOverlay(
         maps,
         pestMonitoringMap,
-        new Map([...blockGroups].map(([key, group]) => [key, group.rings]))
+        blockGroups
       );
     }
-    pestMonitoringMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
     pestMonitoringPolygons.forEach((entry) => {
       const block = summaries.get(entry.key);
       const value = block?.intensity || 0;
@@ -12764,7 +13164,7 @@ function renderHarvestMap() {
         <h2>Mapa de bines</h2>
       </div>
       ${harvestFilterControls()}
-      <div id="harvestGeoMap" class="geo-map harvest-map"><span>Cargando mapa de cosecha...</span></div>
+      <div id="harvestGeoMap" class="geo-map agricultural-map harvest-map" data-agro-map="harvest"><span>Cargando mapa de cosecha...</span></div>
     </section>
   `;
   wireHarvestFilters();
@@ -18115,7 +18515,7 @@ function loadGoogleMaps() {
       delete window[callbackName];
     };
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=${callbackName}`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&loading=async&callback=${callbackName}`;
     script.async = true;
     script.defer = true;
     script.onerror = () => reject(new Error("Google Maps no cargo"));
@@ -18141,99 +18541,47 @@ async function renderGoogleGeoJsonMap(el, layers) {
     dashboardMap = null;
     dashboardMapElement = el;
   }
-  if (!dashboardMap) {
-    dashboardMap = new maps.Map(el, {
-      mapTypeId: "satellite",
-      disableDefaultUI: false,
-      streetViewControl: false,
-      fullscreenControl: true,
-      mapTypeControl: true,
-      gestureHandling: "greedy",
-      scrollwheel: true,
-      tilt: 0
-    });
-  }
-  dashboardMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
-  const bounds = new maps.LatLngBounds();
+  ({ map: dashboardMap } = globalThis.AgroMap.ensureMap({
+    maps,
+    element: el,
+    currentMap: dashboardMap,
+    currentElement: dashboardMapElement
+  }));
   const active = activeBlockKeys();
   const activePotreros = activePotreroKeys(active);
-  const potreroPalette = ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8", "#287b82", "#a8344f", "#6d741f", "#4f6fbd"];
-  const blockPalette = ["#d4a017", "#c2601d", "#7c5bc2", "#297f8f", "#bd415b", "#759328", "#cf8d1c"];
-
-  blockRings.forEach((item, index) => {
-    const key = blockFeatureKey(item.feature);
-    const activeBlock = active.has(key);
-    const related = activePotreros.has(key.split(":")[0]);
-    item.rings.forEach((ring) => {
-      const polygon = new maps.Polygon({
-        paths: ring.map(([lng, lat]) => ({ lat, lng })),
-        strokeColor: blockPalette[index % blockPalette.length],
-        strokeOpacity: 0.95,
-        strokeWeight: activeBlock ? 2.4 : 1.15,
-        fillColor: activeBlock ? "#1f6f4a" : related ? "#f7d98b" : "#dfe8dc",
-        fillOpacity: activeBlock ? 0.42 : related ? 0.32 : 0.16,
-        zIndex: activeBlock ? 4 : 1
-      });
-      polygon.setMap(dashboardMap);
-      dashboardMapOverlays.push(polygon);
-      ring.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
-    });
-    const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
-    label.setMap(dashboardMap);
-    dashboardMapOverlays.push(label);
+  const fieldLayers = globalThis.AgroMap.renderFieldLayers({
+    maps,
+    map: dashboardMap,
+    blockItems: blockRings,
+    potreroItems: potreroRings,
+    blockKey: (item) => blockFeatureKey(item.feature),
+    potreroKey: (item) => potreroFeatureName(item.feature),
+    blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+    potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+    blockStyle: (group) => {
+      const activeBlock = active.has(group.key);
+      const related = activePotreros.has(group.key.split(":")[0]);
+      return {
+        strokeWeight: activeBlock ? 3 : 1.8,
+        fillColor: activeBlock ? "#1f8a5b" : related ? "#f7d98b" : "#dfe8dc",
+        fillOpacity: activeBlock ? 0.42 : related ? 0.3 : 0.12,
+        zIndex: activeBlock ? 6 : 4
+      };
+    },
+    potreroStyle: (group) => ({
+      strokeWeight: activePotreros.has(group.key) ? 4.6 : 3.2
+    })
   });
-
-  potreroRings.forEach((item, index) => {
-    const alias = potreroFeatureName(item.feature);
-    const activeParent = activePotreros.has(alias);
-    item.rings.forEach((ring) => {
-      const polygon = new maps.Polygon({
-        paths: ring.map(([lng, lat]) => ({ lat, lng })),
-        strokeColor: potreroPalette[index % potreroPalette.length],
-        strokeOpacity: 1,
-        strokeWeight: activeParent ? 6 : 4,
-        fillOpacity: 0,
-        zIndex: 8
-      });
-      polygon.setMap(dashboardMap);
-      dashboardMapOverlays.push(polygon);
-    });
-    const labelPoint = shiftLatLng(geoLatLngCenter(item.rings), index, 34);
-    const label = createMapLabelOverlay(maps, labelPoint, alias, "map-label-potrero-google");
-    label.setMap(dashboardMap);
-    dashboardMapOverlays.push(label);
-  });
-
+  const infrastructureLayers = renderAgriculturalInfrastructure(maps, dashboardMap, layers);
+  dashboardMapOverlays = [...fieldLayers.overlays, ...infrastructureLayers.overlays];
+  const bounds = new maps.LatLngBounds();
+  if (!fieldLayers.bounds.isEmpty()) bounds.union(fieldLayers.bounds);
+  if (!infrastructureLayers.bounds.isEmpty()) bounds.union(infrastructureLayers.bounds);
   if (!bounds.isEmpty()) dashboardMap.fitBounds(bounds, 24);
 }
 
 function createMapLabelOverlay(maps, position, text, className) {
-  class LabelOverlay extends maps.OverlayView {
-    constructor() {
-      super();
-      this.div = null;
-    }
-
-    onAdd() {
-      this.div = document.createElement("div");
-      this.div.className = `map-label-google ${className}`;
-      this.div.textContent = text;
-      this.getPanes().overlayMouseTarget.appendChild(this.div);
-    }
-
-    draw() {
-      if (!this.div) return;
-      const point = this.getProjection().fromLatLngToDivPixel(new maps.LatLng(position.lat, position.lng));
-      this.div.style.left = `${point.x}px`;
-      this.div.style.top = `${point.y}px`;
-    }
-
-    onRemove() {
-      this.div?.remove();
-      this.div = null;
-    }
-  }
-  return new LabelOverlay();
+  return globalThis.AgroMap.createLabel(maps, position, text, className);
 }
 
 async function renderHarvestGeoMap(options = {}) {
@@ -18388,20 +18736,14 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
     harvestMap = null;
     harvestMapElement = el;
   }
-  const createdMap = !harvestMap;
-  if (!harvestMap) {
-    harvestMap = new maps.Map(el, {
-      mapTypeId: "satellite",
-      disableDefaultUI: false,
-      streetViewControl: false,
-      fullscreenControl: true,
-      mapTypeControl: true,
-      gestureHandling: "greedy",
-      scrollwheel: true,
-      tilt: 0
-    });
-  }
-  harvestMap.setOptions({ gestureHandling: "greedy", scrollwheel: true, draggable: true, keyboardShortcuts: true });
+  const mapState = globalThis.AgroMap.ensureMap({
+    maps,
+    element: el,
+    currentMap: harvestMap,
+    currentElement: harvestMapElement
+  });
+  harvestMap = mapState.map;
+  const createdMap = mapState.created;
   harvestMapVisibleRecords = records;
   if (!harvestMapIdleListener) {
     harvestMapIdleListener = maps.event.addListener(harvestMap, "idle", () => scheduleHarvestMapMarkerRender(maps));
@@ -18409,46 +18751,24 @@ async function renderGoogleHarvestMap(el, layers, options = {}) {
   maps.event.trigger(harvestMap, "resize");
 
   if (!harvestMapBaseReady) {
-    const baseBounds = new maps.LatLngBounds();
     const blockRings = geoFeaturesToRings(layers?.bloques?.features || []);
     const potreroRings = geoFeaturesToRings(layers?.potreros?.features || []);
-    blockRings.forEach((item, index) => {
-      item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: ["#d4a017", "#297f8f", "#7c5bc2"][index % 3],
-          strokeOpacity: 0.95,
-          strokeWeight: 1.9,
-          fillColor: "#dfe8dc",
-          fillOpacity: 0.18,
-          zIndex: 4
-        });
-        polygon.setMap(harvestMap);
-        harvestMapBaseOverlays.push(polygon);
-        ring.forEach(([lng, lat]) => baseBounds.extend({ lat, lng }));
-      });
-      const label = createMapLabelOverlay(maps, geoLatLngCenter(item.rings), `B${blockFeatureName(item.feature)}`, "map-label-block-google");
-      label.setMap(harvestMap);
-      harvestMapBaseOverlays.push(label);
+    const fieldLayers = globalThis.AgroMap.renderFieldLayers({
+      maps,
+      map: harvestMap,
+      blockItems: blockRings,
+      potreroItems: potreroRings,
+      blockKey: (item) => blockFeatureKey(item.feature),
+      potreroKey: (item) => potreroFeatureName(item.feature),
+      blockLabel: (group) => `B${blockFeatureName(group.feature)}`,
+      potreroLabel: (group) => potreroLabel(potreroFeatureName(group.feature)),
+      blockStyle: () => ({ fillColor: "#dfe8dc", fillOpacity: 0.13 })
     });
-    potreroRings.forEach((item, index) => {
-      item.rings.forEach((ring) => {
-        const polygon = new maps.Polygon({
-          paths: ring.map(([lng, lat]) => ({ lat, lng })),
-          strokeColor: ["#1f6f4a", "#a85c1f", "#3759a8", "#8b3fa8"][index % 4],
-          strokeOpacity: 1,
-          strokeWeight: 3,
-          fillOpacity: 0,
-          zIndex: 2
-        });
-        polygon.setMap(harvestMap);
-        harvestMapBaseOverlays.push(polygon);
-      });
-      const label = createMapLabelOverlay(maps, shiftLatLng(geoLatLngCenter(item.rings), index, 34), potreroLabel(potreroFeatureName(item.feature)), "map-label-potrero-google");
-      label.setMap(harvestMap);
-      harvestMapBaseOverlays.push(label);
-    });
-    harvestMapBaseBounds = baseBounds;
+    const infrastructureLayers = renderAgriculturalInfrastructure(maps, harvestMap, layers);
+    harvestMapBaseOverlays = [...fieldLayers.overlays, ...infrastructureLayers.overlays];
+    harvestMapBaseBounds = new maps.LatLngBounds();
+    if (!fieldLayers.bounds.isEmpty()) harvestMapBaseBounds.union(fieldLayers.bounds);
+    if (!infrastructureLayers.bounds.isEmpty()) harvestMapBaseBounds.union(infrastructureLayers.bounds);
     harvestMapBaseReady = true;
   }
 
@@ -18659,9 +18979,23 @@ function focusIrrigationCalicataById(id) {
 }
 
 async function loadGeoJson() {
-  const potreros = await fetchFirstGeoJson(["outputs/potreros.geojson", "potreros.geojson", "assets/maps/potreros.geojson"]);
-  const bloques = await fetchFirstGeoJson(["outputs/bloques.geojson", "bloques.geojson", "assets/maps/bloques.geojson"]);
-  return potreros || bloques ? { potreros, bloques } : null;
+  const [potreros, bloques, casetas, tranques] = await Promise.all([
+    fetchFirstGeoJson(["outputs/potreros.geojson", "potreros.geojson", "assets/maps/potreros.geojson"]),
+    fetchFirstGeoJson(["outputs/bloques.geojson", "bloques.geojson", "assets/maps/bloques.geojson"]),
+    fetchFirstGeoJson(["outputs/casetas.geojson", "casetas.geojson", "assets/maps/casetas.geojson"]),
+    fetchFirstGeoJson(["outputs/tranques.geojson", "tranques.geojson", "assets/maps/tranques.geojson"])
+  ]);
+  return potreros || bloques ? { potreros, bloques, casetas, tranques } : null;
+}
+
+function renderAgriculturalInfrastructure(maps, map, layers) {
+  return globalThis.AgroMap.renderInfrastructureLayers({
+    maps,
+    map,
+    casetas: layers?.casetas,
+    tranques: layers?.tranques,
+    casetaIconUrl: "assets/caseta-map-marker.png"
+  });
 }
 
 async function fetchFirstGeoJson(paths) {
@@ -22781,6 +23115,21 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "open-irrigation-bandeja-dialog") {
     openIrrigationBandejaDialog();
+  }
+  if (action === "set-irrigation-bandeja-view") {
+    irrigationBandejaView = actionTarget.dataset.view === "analysis" ? "analysis" : "matrix";
+    if (irrigationBandejaView === "matrix") irrigationBandejaFocusPending = true;
+    renderIrrigation();
+  }
+  if (action === "select-all-irrigation-bandeja-years") {
+    irrigationBandejaAnalysisYears = new Set(irrigationBandejaAnalysisDataYears());
+    irrigationBandejaAnalysisYearsInitialized = true;
+    renderIrrigation();
+  }
+  if (action === "clear-irrigation-bandeja-years") {
+    irrigationBandejaAnalysisYears.clear();
+    irrigationBandejaAnalysisYearsInitialized = true;
+    renderIrrigation();
   }
   if (action === "save-irrigation-rain") {
     await saveIrrigationRainRecord();

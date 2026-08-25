@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .cache/
+.tmp/
+*.inspect.ndjson
+~$*.xlsx

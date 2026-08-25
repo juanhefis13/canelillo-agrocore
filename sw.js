@@ -1,5 +1,5 @@
-const CACHE = "canelillo-agrocore-v320-gantt-sticky-panes";
-const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=320-gantt-sticky-panes", "./app.js?v=320-gantt-sticky-panes", "./manifest.json", "./logo-canelillo.png", "./data/programa_fitosanitario.json", "./data/programa_fertilizante.json?v=3", "./data/canelillo_limites.geojson", "./outputs/monitoreo_arboles.json?v=1", "./assets/tree-marker-cc0.png?v=2", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
+const CACHE = "canelillo-agrocore-v340-field-boundary";
+const ASSETS = ["./", "./index.html", "./privacidad.html", "./styles.css?v=340-field-boundary", "./agricultural-map.js?v=340-field-boundary", "./index-color-scales.js?v=340-field-boundary", "./app.js?v=340-field-boundary", "./manifest.json", "./logo-canelillo.png", "./data/programa_fitosanitario.json", "./data/programa_fertilizante.json?v=3", "./data/canelillo_limites.geojson", "./outputs/potreros.geojson", "./outputs/bloques.geojson", "./outputs/casetas.geojson", "./outputs/tranques.geojson", "./outputs/monitoreo_arboles.json?v=1", "./assets/tree-marker-cc0.png?v=2", "./assets/caseta-map-marker.png", "./vendor/xlsx.full.min.js", "./vendor/pdf-lib.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="42" height="48" viewBox="0 0 42 48" role="img" aria-label="Caseta">
+  <path d="M21 47C18.5 42.7 5 31.2 5 18.5C5 9.4 12.2 2 21 2s16 7.4 16 16.5C37 31.2 23.5 42.7 21 47Z" fill="#0D7A5F" stroke="#FFFFFF" stroke-width="2.5"/>
+  <path d="M12.8 19.2 21 12.5l8.2 6.7v10.2a1.8 1.8 0 0 1-1.8 1.8H14.6a1.8 1.8 0 0 1-1.8-1.8V19.2Z" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linejoin="round"/>
+  <path d="M10.5 20.8 21 12.2l10.5 8.6M18.1 31.2v-7h5.8v7" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
