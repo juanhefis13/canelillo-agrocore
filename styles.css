@@ -21931,9 +21931,31 @@ body {
   white-space: nowrap;
 }
 
-.harvest-productivity-block-table th:nth-child(3),
-.harvest-productivity-block-table td:nth-child(3) {
+.harvest-productivity-block-table th:first-child,
+.harvest-productivity-block-table td:first-child {
   text-align: left;
+}
+
+.harvest-productivity-block-table .harvest-block-group-row th {
+  padding: 8px 10px;
+  border-top: 3px solid #9bcbb5;
+  background: #dff1e8;
+  color: #075c46;
+  text-align: left;
+  font-size: 0.78rem;
+}
+
+.harvest-block-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.harvest-block-group-head strong {
+  color: #063f32;
+  font-size: 0.76rem;
 }
 
 .harvest-block-rank {

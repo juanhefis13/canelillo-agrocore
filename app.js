@@ -16148,7 +16148,8 @@ function openHarvestProductivityBlocks(species, variety, potrero) {
     const year = String(row.year || "");
     if (!year || (harvestAnalysisSelectedYears.size && !harvestAnalysisSelectedYears.has(year))) return;
     const field = harvestAnalysisFieldForRow(row);
-    const block = field?.block || row.block || row.bloque_normalizado || row.excelBlock || row.bloque_excel || "Sin relacion";
+    const rawBlock = field?.block || row.block || row.bloque_normalizado || row.excelBlock || row.bloque_excel;
+    const block = String(rawBlock || "Sin relacion").trim();
     const fieldKey = field?.id || fieldIdentityKey(potrero, block);
     const key = `${year}|${fieldKey}`;
     const hectares = harvestNumericValue(field?.hectares);
@@ -16165,15 +16166,25 @@ function openHarvestProductivityBlocks(species, variety, potrero) {
       kgHa: entry.hectares ? entry.kg / entry.hectares : 0,
       kgPlant: entry.plants ? entry.kg / entry.plants : 0
     }))
-    .sort((a, b) => b.kgHa - a.kgHa || b.kg - a.kg || Number(b.year) - Number(a.year)
-      || String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
+    .sort((a, b) => String(a.block).localeCompare(String(b.block), "es", { numeric: true, sensitivity: "base" })
+      || Number(b.year) - Number(a.year));
+  const blockTotals = rows.reduce((totals, row) => {
+    const key = String(row.block);
+    totals.set(key, (totals.get(key) || 0) + row.kg);
+    return totals;
+  }, new Map());
+  const yearTotals = rows.reduce((totals, row) => {
+    const key = String(row.year);
+    totals.set(key, (totals.get(key) || 0) + row.kg);
+    return totals;
+  }, new Map());
   const totalKg = rows.reduce((sum, row) => sum + row.kg, 0);
   dialog.innerHTML = `
     <div class="modal-body harvest-productivity-dialog">
       <div class="modal-head">
         <div>
           <h2>${escapeHtml(variety)} · ${escapeHtml(potreroLabel(potrero))}</h2>
-          <p>${escapeHtml(species)} · bloques ordenados por mayor productividad Kg/ha</p>
+          <p>${escapeHtml(species)} · rendimiento histórico agrupado por bloque</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cerrar">x</button>
       </div>
@@ -16183,16 +16194,24 @@ function openHarvestProductivityBlocks(species, variety, potrero) {
       </div>
       <div class="table-wrap harvest-productivity-block-table-wrap">
         <table class="harvest-productivity-block-table">
-          <thead><tr><th>Pos.</th><th>Ano</th><th>Bloque</th><th>Kg</th><th>Ha</th><th>Kg/ha</th><th>Kg/planta</th></tr></thead>
-          <tbody>${rows.map((row, index) => `<tr>
-            <td><b class="harvest-block-rank">${index + 1}</b></td>
-            <td>${escapeHtml(row.year)}</td>
-            <td><strong>Bloque ${escapeHtml(row.block)}</strong></td>
-            <td>${number(row.kg, 0)}</td>
+          <thead><tr><th>Año</th><th>Kg bloque/año</th><th>Kg totales del año</th><th>Ha</th><th>Kg/ha</th><th>Kg/planta</th></tr></thead>
+          <tbody>${rows.map((row, index) => `${index === 0 || rows[index - 1].block !== row.block ? `
+            <tr class="harvest-block-group-row">
+              <th colspan="6">
+                <div class="harvest-block-group-head">
+                  <span>Bloque ${escapeHtml(row.block)}</span>
+                  <strong>Total bloque: ${number(blockTotals.get(String(row.block)) || 0, 0)} kg</strong>
+                </div>
+              </th>
+            </tr>` : ""}
+          <tr>
+            <td><strong>${escapeHtml(row.year)}</strong></td>
+            <td><strong>${number(row.kg, 0)} kg</strong></td>
+            <td>${number(yearTotals.get(String(row.year)) || 0, 0)} kg</td>
             <td>${row.hectares ? number(row.hectares, 3) : "-"}</td>
             <td><strong>${row.hectares ? number(row.kgHa, 0) : "-"}</strong></td>
             <td>${row.plants ? number(row.kgPlant, 0) : "-"}</td>
-          </tr>`).join("") || `<tr><td colspan="7"><div class="empty">Sin bloques relacionados para este potrero.</div></td></tr>`}</tbody>
+          </tr>`).join("") || `<tr><td colspan="6"><div class="empty">Sin bloques relacionados para este potrero.</div></td></tr>`}</tbody>
         </table>
       </div>
       <div class="modal-actions"><button class="secondary-button" type="button" data-action="close-dialog">Cerrar</button></div>
