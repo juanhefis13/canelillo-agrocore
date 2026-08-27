@@ -540,6 +540,8 @@ let fertilizerAnalysisProductFilter = "Todos";
 let fertilizerAnalysisMonthlyMetric = "perHa";
 let fertilizerAnalysisExpandedMonths = new Set();
 let fertilizerAnalysisExpandedDays = new Set();
+let fertilizerWorkSpeciesFilter = "Todas";
+let fertilizerWorkProductFilter = "";
 let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
@@ -618,6 +620,7 @@ const views = {
   calicatas: document.getElementById("calicatas"),
   fertilizers: document.getElementById("fertilizers"),
   fertilizerAnalysis: document.getElementById("fertilizerAnalysis"),
+  fertilizerWork: document.getElementById("fertilizerWork"),
   pestMonitoring: document.getElementById("pestMonitoring"),
   applicationDashboard: document.getElementById("applicationDashboard"),
   program: document.getElementById("program"),
@@ -641,6 +644,7 @@ const titles = {
   calicatas: "Calicatas",
   fertilizers: "Fertilizantes",
   fertilizerAnalysis: "Fertilizante analisis",
+  fertilizerWork: "Trabajo fertilizante",
   pestMonitoring: "Monitoreo de plagas",
   applicationDashboard: "Panel principal de aplicaciones",
   program: "Programa de aplicaciones",
@@ -876,7 +880,7 @@ function cloudModulesForView(view) {
   if (view === "harvestMap" || view === "harvestInfo") return ["harvest"];
   if (view === "harvestAnalysis") return ["harvestAnalysis"];
   if (view === "harvestExport") return ["harvestExport"];
-  if (view === "fertilizers" || view === "fertilizerAnalysis") return ["fields", "fertilizers"];
+  if (view === "fertilizers" || view === "fertilizerAnalysis" || view === "fertilizerWork") return ["fields", "fertilizers"];
   if (["applicationDashboard", "program", "manager", "warehouse", "orders", "execution", "inventory", "prices", "reports", "masters"].includes(view)) {
     return ["fields", "applications"];
   }
@@ -1212,11 +1216,11 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
-    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "warehouse", "inventory", "prices"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return (permissions[normalized] || []).includes(view);
 }
@@ -1231,11 +1235,11 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
-    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "warehouse", "inventory", "prices"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "warehouse", "inventory", "prices"],
     operador: ["execution"],
-    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
+    lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
   };
   return new Set(viewsByRole[normalized] || [defaultViewForRole(normalized)]);
 }
@@ -7247,6 +7251,7 @@ function render() {
     calicatas: renderCalicatas,
     fertilizers: renderFertilizers,
     fertilizerAnalysis: renderFertilizerAnalysis,
+    fertilizerWork: renderFertilizerWork,
     pestMonitoring: renderPestMonitoring,
     applicationDashboard: renderApplicationDashboard,
     program: renderProgram,
@@ -11523,6 +11528,8 @@ function fertilizerActualAnalysisRows() {
       const nutrientFactor = FERTILIZER_NUTRIENTS.reduce((sum, nutrient) => sum + (Number(nutrients[nutrient]) || 0), 0);
       const actual = productApplied;
       result.push({
+        applicationId: application.id || "",
+        preparationId: preparation.id || "",
         date: String(application.fecha || application.creado_en || "").slice(0, 10),
         month: String(application.fecha || application.creado_en || "").slice(0, 7),
         campoId: field.id || application.campo_id || "",
@@ -11537,6 +11544,10 @@ function fertilizerActualAnalysisRows() {
         unit: String(preparation.producto_unidad || product.unit || "KG").toUpperCase(),
         nutrients,
         actual,
+        appliedLiters: liters,
+        preparedWater: water,
+        preparedProduct: productQuantity,
+        concentration: liters > 0 ? actual / liters : (water > 0 ? productQuantity / water : 0),
         actualUnits: actual * nutrientFactor,
         hectares: Number(field.hectares) || 0
       });
@@ -11670,6 +11681,250 @@ function fertilizerAnalysisDateLabel(value) {
 
 function fertilizerAnalysisOption(values, selected, allLabel) {
   return `<option value="${htmlAttr(allLabel)}">${escapeHtml(allLabel)}</option>${values.map((value) => `<option value="${htmlAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}`;
+}
+
+function fertilizerWorkDateContext() {
+  const cutoff = todayChileIso();
+  return {
+    cutoff,
+    year: cutoff.slice(0, 4),
+    month: cutoff.slice(0, 7)
+  };
+}
+
+function fertilizerWorkProductCatalog(programRows, actualRows) {
+  const catalog = new Map();
+  const add = (row) => {
+    const key = fertilizerAnalysisProductKey(row.product);
+    if (!key || catalog.has(key)) return;
+    const master = fertilizerProducts.find((product) => fertilizerAnalysisProductKey(product.key || product.name) === key);
+    catalog.set(key, {
+      key,
+      name: master?.name || row.product || "Producto",
+      unit: master?.unit || row.unit || "KG",
+      master
+    });
+  };
+  programRows.forEach(add);
+  actualRows.forEach(add);
+  return [...catalog.values()].sort((a, b) => a.name.localeCompare(b.name, "es", { numeric: true, sensitivity: "base" }));
+}
+
+function fertilizerWorkPreparationSummary(productKey, context) {
+  const productsById = new Map(fertilizerProducts.map((product) => [product.id, product]));
+  const productsByKey = new Map(fertilizerProducts.map((product) => [fertilizerAnalysisProductKey(product.key || product.name), product]));
+  const rows = fertilizerPreparationHistory.filter((preparation) => {
+    const date = String(preparation.fecha || preparation.creado_en || "").slice(0, 10);
+    if (!date.startsWith(context.year) || date > context.cutoff) return false;
+    const product = preparation.producto_id
+      ? productsById.get(preparation.producto_id)
+      : productsByKey.get(fertilizerAnalysisProductKey(preparation.producto || preparation.producto_nombre || preparation.nombre_producto));
+    return fertilizerAnalysisProductKey(product?.key || product?.name || preparation.producto) === productKey;
+  });
+  const productQuantity = rows.reduce((sum, row) => sum + (Number(row.producto_cantidad) || 0), 0);
+  const water = rows.reduce((sum, row) => sum + (Number(row.cantidad_litros) || 0), 0);
+  const master = fertilizerProducts.find((product) => fertilizerAnalysisProductKey(product.key || product.name) === productKey);
+  return {
+    productQuantity,
+    water,
+    concentration: water > 0 ? productQuantity / water : Number(master?.dissolution) || 0
+  };
+}
+
+function fertilizerWorkFieldKey(row = {}) {
+  return row.campoId || row.id || `${fertilizerReportKey(row.potrero)}|${fertilizerReportKey(row.block)}`;
+}
+
+function buildFertilizerWorkModel(productKey, context, speciesFilter = "Todas") {
+  const matchesSpecies = (row) => speciesFilter === "Todas"
+    || fertilizerReportKey(row.species) === fertilizerReportKey(speciesFilter);
+  const programRows = (fertilizerProgramRows || []).filter((row) =>
+    row.month.startsWith(context.year)
+    && row.month <= context.month
+    && fertilizerAnalysisProductKey(row.product) === productKey
+    && matchesSpecies(row)
+  );
+  const actualRows = fertilizerActualAnalysisRows().filter((row) =>
+    row.date.startsWith(context.year)
+    && row.date <= context.cutoff
+    && fertilizerAnalysisProductKey(row.product) === productKey
+    && matchesSpecies(row)
+  );
+  const fieldsById = new Map(fertilizerFields.map((field) => [field.id, field]));
+  const fieldsByNaturalKey = new Map(fertilizerFields.map((field) => [
+    `${fertilizerReportKey(field.potrero)}|${fertilizerReportKey(field.block)}`,
+    field
+  ]));
+  const fields = new Map();
+  const ensureField = (row) => {
+    const field = fieldsById.get(row.campoId)
+      || fieldsByNaturalKey.get(`${fertilizerReportKey(row.potrero)}|${fertilizerReportKey(row.block)}`)
+      || {
+        id: row.campoId || "",
+        potrero: row.potrero || "Sin potrero",
+        block: row.block || "-",
+        crop: row.species || "",
+        variety: row.variety || "",
+        hectares: fertilizerAnalysisRowHectares(row)
+      };
+    const key = fertilizerWorkFieldKey({ ...field, campoId: field.id });
+    if (!fields.has(key)) fields.set(key, { ...field, key });
+    return fields.get(key);
+  };
+  const programByField = new Map();
+  programRows.forEach((row) => {
+    const field = ensureField(row);
+    const current = programByField.get(field.key) || { kgHa: 0, kgTotal: 0 };
+    current.kgHa += Number(row.doseHa) || 0;
+    current.kgTotal += Number(row.programmed) || 0;
+    programByField.set(field.key, current);
+  });
+  const actualByField = new Map();
+  actualRows.forEach((row) => {
+    const field = ensureField(row);
+    if (!actualByField.has(field.key)) actualByField.set(field.key, []);
+    actualByField.get(field.key).push(row);
+  });
+  const preparation = fertilizerWorkPreparationSummary(productKey, context);
+  const grouped = new Map();
+  fields.forEach((field) => {
+    const potrero = field.potrero || "Sin potrero";
+    if (!grouped.has(potrero)) grouped.set(potrero, []);
+    grouped.get(potrero).push(field);
+  });
+  const potreros = [...grouped.entries()].map(([potrero, fieldRows]) => {
+    const blocks = fieldRows.sort(blockSort).map((field) => {
+      const program = programByField.get(field.key) || { kgHa: 0, kgTotal: 0 };
+      const actual = actualByField.get(field.key) || [];
+      const actualKg = actual.reduce((sum, row) => sum + (Number(row.actual) || 0), 0);
+      return {
+        ...field,
+        programKgHa: program.kgHa,
+        programKg: program.kgTotal,
+        actualRows: actual,
+        actualKg,
+        differenceKg: program.kgTotal - actualKg,
+        solutionLiters: preparation.concentration > 0 ? program.kgTotal / preparation.concentration : 0,
+        pendingSolutionLiters: preparation.concentration > 0 ? Math.max(0, program.kgTotal - actualKg) / preparation.concentration : 0
+      };
+    });
+    const dates = [...new Set(blocks.flatMap((block) => block.actualRows.map((row) => row.date)))].sort();
+    return { potrero, blocks, dates };
+  }).sort((a, b) => comparePotrero(a.potrero, b.potrero));
+  return { programRows, actualRows, preparation, potreros };
+}
+
+function fertilizerWorkCell(value, digits = 1, suffix = "") {
+  const numeric = Number(value) || 0;
+  return `<strong>${number(numeric, digits)}</strong>${suffix ? `<small>${escapeHtml(suffix)}</small>` : ""}`;
+}
+
+function renderFertilizerWorkPotrero(group, product, preparation) {
+  const blockCount = group.blocks.length;
+  const programKg = group.blocks.reduce((sum, block) => sum + block.programKg, 0);
+  const actualKg = group.blocks.reduce((sum, block) => sum + block.actualKg, 0);
+  const differenceKg = programKg - actualKg;
+  const solutionLiters = group.blocks.reduce((sum, block) => sum + block.solutionLiters, 0);
+  const pendingSolutionLiters = group.blocks.reduce((sum, block) => sum + block.pendingSolutionLiters, 0);
+  const dateRows = group.dates.map((date) => {
+    const rows = group.blocks.flatMap((block) => block.actualRows.filter((row) => row.date === date));
+    const quantity = rows.reduce((sum, row) => sum + (Number(row.actual) || 0), 0);
+    const water = rows.reduce((sum, row) => sum + (Number(row.appliedLiters) || 0), 0);
+    const concentration = water > 0 ? quantity / water : preparation.concentration;
+    return `<tr class="fertilizer-work-application-row">
+      <th>${escapeHtml(fertilizerAnalysisDateLabel(date))}</th>
+      <td title="${htmlAttr(product.name)}">${escapeHtml(product.name)}</td>
+      <td>${fertilizerWorkCell(quantity, 2, product.unit)}</td>
+      <td>${fertilizerWorkCell(water, 0, "L")}</td>
+      <td>${concentration > 0 ? number(concentration, 4) : "-"}</td>
+      <th>Aplicado real</th>
+      ${group.blocks.map((block) => {
+        const blockValue = block.actualRows.filter((row) => row.date === date).reduce((sum, row) => sum + (Number(row.actual) || 0), 0);
+        return `<td class="${blockValue > 0 ? "has-application" : "is-empty"}">${blockValue > 0 ? fertilizerWorkCell(blockValue, 2, "kg") : "-"}</td>`;
+      }).join("")}
+    </tr>`;
+  }).join("");
+  const noConcentration = preparation.concentration <= 0;
+  return `<article class="fertilizer-work-card">
+    <header class="fertilizer-work-card-header">
+      <div><span>Potrero</span><h3>${escapeHtml(potreroLabel(group.potrero))}</h3><small>${blockCount} ${blockCount === 1 ? "bloque" : "bloques"}</small></div>
+      <div class="fertilizer-work-card-balance ${differenceKg < 0 ? "is-excess" : ""}"><span>${differenceKg >= 0 ? "Faltan" : "Exceso"}</span><strong>${number(Math.abs(differenceKg), 1)} kg</strong><small>${number(actualKg, 1)} de ${number(programKg, 1)} kg</small></div>
+    </header>
+    ${noConcentration ? `<div class="fertilizer-work-warning">El producto no tiene concentración registrada ni preparaciones válidas para calcular la solución.</div>` : ""}
+    <div class="fertilizer-work-table-wrap">
+      <table class="fertilizer-work-table" style="--block-count:${Math.max(1, blockCount)}">
+        <thead>
+          <tr><th colspan="6" class="fertilizer-work-preparation-heading">Preparación y aplicación</th><th colspan="${blockCount}" class="fertilizer-work-potrero-heading">${escapeHtml(potreroLabel(group.potrero))}</th></tr>
+          <tr><th>Fecha</th><th>Producto</th><th>Cantidad kg/LT</th><th>Agua L</th><th>Conc. kg/L</th><th>Concepto</th>${group.blocks.map((block) => `<th class="fertilizer-work-block-heading">B${escapeHtml(block.block)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          <tr class="fertilizer-work-reference-row"><th colspan="5">Datos del bloque</th><th>Hectáreas</th>${group.blocks.map((block) => `<td>${fertilizerWorkCell(block.hectares, 2, "ha")}</td>`).join("")}</tr>
+          <tr class="fertilizer-work-program-row"><th colspan="5">Programa acumulado al mes actual</th><th>kg/ha</th>${group.blocks.map((block) => `<td>${fertilizerWorkCell(block.programKgHa, 2)}</td>`).join("")}</tr>
+          <tr class="fertilizer-work-program-row"><th colspan="2">${escapeHtml(product.name)}</th><td>${fertilizerWorkCell(programKg, 1, "kg")}</td><td>${fertilizerWorkCell(solutionLiters, 0, "L")}</td><td>${preparation.concentration > 0 ? number(preparation.concentration, 4) : "-"}</td><th>Programa kg total</th>${group.blocks.map((block) => `<td>${fertilizerWorkCell(block.programKg, 1, "kg")}</td>`).join("")}</tr>
+          <tr class="fertilizer-work-solution-row"><th colspan="2">Solución acumulada</th><td>${fertilizerWorkCell(programKg, 1, "kg")}</td><td>${fertilizerWorkCell(solutionLiters, 0, "L")}</td><td>${preparation.concentration > 0 ? number(preparation.concentration, 4) : "-"}</td><th>Solución total</th>${group.blocks.map((block) => `<td>${fertilizerWorkCell(block.solutionLiters, 0, "L")}</td>`).join("")}</tr>
+          ${dateRows || `<tr class="fertilizer-work-empty-row"><td colspan="${blockCount + 6}">Todavía no hay aplicaciones reales de este producto en el potrero.</td></tr>`}
+        </tbody>
+        <tfoot>
+          <tr class="fertilizer-work-total-row"><th colspan="2">Total aplicado</th><td>${fertilizerWorkCell(actualKg, 1, "kg")}</td><td colspan="3"></td>${group.blocks.map((block) => `<td>${fertilizerWorkCell(block.actualKg, 1, "kg")}</td>`).join("")}</tr>
+          <tr class="fertilizer-work-difference-row ${differenceKg < 0 ? "is-excess" : ""}"><th colspan="2">${differenceKg >= 0 ? "Faltante" : "Exceso"}</th><td>${fertilizerWorkCell(Math.abs(differenceKg), 1, "kg")}</td><td>${fertilizerWorkCell(pendingSolutionLiters, 0, "L pendientes")}</td><td colspan="2"></td>${group.blocks.map((block) => `<td class="${block.differenceKg < 0 ? "is-excess" : ""}">${fertilizerWorkCell(Math.abs(block.differenceKg), 1, block.differenceKg < 0 ? "kg exceso" : "kg faltan")}</td>`).join("")}</tr>
+        </tfoot>
+      </table>
+    </div>
+  </article>`;
+}
+
+function renderFertilizerWork() {
+  if (!views.fertilizerWork) return;
+  if (!fertilizerRows || !fertilizerProgramRows) {
+    const loadError = fertilizerLoadError || fertilizerProgramLoadError;
+    views.fertilizerWork.innerHTML = `<section class="panel fertilizer-analysis-loading">${loadError ? "" : `<span class="weather-import-spinner" aria-hidden="true"></span>`}<strong>${loadError ? "No se pudo cargar Trabajo fertilizante" : "Cargando trabajo fertilizante"}</strong><small>${escapeHtml(loadError || "Relacionando programa, preparaciones y aplicaciones...")}</small>${loadError ? `<button class="secondary-button" type="button" data-action="retry-fertilizer-work">Reintentar</button>` : ""}</section>`;
+    if (!loadError) Promise.all([loadFertilizerRows(), loadFertilizerProgramRows()]).then(() => {
+      if (currentView === "fertilizerWork") renderFertilizerWork();
+    }).catch((error) => {
+      fertilizerProgramLoadError = error.message || "No se pudo cargar el trabajo fertilizante";
+      if (currentView === "fertilizerWork") renderFertilizerWork();
+    });
+    return;
+  }
+  const context = fertilizerWorkDateContext();
+  const currentProgramRows = fertilizerProgramRows.filter((row) => row.month.startsWith(context.year) && row.month <= context.month);
+  const currentActualRows = fertilizerActualAnalysisRows().filter((row) => row.date.startsWith(context.year) && row.date <= context.cutoff);
+  const species = [...new Set([...currentProgramRows, ...currentActualRows].map((row) => row.species).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }));
+  if (fertilizerWorkSpeciesFilter !== "Todas" && !species.includes(fertilizerWorkSpeciesFilter)) fertilizerWorkSpeciesFilter = "Todas";
+  const matchesSpecies = (row) => fertilizerWorkSpeciesFilter === "Todas"
+    || fertilizerReportKey(row.species) === fertilizerReportKey(fertilizerWorkSpeciesFilter);
+  const scopedProgramRows = currentProgramRows.filter(matchesSpecies);
+  const scopedActualRows = currentActualRows.filter(matchesSpecies);
+  const products = fertilizerWorkProductCatalog(scopedProgramRows, scopedActualRows);
+  if (!products.some((product) => product.key === fertilizerWorkProductFilter)) {
+    fertilizerWorkProductFilter = products[0]?.key || "";
+  }
+  const product = products.find((item) => item.key === fertilizerWorkProductFilter);
+  const model = product ? buildFertilizerWorkModel(product.key, context, fertilizerWorkSpeciesFilter) : null;
+  const displayDate = new Intl.DateTimeFormat("es-CL", { day: "2-digit", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${context.cutoff}T12:00:00Z`));
+  views.fertilizerWork.innerHTML = `
+    <section class="fertilizer-work-shell">
+      <header class="fertilizer-work-toolbar">
+        <div><h2>Trabajo fertilizante</h2><span>Programa acumulado y aplicaciones reales hasta ${escapeHtml(displayDate)}</span></div>
+        <div class="fertilizer-work-filters">
+          <label>Especie<select data-fertilizer-work-filter="species"><option value="Todas">Todas</option>${species.map((item) => `<option value="${htmlAttr(item)}" ${item === fertilizerWorkSpeciesFilter ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
+          <label>Producto<select data-fertilizer-work-filter="product">${products.map((item) => `<option value="${htmlAttr(item.key)}" ${item.key === fertilizerWorkProductFilter ? "selected" : ""}>${escapeHtml(item.name)} · ${escapeHtml(item.unit)}</option>`).join("")}</select></label>
+        </div>
+      </header>
+      ${product && model ? `<div class="fertilizer-work-summary">
+        <div><span>Producto</span><strong>${escapeHtml(product.name)}</strong><small>Unidad ${escapeHtml(product.unit)}</small></div>
+        <div><span>Preparado acumulado</span><strong>${number(model.preparation.productQuantity, 1)} ${escapeHtml(product.unit)}</strong><small>${number(model.preparation.water, 0)} L de agua</small></div>
+        <div><span>Concentración usada</span><strong>${model.preparation.concentration > 0 ? number(model.preparation.concentration, 4) : "Sin dato"}</strong><small>kg/L calculado desde preparaciones</small></div>
+      </div>${model.potreros.map((group) => renderFertilizerWorkPotrero(group, product, model.preparation)).join("") || `<div class="empty-state"><strong>Sin sectores para este producto.</strong><span>No hay programa ni aplicaciones acumuladas hasta la fecha.</span></div>`}` : `<div class="empty-state"><strong>Sin productos disponibles.</strong><span>El programa y las aplicaciones no tienen datos para ${escapeHtml(context.year)}.</span></div>`}
+    </section>`;
+  views.fertilizerWork.querySelectorAll("[data-fertilizer-work-filter]").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      if (event.currentTarget.dataset.fertilizerWorkFilter === "species") fertilizerWorkSpeciesFilter = event.currentTarget.value;
+      if (event.currentTarget.dataset.fertilizerWorkFilter === "product") fertilizerWorkProductFilter = event.currentTarget.value;
+      renderFertilizerWork();
+    });
+  });
 }
 
 function renderFertilizerAnalysis() {
@@ -17841,7 +18096,7 @@ function cloudModulesForRealtimeTable(table = "") {
   if (table === "registros_trazabilidad") return ["harvest"];
   if (table === "cosecha_analisis") return ["harvestAnalysis"];
   if (table === "exportacion_analisis") return ["harvestExport"];
-  if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_lotes", "programa_fertilizante"].includes(table)) return ["fertilizers"];
+  if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_aplicacion_consumos", "fertilizante_lotes", "programa_fertilizante"].includes(table)) return ["fertilizers"];
   if (["ordenes_aplicacion", "orden_productos", "despachos", "despacho_productos", "movimientos_stock", "productos", "programas", "programa_productos", "vehiculos", "trabajador", "boquillas"].includes(table)) return ["fields", "applications"];
   return cloudModulesForView(currentView);
 }
@@ -17888,6 +18143,7 @@ function startCloudSync() {
     "fertilizante_productos",
     "fertilizante_preparaciones",
     "fertilizante_aplicaciones",
+    "fertilizante_aplicacion_consumos",
     "fertilizante_lotes",
     "programa_fertilizante",
     "registros_trazabilidad",
@@ -17944,6 +18200,7 @@ function startCloudSync() {
             fertilizerDataSource = "";
             if (currentView === "fertilizers") renderFertilizers();
             if (currentView === "fertilizerAnalysis") renderFertilizerAnalysis();
+            if (currentView === "fertilizerWork") renderFertilizerWork();
             return;
           }
           scheduleRealtimeCloudReload(table);
@@ -23072,6 +23329,13 @@ document.addEventListener("click", async (event) => {
     fertilizerRows = null;
     fertilizerLoadError = "";
     renderFertilizerAnalysis();
+  }
+  if (action === "retry-fertilizer-work") {
+    fertilizerProgramRows = null;
+    fertilizerProgramLoadError = "";
+    fertilizerRows = null;
+    fertilizerLoadError = "";
+    renderFertilizerWork();
   }
   if (action === "clear-harvest-export-filters") {
     harvestExportSelectedYears = new Set();
