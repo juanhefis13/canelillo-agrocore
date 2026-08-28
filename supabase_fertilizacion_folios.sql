@@ -346,14 +346,14 @@ with ingresos as (
   from public.fertilizante_lotes fl
   where fl.activo
   group by fl.caseta_id, fl.producto_id
-), aplicaciones as (
+), preparaciones as (
   select
     fe.caseta_id,
     fp.producto_id,
-    sum(coalesce(fc.producto_consumido, 0)) as cantidad_aplicada
-  from public.fertilizante_aplicacion_consumos fc
-  join public.fertilizante_preparaciones fp on fp.id = fc.preparacion_id
+    sum(coalesce(fp.producto_cantidad, 0)) as cantidad_preparada
+  from public.fertilizante_preparaciones fp
   join public.fertilizante_estanques fe on fe.id = fp.estanque_id
+  where fp.producto_id is not null
   group by fe.caseta_id, fp.producto_id
 )
 select
@@ -363,14 +363,14 @@ select
   p.nombre_comercial as producto,
   coalesce(i.unidad, p.unidad) as unidad,
   coalesce(i.cantidad_ingresada, 0) as cantidad_ingresada,
-  coalesce(ap.cantidad_aplicada, 0) as cantidad_preparada,
-  coalesce(i.cantidad_ingresada, 0) - coalesce(ap.cantidad_aplicada, 0) as cantidad_disponible,
+  coalesce(pr.cantidad_preparada, 0) as cantidad_preparada,
+  coalesce(i.cantidad_ingresada, 0) - coalesce(pr.cantidad_preparada, 0) as cantidad_disponible,
   coalesce(i.folios, '') as folios,
   coalesce(i.lotes, '') as lotes
 from public.fertilizante_casetas c
 join ingresos i on i.caseta_id = c.id
 join public.fertilizante_productos p on p.id = i.producto_id
-left join aplicaciones ap on ap.caseta_id = c.id and ap.producto_id = p.id
+left join preparaciones pr on pr.caseta_id = c.id and pr.producto_id = p.id
 where c.activo and p.activo;
 
 grant select on public.fertilizante_aplicacion_consumos, public.v_fertilizante_folios to authenticated;

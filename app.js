@@ -9894,7 +9894,7 @@ function fertilizerStockKey(casetaId, productId) {
   return `${casetaId || ""}|${productId || ""}`;
 }
 
-function computeFertilizerStockRows({ lots = [], preparations = [], consumptions = [], products = [], casetas = [], tanks = [], traceAvailable = false } = {}) {
+function computeFertilizerStockRows({ lots = [], preparations = [], products = [], casetas = [], tanks = [] } = {}) {
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsByKey = new Map(products.map((product) => [product.key, product]));
   const casetasById = new Map(casetas.map((caseta) => [caseta.id, caseta]));
@@ -9933,13 +9933,12 @@ function computeFertilizerStockRows({ lots = [], preparations = [], consumptions
     if (lot.folio) row.folios.push(String(lot.folio));
   });
 
-  const preparationsById = new Map(preparations.map((preparation) => [preparation.id, preparation]));
-  const stockMovements = traceAvailable
-    ? consumptions.map((consumption) => ({
-      preparation: preparationsById.get(consumption.preparacion_id),
-      quantity: Number(consumption.producto_consumido) || 0
-    }))
-    : preparations.map((preparation) => ({ preparation, quantity: Number(preparation.producto_cantidad) || 0 }));
+  // Bodega se descuenta al preparar. La aplicacion consume el volumen del
+  // estanque, pero no debe volver a descontar el producto desde el folio.
+  const stockMovements = preparations.map((preparation) => ({
+    preparation,
+    quantity: Number(preparation.producto_cantidad) || 0
+  }));
 
   stockMovements.forEach(({ preparation, quantity }) => {
     if (!preparation) return;
@@ -10189,11 +10188,9 @@ async function loadFertilizerRowsFromSupabase() {
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
     preparations: preparationsRaw,
-    consumptions: consumptionsRaw,
     products: fertilizerProducts,
     casetas: fertilizerCasetas,
-    tanks: tanksRaw,
-    traceAvailable: fertilizerConsumptionTraceAvailable
+    tanks: tanksRaw
   });
   fertilizerDataSource = "Supabase";
   return buildFertilizerRowsFromTanks(rows, tanksRaw, fertilizerCasetas);
@@ -11593,7 +11590,7 @@ function renderFertilizerWarehouseUnits(row) {
     return `<span class="fertilizer-stock-unit ${state}" aria-hidden="true"><i></i></span>`;
   }).join("");
   return `
-    <div class="fertilizer-stock-visual stock-${unit === "LT" ? "can" : "sack"}" role="img" aria-label="${number(available)} ${unit} no aplicados y ${number(consumed)} ${unit} aplicados">
+    <div class="fertilizer-stock-visual stock-${unit === "LT" ? "can" : "sack"}" role="img" aria-label="${number(available)} ${unit} disponibles y ${number(consumed)} ${unit} usados en preparaciones">
       <div class="fertilizer-stock-unit-stack">${icons}</div>
       <span class="fertilizer-stock-unit-label">${unit === "LT" ? "Bidones" : "Sacos"} · ${unit}</span>
     </div>
@@ -11621,7 +11618,7 @@ function renderFertilizerWarehouseProductCard(row) {
             <strong>${number(Math.max(0, available))} ${escapeHtml(unit)}</strong>
           </div>
           <div class="used">
-            <span>Aplicado</span>
+            <span>Preparado</span>
             <strong>${number(Math.max(0, consumed))} ${escapeHtml(unit)}</strong>
           </div>
         </div>
@@ -11657,7 +11654,7 @@ function renderFertilizerWarehouseGroup(caseta, rows) {
             <div>
               <span>${escapeHtml(unit)} disponibles</span>
               <strong>${number(values.available)} ${escapeHtml(unit)}</strong>
-              <small>${number(values.consumed)} ${escapeHtml(unit)} aplicados</small>
+              <small>${number(values.consumed)} ${escapeHtml(unit)} preparados</small>
             </div>
           `).join("") || `<div><span>Inventario</span><strong>0</strong><small>Sin movimientos</small></div>`}
         </div>
@@ -11675,7 +11672,10 @@ function renderFertilizerWarehouseGroups(rows) {
     if (!grouped.has(row.caseta)) grouped.set(row.caseta, []);
     grouped.get(row.caseta).push(row);
   });
-  return [...grouped.entries()].map(([caseta, items]) => renderFertilizerWarehouseGroup(caseta, items)).join("")
+  return [...grouped.entries()]
+    .sort(([a], [b]) => compareFertilizerCasetaName(a, b))
+    .map(([caseta, items]) => renderFertilizerWarehouseGroup(caseta, items.sort((a, b) => a.product.localeCompare(b.product, "es", { numeric: true }))))
+    .join("")
     || `<div class="empty-state"><strong>Sin productos en bodega para el filtro.</strong></div>`;
 }
 
@@ -11795,7 +11795,7 @@ function renderFertilizerWarehouseDetailTable(rows) {
   return `
     <div class="fertilizer-table-wrap">
       <table class="fertilizer-table">
-        <thead><tr><th>Caseta</th><th>Producto</th><th>Unidad</th><th>Ingresado</th><th>Aplicado</th><th>No aplicado</th><th>Folio</th><th>Lote</th></tr></thead>
+        <thead><tr><th>Caseta</th><th>Producto</th><th>Unidad</th><th>Ingresado</th><th>Preparado</th><th>Disponible</th><th>Folio</th><th>Lote</th></tr></thead>
         <tbody>
           ${rows.map((row) => `
             <tr>
@@ -11872,7 +11872,7 @@ function renderFertilizers() {
   });
   const storageViewCopy = {
     estanques: { title: "Estanques", description: "Estado actual de casetas, FIP y litros preparados disponibles." },
-    bodega: { title: "Bodega", description: "Kilos y litros almacenados por caseta y producto." },
+    bodega: { title: "Bodega", description: "Kilos y litros disponibles, descontados al preparar y agrupados por caseta." },
     folios: { title: "Folios", description: "Ingreso, preparación, aplicación y saldo trazable de cada folio." }
   }[fertilizerStorageView];
   views.fertilizers.innerHTML = `
