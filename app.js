@@ -6250,6 +6250,12 @@ function updateHarvestCrewScheduleDialogSummary() {
     const count = keys.filter((key) => state.activeKeys.has(key)).length;
     control.checked = keys.length > 0 && count === keys.length;
     control.indeterminate = count > 0 && count < keys.length;
+    const countNode = control.closest("th")?.querySelector("[data-harvest-schedule-date-count]");
+    if (countNode) {
+      const valueNode = countNode.querySelector("strong");
+      if (valueNode) valueNode.textContent = number(count, 0);
+      countNode.title = `${number(count, 0)} cuadrillas seleccionadas para ${date}`;
+    }
   });
 }
 
@@ -6331,10 +6337,12 @@ function renderHarvestCrewScheduleDialog() {
             ${state.dates.map((date) => {
               const parsed = new Date(`${date}T12:00:00Z`);
               const weekend = [0, 6].includes(parsed.getUTCDay());
+              const selectedCrews = state.crews.filter((crew) => crew.active !== false && state.activeKeys.has(harvestScheduleCellKey(date, crew.id))).length;
               return `<th class="${date === today ? "is-today" : ""} ${weekend ? "is-weekend" : ""}">
                 <label class="harvest-schedule-date-toggle" title="Marcar todas las cuadrillas para ${date}">
-                  <span>${escapeHtml(weekday.format(parsed).replace(".", ""))}</span>
-                  <strong>${escapeHtml(dayMonth.format(parsed))}</strong>
+                  <span class="harvest-schedule-date-count" data-harvest-schedule-date-count="${date}" title="${number(selectedCrews, 0)} cuadrillas seleccionadas para ${date}"><strong>${number(selectedCrews, 0)}</strong><small>cuad.</small></span>
+                  <span class="harvest-schedule-weekday">${escapeHtml(weekday.format(parsed).replace(".", ""))}</span>
+                  <strong class="harvest-schedule-date">${escapeHtml(dayMonth.format(parsed))}</strong>
                   <input type="checkbox" data-harvest-schedule-date-all="${date}" aria-label="Marcar todas las cuadrillas del ${date}">
                 </label>
               </th>`;
