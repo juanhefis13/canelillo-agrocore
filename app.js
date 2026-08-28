@@ -440,7 +440,8 @@ let harvestDateFromFilter = "";
 let harvestDateToFilter = "";
 let harvestCrewFilter = "Todas";
 let harvestStatusFilter = "Todos";
-let harvestSdpFilter = "Todos";
+let harvestPotreroFilter = "Todos";
+let harvestCrewScheduleDialogState = null;
 let harvestExportSelectedYears = new Set();
 let harvestExportSpeciesFilter = "Todas";
 let harvestExportVarietyFilter = "Todas";
@@ -473,6 +474,8 @@ let harvestUniqueCache = [];
 let harvestFilteredCacheSource = null;
 let harvestFilteredCacheKey = "";
 let harvestFilteredCache = [];
+let harvestPrintedDraftRows = [];
+let harvestPrintedCloudAvailable = false;
 
 function resetHarvestAnalysisFoldState() {
   harvestAnalysisEntryVersion += 1;
@@ -655,7 +658,7 @@ const titles = {
   inventory: "Bodega y stock",
   reports: "Reportes y ahorro",
   harvestMap: "Mapa de cosecha",
-  harvestInfo: "Informacion de cosecha",
+  harvestInfo: "Canelillo Harvest App",
   harvestExport: "Exportacion",
   harvestAnalysis: "Cosecha Analisis",
   masters: "Maestros del campo"
@@ -5854,15 +5857,36 @@ function harvestBinIdentifierKeys(record) {
     const normalized = normalizeHarvestBinIdentifier(value);
     if (!normalized) return;
     keys.add(`bin:${normalized}`);
-    const digits = normalized.replace(/\D/g, "");
-    if (digits.length >= 3) keys.add(`bin:${digits}`);
   });
   if (!keys.size && record.id) keys.add(`row:${record.id}`);
   return [...keys];
 }
 
+function normalizeHarvestScanDateValue(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "null") return "";
+  const dateTime = text.match(/^(\d{1,4})[-/](\d{1,2})[-/](\d{1,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!dateTime) return text;
+  const [, first, second, third, hour = "", minute = "", secondValue = ""] = dateTime;
+  const isYearFirst = first.length === 4;
+  const year = isYearFirst ? first : third;
+  const month = String(second).padStart(2, "0");
+  const day = String(isYearFirst ? third : first).padStart(2, "0");
+  const time = hour ? `T${String(hour).padStart(2, "0")}:${minute}:${secondValue || "00"}` : "";
+  return `${year}-${month}-${day}${time}`;
+}
+
+function harvestBinOccurrenceKeys(record) {
+  const date = harvestRecordDate(record) || "sin-fecha";
+  return harvestBinIdentifierKeys(record).map((key) => `${date}|${key}`);
+}
+
+function harvestBinOccurrenceKey(record) {
+  return harvestBinOccurrenceKeys(record)[0] || `${harvestRecordDate(record) || "sin-fecha"}|row:${record.id || harvestBinKey(record)}`;
+}
+
 function harvestRecordSortValue(record) {
-  const date = String(record.scanDate || record.createdAt || record.harvestDate || "");
+  const date = normalizeHarvestScanDateValue(record.scanDate || record.createdAt || record.harvestDate || "");
   const timestamp = Date.parse(date);
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
@@ -5886,17 +5910,36 @@ function firstHarvestDateValue(item, keys) {
   return "";
 }
 
-function harvestScanDateFromItem(item) {
-  return firstHarvestDateValue(item, [
+function harvestScanDateInfoFromItem(item) {
+  const exactScanDate = firstHarvestDateValue(item, [
     "fecha_escaneo",
     "fecha_escaneo_local",
     "fecha_escaneo_cosecha",
     "fecha_recepcion"
   ]);
+  if (exactScanDate) {
+    return { value: normalizeHarvestScanDateValue(exactScanDate), source: "fecha_escaneo", recovered: false };
+  }
+  if (item?.tipo_registro === "tarja_despachada") {
+    const dispatchDate = firstHarvestDateValue(item, ["fecha_despacho_camion"]);
+    if (dispatchDate) {
+      return { value: normalizeHarvestScanDateValue(dispatchDate), source: "fecha_despacho_camion", recovered: true };
+    }
+  }
+  const harvestDate = firstHarvestDateValue(item, ["fecha_cosecha"]);
+  if (harvestDate) {
+    return { value: normalizeHarvestScanDateValue(harvestDate), source: "fecha_cosecha", recovered: true };
+  }
+  const syncDate = firstHarvestDateValue(item, ["fecha_sincronizacion", "ultima_sincronizacion"]);
+  return {
+    value: normalizeHarvestScanDateValue(syncDate),
+    source: syncDate ? "fecha_sincronizacion" : "",
+    recovered: Boolean(syncDate)
+  };
 }
 
 function harvestRecordDate(record) {
-  return String(record.scanDate || "").slice(0, 10);
+  return normalizeHarvestScanDateValue(record.scanDate || "").slice(0, 10);
 }
 
 function todayChileIso() {
@@ -5914,6 +5957,25 @@ function harvestRecordStatus(record) {
   return record.type === "tarja_despachada" || record.truckPlate ? "despachado" : "terreno";
 }
 
+function normalizeHarvestPotreroValue(value) {
+  const text = String(value || "")
+    .trim()
+    .replace(/^potrero\s+/i, "")
+    .replace(/^p\s*(?=\d)/i, "")
+    .replace(/\s+/g, " ");
+  return text || "Sin potrero";
+}
+
+function harvestPotreroValue(record) {
+  return normalizeHarvestPotreroValue(record?.realField || record?.field || record?.sdpField || record?.cuartel || record?.cuartel_sdp || "");
+}
+
+function harvestPotreroDisplay(value) {
+  const text = String(value || "").trim();
+  if (!text || /^sin potrero$/i.test(text)) return "Sin potrero";
+  return /^\d/.test(text) ? `P${text}` : text;
+}
+
 function uniqueHarvestRecords(records = state.harvestRecords || []) {
   const cacheable = records === state.harvestRecords;
   if (cacheable && harvestUniqueCacheSource === records) return harvestUniqueCache;
@@ -5921,7 +5983,7 @@ function uniqueHarvestRecords(records = state.harvestRecords || []) {
   const keyToGroup = new Map();
   let fallbackIndex = 0;
   records.forEach((record) => {
-    const keys = harvestBinIdentifierKeys(record);
+    const keys = harvestBinOccurrenceKeys(record);
     if (!keys.length) keys.push(`fallback:${fallbackIndex++}`);
     const matchedGroups = [...new Set(keys.map((key) => keyToGroup.get(key)).filter(Boolean))];
     const groupKey = matchedGroups[0] || keys[0];
@@ -5947,7 +6009,7 @@ function uniqueHarvestRecords(records = state.harvestRecords || []) {
 
 function filteredHarvestRecords(records = state.harvestRecords || []) {
   const cacheable = records === state.harvestRecords;
-  const cacheKey = `${harvestDateFromFilter}|${harvestDateToFilter}|${harvestCrewFilter}|${harvestStatusFilter}|${harvestSdpFilter}`;
+  const cacheKey = `${harvestDateFromFilter}|${harvestDateToFilter}|${harvestCrewFilter}|${harvestStatusFilter}|${harvestPotreroFilter}`;
   if (cacheable && harvestFilteredCacheSource === records && harvestFilteredCacheKey === cacheKey) return harvestFilteredCache;
   const filtered = records.filter((record) => {
     const date = harvestRecordDate(record);
@@ -5955,7 +6017,7 @@ function filteredHarvestRecords(records = state.harvestRecords || []) {
     if (harvestDateToFilter && (!date || date > harvestDateToFilter)) return false;
     if (harvestCrewFilter !== "Todas" && (record.crew || "Sin cuadrilla") !== harvestCrewFilter) return false;
     if (harvestStatusFilter !== "Todos" && harvestRecordStatus(record) !== harvestStatusFilter) return false;
-    if (harvestSdpFilter !== "Todos" && (record.sdp || "Sin SDP") !== harvestSdpFilter) return false;
+    if (harvestPotreroFilter !== "Todos" && harvestPotreroValue(record) !== harvestPotreroFilter) return false;
     return true;
   });
   const unique = uniqueHarvestRecords(filtered);
@@ -5976,17 +6038,21 @@ function harvestStats(records = filteredHarvestRecords()) {
   const crews = new Set(unique.map(harvestCrewValue).filter(Boolean));
   const contractors = new Set(unique.map((record) => record.contractor || "Sin contratista"));
   const days = new Set(unique.map(harvestRecordDate).filter(Boolean));
+  const undated = unique.filter((record) => !harvestRecordDate(record)).length;
+  const datedTotal = unique.length - undated;
+  const recoveredDates = unique.filter((record) => record.scanDateRecovered).length;
   const today = todayChileIso();
   const todayScannedCrews = new Set(uniqueHarvestRecords((state.harvestRecords || []).filter((record) => harvestRecordDate(record) === today)).map(harvestCrewValue).filter(Boolean));
   const scheduledToday = state.harvestCrewSchedule.filter((item) => {
     const date = String(item.date || "").slice(0, 10);
     if (date !== today) return false;
+    if (item.active === false) return false;
     if (harvestCrewFilter !== "Todas" && (item.crew || "Sin cuadrilla") !== harvestCrewFilter) return false;
     return true;
   });
   const scheduledCrews = new Set(scheduledToday.map((item) => item.crew).filter(Boolean));
   const missingCrews = [...scheduledCrews].filter((crew) => !todayScannedCrews.has(crew));
-  return { total: unique.length, crews, contractors, days, scheduledCrews, missingCrews, today, todayScannedCrews };
+  return { total: unique.length, datedTotal, recoveredDates, crews, contractors, days, undated, scheduledCrews, missingCrews, today, todayScannedCrews };
 }
 
 function harvestJornalDate(item) {
@@ -6020,6 +6086,489 @@ function harvestBinsPerJornalRows(records = filteredHarvestRecords()) {
       detail: `${row.value} bins / ${jornalesCount || 0} jornales`
     };
   }).filter((row) => row.value > 0).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
+}
+
+function harvestBinsPerCrewDayRows(records = filteredHarvestRecords()) {
+  const crewStats = new Map();
+  records.forEach((record) => {
+    const date = harvestRecordDate(record);
+    if (!date) return;
+    const crew = harvestCrewValue(record);
+    const current = crewStats.get(crew) || { bins: new Set(), days: new Set() };
+    current.bins.add(harvestBinOccurrenceKey(record));
+    current.days.add(date);
+    crewStats.set(crew, current);
+  });
+  return [...crewStats.entries()].map(([crew, values]) => ({
+    label: crew,
+    value: values.days.size ? values.bins.size / values.days.size : 0,
+    detail: `${values.bins.size} bines / ${values.days.size} dias activos`
+  })).filter((row) => row.value > 0).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
+}
+
+function harvestAverageBinsPerCrewDay(records = filteredHarvestRecords()) {
+  const bins = new Set();
+  const crewDays = new Set();
+  records.forEach((record) => {
+    const date = harvestRecordDate(record);
+    if (!date) return;
+    bins.add(harvestBinOccurrenceKey(record));
+    crewDays.add(`${date}|${harvestCrewValue(record)}`);
+  });
+  return crewDays.size ? bins.size / crewDays.size : 0;
+}
+
+function harvestPrintedIdentifier(record) {
+  return normalizeHarvestBinIdentifier(record?.localCode || record?.codigo_local || record?.numBin || record?.num_bin || record?.id || "");
+}
+
+function harvestPrintedStats() {
+  if (!harvestPrintedCloudAvailable) return { available: false, printed: 0, scanned: 0, pending: 0, percentage: 0 };
+  const scannedKeys = new Set((state.harvestRecords || []).map(harvestPrintedIdentifier).filter(Boolean));
+  const printedKeys = new Set(scannedKeys);
+  harvestPrintedDraftRows.forEach((record) => {
+    const key = harvestPrintedIdentifier(record);
+    if (key) printedKeys.add(key);
+  });
+  const scanned = scannedKeys.size;
+  const printed = printedKeys.size;
+  return {
+    available: true,
+    printed,
+    scanned,
+    pending: Math.max(0, printed - scanned),
+    percentage: printed ? scanned / printed * 100 : 0
+  };
+}
+
+function harvestScheduleShiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function harvestScheduleWeekStart(value = todayChileIso()) {
+  const date = new Date(`${value}T12:00:00Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return date.toISOString().slice(0, 10);
+}
+
+function harvestScheduleDates(startDate, days = 14) {
+  return Array.from({ length: Number(days) || 14 }, (_, index) => harvestScheduleShiftDate(startDate, index));
+}
+
+function harvestScheduleCellKey(date, crewId) {
+  return `${date}|${crewId}`;
+}
+
+function harvestCrewScheduleHasChanges() {
+  const current = harvestCrewScheduleDialogState?.activeKeys;
+  const initial = harvestCrewScheduleDialogState?.initialActiveKeys;
+  if (!current || !initial || current.size !== initial.size) return Boolean(current || initial);
+  return [...current].some((key) => !initial.has(key));
+}
+
+function harvestCrewScheduleGroups(state = harvestCrewScheduleDialogState) {
+  if (!state) return [];
+  const contractorsById = new Map(state.contractors.map((item) => [item.id, item]));
+  const groups = new Map();
+  state.crews.filter((crew) => crew.active !== false).forEach((crew) => {
+    const contractor = contractorsById.get(crew.contractorId) || { id: crew.contractorId, name: "Sin contratista", code: "" };
+    if (!groups.has(contractor.id)) groups.set(contractor.id, { ...contractor, crews: [] });
+    groups.get(contractor.id).crews.push(crew);
+  });
+  return [...groups.values()]
+    .map((group) => ({ ...group, crews: group.crews.sort((a, b) => a.code.localeCompare(b.code, "es", { numeric: true })) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { numeric: true }));
+}
+
+function harvestCrewScheduleLoadingMarkup(message = "Cargando cuadrillas y programación...") {
+  return `
+    <div class="modal-body harvest-crew-schedule-dialog harvest-crew-schedule-loading">
+      <div class="modal-head">
+        <div><h2>Añadir cuadrillas del día</h2><p>Participación diaria por contratista y cuadrilla.</p></div>
+        <button class="icon-button" type="button" data-action="close-harvest-crew-schedule" aria-label="Cerrar">x</button>
+      </div>
+      <div class="harvest-crew-schedule-loading-state" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>${escapeHtml(message)}</strong>
+      </div>
+    </div>`;
+}
+
+async function loadHarvestCrewScheduleDialogData(startDate, days) {
+  const endDate = harvestScheduleShiftDate(startDate, days - 1);
+  const [contractorRows, crewRows, scheduleRows] = await Promise.all([
+    sbSelectAll("contratista", "select=id_contratista,nombre_empresa,codigo_empresa&order=nombre_empresa.asc", 500),
+    sbSelectAll("contratista_cuadrillas", "select=id,contratista_id,codigo_cuadrilla,activo&order=codigo_cuadrilla.asc", 500),
+    sbSelectAll("programacion_cuadrillas_dia", `select=id,fecha,contratista_id,cuadrilla_id,activo,creado_en&fecha=gte.${encodeURIComponent(startDate)}&fecha=lte.${encodeURIComponent(endDate)}&order=fecha.asc,creado_en.asc`, 1000)
+  ]);
+  const contractors = contractorRows.map((row) => ({
+    id: row.id_contratista,
+    name: String(row.nombre_empresa || "Sin contratista").trim(),
+    code: String(row.codigo_empresa || "").trim()
+  }));
+  const crews = crewRows.map((row) => ({
+    id: row.id,
+    contractorId: row.contratista_id,
+    code: String(row.codigo_cuadrilla || "Sin cuadrilla").trim(),
+    active: row.activo !== false
+  }));
+  const existingByKey = new Map();
+  scheduleRows.forEach((row) => existingByKey.set(harvestScheduleCellKey(String(row.fecha).slice(0, 10), row.cuadrilla_id), row));
+  const activeKeys = new Set(scheduleRows.filter((row) => row.activo !== false).map((row) => harvestScheduleCellKey(String(row.fecha).slice(0, 10), row.cuadrilla_id)));
+  return {
+    startDate,
+    days,
+    dates: harvestScheduleDates(startDate, days),
+    contractors,
+    crews,
+    scheduleRows,
+    existingByKey,
+    activeKeys,
+    initialActiveKeys: new Set(activeKeys),
+    saving: false
+  };
+}
+
+function updateHarvestCrewScheduleDialogSummary() {
+  const state = harvestCrewScheduleDialogState;
+  if (!state) return;
+  const selected = state.activeKeys.size;
+  const changes = new Set([...state.activeKeys, ...state.initialActiveKeys])
+    .size - [...state.activeKeys].filter((key) => state.initialActiveKeys.has(key)).length;
+  const selectedNode = document.getElementById("harvestCrewScheduleSelectedCount");
+  const changesNode = document.getElementById("harvestCrewScheduleChangeCount");
+  const saveButton = document.querySelector("[data-action='save-harvest-crew-schedule']");
+  if (selectedNode) selectedNode.textContent = number(selected, 0);
+  if (changesNode) changesNode.textContent = number(changes, 0);
+  if (saveButton) saveButton.disabled = state.saving || changes === 0;
+  document.querySelectorAll("[data-harvest-schedule-date-all]").forEach((control) => {
+    const date = control.dataset.harvestScheduleDateAll;
+    const keys = state.crews.filter((crew) => crew.active !== false).map((crew) => harvestScheduleCellKey(date, crew.id));
+    const count = keys.filter((key) => state.activeKeys.has(key)).length;
+    control.checked = keys.length > 0 && count === keys.length;
+    control.indeterminate = count > 0 && count < keys.length;
+  });
+}
+
+function wireHarvestCrewScheduleDialog() {
+  const dialog = document.getElementById("harvestCrewScheduleDialog");
+  if (!dialog || !harvestCrewScheduleDialogState) return;
+  dialog.querySelector("#harvestCrewScheduleStart")?.addEventListener("change", (event) => {
+    navigateHarvestCrewScheduleDialog(event.target.value, harvestCrewScheduleDialogState.days);
+  });
+  dialog.querySelector("#harvestCrewScheduleDays")?.addEventListener("change", (event) => {
+    navigateHarvestCrewScheduleDialog(harvestCrewScheduleDialogState.startDate, Number(event.target.value));
+  });
+  dialog.querySelector(".harvest-crew-schedule-matrix")?.addEventListener("change", (event) => {
+    const cell = event.target.closest("[data-harvest-schedule-cell]");
+    if (cell) {
+      const key = cell.dataset.harvestScheduleCell;
+      if (cell.checked) harvestCrewScheduleDialogState.activeKeys.add(key);
+      else harvestCrewScheduleDialogState.activeKeys.delete(key);
+      updateHarvestCrewScheduleDialogSummary();
+      return;
+    }
+    const dateControl = event.target.closest("[data-harvest-schedule-date-all]");
+    if (!dateControl) return;
+    const date = dateControl.dataset.harvestScheduleDateAll;
+    harvestCrewScheduleDialogState.crews.filter((crew) => crew.active !== false).forEach((crew) => {
+      const key = harvestScheduleCellKey(date, crew.id);
+      if (dateControl.checked) harvestCrewScheduleDialogState.activeKeys.add(key);
+      else harvestCrewScheduleDialogState.activeKeys.delete(key);
+      const input = dialog.querySelector(`[data-harvest-schedule-cell="${CSS.escape(key)}"]`);
+      if (input) input.checked = dateControl.checked;
+    });
+    updateHarvestCrewScheduleDialogSummary();
+  });
+  dialog.oncancel = (event) => {
+    if (!harvestCrewScheduleHasChanges() || confirm("¿Cerrar sin guardar los cambios de cuadrillas?")) return;
+    event.preventDefault();
+  };
+  dialog.onclose = () => {
+    harvestCrewScheduleDialogState = null;
+  };
+  updateHarvestCrewScheduleDialogSummary();
+}
+
+function renderHarvestCrewScheduleDialog() {
+  const dialog = document.getElementById("harvestCrewScheduleDialog");
+  const state = harvestCrewScheduleDialogState;
+  if (!dialog || !state) return;
+  const groups = harvestCrewScheduleGroups(state);
+  const today = todayChileIso();
+  const weekday = new Intl.DateTimeFormat("es-CL", { weekday: "short", timeZone: "UTC" });
+  const dayMonth = new Intl.DateTimeFormat("es-CL", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+  dialog.innerHTML = `
+    <div class="modal-body harvest-crew-schedule-dialog">
+      <div class="modal-head harvest-crew-schedule-head">
+        <div><h2>Añadir cuadrillas del día</h2><p>Marca las cuadrillas que participaron en cada fecha.</p></div>
+        <button class="icon-button" type="button" data-action="close-harvest-crew-schedule" aria-label="Cerrar">x</button>
+      </div>
+      <div class="harvest-crew-schedule-toolbar">
+        <div class="harvest-crew-schedule-navigation">
+          <button class="icon-button" type="button" data-action="shift-harvest-crew-schedule" data-days="-${state.days}" title="Periodo anterior" aria-label="Periodo anterior">‹</button>
+          <label>Desde<input id="harvestCrewScheduleStart" type="date" value="${htmlAttr(state.startDate)}"></label>
+          <label>Vista<select id="harvestCrewScheduleDays">
+            <option value="7" ${state.days === 7 ? "selected" : ""}>7 días</option>
+            <option value="14" ${state.days === 14 ? "selected" : ""}>14 días</option>
+            <option value="31" ${state.days === 31 ? "selected" : ""}>31 días</option>
+          </select></label>
+          <button class="secondary-button" type="button" data-action="today-harvest-crew-schedule">Esta semana</button>
+          <button class="icon-button" type="button" data-action="shift-harvest-crew-schedule" data-days="${state.days}" title="Periodo siguiente" aria-label="Periodo siguiente">›</button>
+        </div>
+        <div class="harvest-crew-schedule-summary" aria-live="polite">
+          <span><strong id="harvestCrewScheduleSelectedCount">${state.activeKeys.size}</strong> participaciones</span>
+          <span><strong id="harvestCrewScheduleChangeCount">0</strong> cambios</span>
+        </div>
+      </div>
+      <div class="harvest-crew-schedule-table-wrap">
+        <table class="harvest-crew-schedule-matrix">
+          <thead><tr>
+            <th class="harvest-crew-sticky-label">Contratista / cuadrilla</th>
+            ${state.dates.map((date) => {
+              const parsed = new Date(`${date}T12:00:00Z`);
+              const weekend = [0, 6].includes(parsed.getUTCDay());
+              return `<th class="${date === today ? "is-today" : ""} ${weekend ? "is-weekend" : ""}">
+                <label class="harvest-schedule-date-toggle" title="Marcar todas las cuadrillas para ${date}">
+                  <span>${escapeHtml(weekday.format(parsed).replace(".", ""))}</span>
+                  <strong>${escapeHtml(dayMonth.format(parsed))}</strong>
+                  <input type="checkbox" data-harvest-schedule-date-all="${date}" aria-label="Marcar todas las cuadrillas del ${date}">
+                </label>
+              </th>`;
+            }).join("")}
+          </tr></thead>
+          <tbody>
+            ${groups.map((group) => `
+              <tr class="harvest-schedule-contractor-row">
+                <th class="harvest-crew-sticky-label"><strong>${escapeHtml(group.name)}</strong>${group.code ? `<span>${escapeHtml(group.code)}</span>` : ""}</th>
+                <td colspan="${state.dates.length}"></td>
+              </tr>
+              ${group.crews.map((crew) => `
+                <tr class="harvest-schedule-crew-row">
+                  <th class="harvest-crew-sticky-label"><span>${escapeHtml(crew.code)}</span></th>
+                  ${state.dates.map((date) => {
+                    const key = harvestScheduleCellKey(date, crew.id);
+                    const parsed = new Date(`${date}T12:00:00Z`);
+                    const weekend = [0, 6].includes(parsed.getUTCDay());
+                    return `<td class="${date === today ? "is-today" : ""} ${weekend ? "is-weekend" : ""}">
+                      <label class="harvest-schedule-cell" title="${htmlAttr(`${crew.code} · ${date}`)}">
+                        <input type="checkbox" data-harvest-schedule-cell="${htmlAttr(key)}" ${state.activeKeys.has(key) ? "checked" : ""}>
+                        <span aria-hidden="true"></span>
+                      </label>
+                    </td>`;
+                  }).join("")}
+                </tr>`).join("")}
+            `).join("") || `<tr><td colspan="${state.dates.length + 1}" class="empty">No hay cuadrillas activas disponibles.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions harvest-crew-schedule-actions">
+        <button class="secondary-button" type="button" data-action="close-harvest-crew-schedule">Cancelar</button>
+        <button class="primary-button" type="button" data-action="save-harvest-crew-schedule" disabled>Guardar cambios</button>
+      </div>
+    </div>`;
+  wireHarvestCrewScheduleDialog();
+}
+
+async function openHarvestCrewScheduleDialog(startDate = harvestScheduleWeekStart(), days = 14) {
+  if (!hasRole("admin", "supervisor")) {
+    showToast("Solo administradores y supervisores pueden editar las cuadrillas del día");
+    return;
+  }
+  if (!supabaseSession) {
+    showToast("Inicia sesión para guardar la programación de cuadrillas");
+    return;
+  }
+  const dialog = document.getElementById("harvestCrewScheduleDialog");
+  if (!dialog) return;
+  dialog.innerHTML = harvestCrewScheduleLoadingMarkup();
+  if (!dialog.open) dialog.showModal();
+  try {
+    harvestCrewScheduleDialogState = await loadHarvestCrewScheduleDialogData(startDate, days);
+    renderHarvestCrewScheduleDialog();
+  } catch (error) {
+    harvestCrewScheduleDialogState = null;
+    dialog.innerHTML = `
+      <div class="modal-body harvest-crew-schedule-dialog">
+        <div class="modal-head"><div><h2>No se pudo cargar</h2><p>${escapeHtml(error.message)}</p></div><button class="icon-button" type="button" data-action="close-harvest-crew-schedule" aria-label="Cerrar">x</button></div>
+        <div class="modal-actions"><button class="secondary-button" type="button" data-action="close-harvest-crew-schedule">Cerrar</button><button class="primary-button" type="button" data-action="open-harvest-crew-schedule">Reintentar</button></div>
+      </div>`;
+  }
+}
+
+async function navigateHarvestCrewScheduleDialog(startDate, days) {
+  if (harvestCrewScheduleHasChanges() && !confirm("¿Cambiar el periodo y descartar los cambios sin guardar?")) {
+    renderHarvestCrewScheduleDialog();
+    return;
+  }
+  await openHarvestCrewScheduleDialog(startDate, days);
+}
+
+function closeHarvestCrewScheduleDialog() {
+  if (harvestCrewScheduleHasChanges() && !confirm("¿Cerrar sin guardar los cambios de cuadrillas?")) return;
+  harvestCrewScheduleDialogState = null;
+  document.getElementById("harvestCrewScheduleDialog")?.close();
+}
+
+async function refreshHarvestCrewScheduleRange(startDate, endDate) {
+  const rows = await sbSelectAll("v_programacion_cuadrillas_dia", `select=*&fecha=gte.${encodeURIComponent(startDate)}&fecha=lte.${encodeURIComponent(endDate)}&order=fecha.asc,codigo_cuadrilla.asc`, 1000);
+  state.harvestCrewSchedule = state.harvestCrewSchedule
+    .filter((item) => item.date < startDate || item.date > endDate)
+    .concat(rows.map((item) => ({
+      id: item.id,
+      date: item.fecha || item.fecha_cosecha || "",
+      contractorId: item.contratista_id || "",
+      contractor: item.nombre_empresa || item.contratista || "",
+      crewId: item.cuadrilla_id || "",
+      crew: item.codigo_cuadrilla || item.cuadrilla || "",
+      active: item.activo !== false
+    })));
+}
+
+async function saveHarvestCrewSchedule() {
+  const stateDialog = harvestCrewScheduleDialogState;
+  if (!stateDialog || stateDialog.saving || !harvestCrewScheduleHasChanges()) return;
+  stateDialog.saving = true;
+  updateHarvestCrewScheduleDialogSummary();
+  const dialog = document.getElementById("harvestCrewScheduleDialog");
+  const saveButton = dialog?.querySelector("[data-action='save-harvest-crew-schedule']");
+  if (saveButton) saveButton.innerHTML = `<span class="loading-spinner" aria-hidden="true"></span> Guardando...`;
+  try {
+    const crewById = new Map(stateDialog.crews.map((crew) => [crew.id, crew]));
+    const allKeys = new Set([...stateDialog.activeKeys, ...stateDialog.initialActiveKeys]);
+    const inserts = [];
+    const activateIds = [];
+    const deactivateIds = [];
+    allKeys.forEach((key) => {
+      const shouldBeActive = stateDialog.activeKeys.has(key);
+      const wasActive = stateDialog.initialActiveKeys.has(key);
+      if (shouldBeActive === wasActive) return;
+      const existing = stateDialog.existingByKey.get(key);
+      if (existing?.id) {
+        (shouldBeActive ? activateIds : deactivateIds).push(existing.id);
+        return;
+      }
+      if (!shouldBeActive) return;
+      const separator = key.indexOf("|");
+      const date = key.slice(0, separator);
+      const crewId = key.slice(separator + 1);
+      const crew = crewById.get(crewId);
+      if (!crew) return;
+      inserts.push({ fecha: date, contratista_id: crew.contractorId, cuadrilla_id: crew.id, activo: true });
+    });
+    const requests = [];
+    if (inserts.length) {
+      requests.push(sbFetch("/rest/v1/programacion_cuadrillas_dia?on_conflict=fecha,cuadrilla_id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: JSON.stringify(inserts)
+      }));
+    }
+    if (activateIds.length) requests.push(sbFetch(`/rest/v1/programacion_cuadrillas_dia?id=in.(${activateIds.join(",")})`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ activo: true }) }));
+    if (deactivateIds.length) requests.push(sbFetch(`/rest/v1/programacion_cuadrillas_dia?id=in.(${deactivateIds.join(",")})`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ activo: false }) }));
+    await Promise.all(requests);
+    const endDate = stateDialog.dates.at(-1);
+    await refreshHarvestCrewScheduleRange(stateDialog.startDate, endDate);
+    harvestCrewScheduleDialogState = null;
+    dialog?.close();
+    if (currentView === "harvestInfo") renderHarvestInfo();
+    showToast(`${number(inserts.length + activateIds.length + deactivateIds.length, 0)} cambios de cuadrillas guardados`);
+  } catch (error) {
+    stateDialog.saving = false;
+    updateHarvestCrewScheduleDialogSummary();
+    if (saveButton) saveButton.textContent = "Guardar cambios";
+    showToast(`No se guardó la programación: ${error.message}`);
+  }
+}
+
+function harvestDateMatchesRange(date) {
+  if (!date) return false;
+  if (harvestDateFromFilter && date < harvestDateFromFilter) return false;
+  if (harvestDateToFilter && date > harvestDateToFilter) return false;
+  return true;
+}
+
+function harvestPrintedDraftMatchesFilters(record) {
+  const date = normalizeHarvestScanDateValue(record?.fecha_impresion || record?.fecha_cosecha || record?.creado_en || "").slice(0, 10);
+  if (!harvestDateMatchesRange(date)) return false;
+  if (harvestCrewFilter !== "Todas" && String(record?.cuadrilla || "").trim() !== harvestCrewFilter) return false;
+  if (harvestPotreroFilter !== "Todos" && harvestPotreroValue(record) !== harvestPotreroFilter) return false;
+  return harvestStatusFilter !== "despachado";
+}
+
+function harvestPrintedMonthlyRows(records = filteredHarvestRecords()) {
+  if (!harvestPrintedCloudAvailable) return [];
+  const printedByKey = new Map();
+  const scannedByKey = new Map();
+
+  records.forEach((record) => {
+    const key = harvestPrintedIdentifier(record) || harvestBinOccurrenceKey(record);
+    const scanDate = harvestRecordDate(record);
+    if (scanDate && harvestDateMatchesRange(scanDate)) scannedByKey.set(key, scanDate);
+    const exactPrintDate = normalizeHarvestScanDateValue(record.printedAt || "").slice(0, 10);
+    const printDate = exactPrintDate || scanDate;
+    if (printDate && harvestDateMatchesRange(printDate)) {
+      printedByKey.set(key, { date: printDate, exact: Boolean(exactPrintDate) });
+    }
+  });
+
+  harvestPrintedDraftRows.forEach((record) => {
+    if (!harvestPrintedDraftMatchesFilters(record)) return;
+    const key = harvestPrintedIdentifier(record);
+    const date = normalizeHarvestScanDateValue(record.fecha_impresion || record.fecha_cosecha || record.creado_en || "").slice(0, 10);
+    if (!key || !date) return;
+    const current = printedByKey.get(key);
+    if (!current?.exact) printedByKey.set(key, { date, exact: true });
+  });
+
+  const months = new Map();
+  const ensureMonth = (date) => {
+    const key = date.slice(0, 7);
+    if (!months.has(key)) months.set(key, { month: key, printed: 0, scanned: 0 });
+    return months.get(key);
+  };
+  printedByKey.forEach(({ date }) => { ensureMonth(date).printed += 1; });
+  scannedByKey.forEach((date) => { ensureMonth(date).scanned += 1; });
+  return [...months.values()].sort((a, b) => a.month.localeCompare(b.month));
+}
+
+function harvestMonthlyUsageChart(rows = []) {
+  const max = Math.max(1, ...rows.flatMap((row) => [row.printed, row.scanned]));
+  const monthFormatter = new Intl.DateTimeFormat("es-CL", { month: "short", year: "2-digit", timeZone: "UTC" });
+  return `
+    <article class="panel harvest-monthly-usage-panel">
+      <div class="panel-header harvest-monthly-usage-header">
+        <div>
+          <h2>Uso mensual de Canelillo Harvest</h2>
+          <p>Impresos y escaneados por mes, sin duplicar bines.</p>
+        </div>
+        <div class="harvest-monthly-legend" aria-label="Series del grafico">
+          <span><i class="printed"></i>Impresos</span>
+          <span><i class="scanned"></i>Escaneados</span>
+        </div>
+      </div>
+      ${rows.length ? `
+        <div class="harvest-monthly-chart-scroll">
+          <div class="harvest-monthly-chart" style="--harvest-month-count:${rows.length}">
+            ${rows.map((row) => {
+              const label = monthFormatter.format(new Date(`${row.month}-01T12:00:00Z`)).replace(".", "");
+              const printedHeight = row.printed ? Math.max(3, row.printed / max * 100) : 0;
+              const scannedHeight = row.scanned ? Math.max(3, row.scanned / max * 100) : 0;
+              return `
+                <div class="harvest-month-group">
+                  <div class="harvest-month-bars">
+                    <div class="harvest-month-bar printed" style="--bar-height:${printedHeight}%" title="${htmlAttr(`${label}: ${number(row.printed, 0)} impresos`)}"><strong>${number(row.printed, 0)}</strong><i></i></div>
+                    <div class="harvest-month-bar scanned" style="--bar-height:${scannedHeight}%" title="${htmlAttr(`${label}: ${number(row.scanned, 0)} escaneados`)}"><strong>${number(row.scanned, 0)}</strong><i></i></div>
+                  </div>
+                  <span>${escapeHtml(label)}</span>
+                </div>`;
+            }).join("")}
+          </div>
+        </div>` : `<div class="empty">Sin datos mensuales para los filtros seleccionados.</div>`}
+    </article>`;
 }
 
 function classificationOptions(selected) {
@@ -12179,19 +12728,19 @@ function renderFertilizerAnalysis() {
 
 function harvestFilterControls() {
   const crews = ["Todas", ...new Set(uniqueHarvestRecords().map(harvestCrewValue))].sort((a, b) => a === "Todas" ? -1 : b === "Todas" ? 1 : a.localeCompare(b, "es", { numeric: true }));
-  const sdps = ["Todos", ...new Set(uniqueHarvestRecords().map((record) => record.sdp || "Sin SDP"))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : a.localeCompare(b, "es", { numeric: true }));
+  const potreros = ["Todos", ...new Set(uniqueHarvestRecords().map(harvestPotreroValue))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : comparePotrero(a, b));
   if (harvestCrewFilter !== "Todas" && !crews.includes(harvestCrewFilter)) harvestCrewFilter = "Todas";
-  if (harvestSdpFilter !== "Todos" && !sdps.includes(harvestSdpFilter)) harvestSdpFilter = "Todos";
+  if (harvestPotreroFilter !== "Todos" && !potreros.includes(harvestPotreroFilter)) harvestPotreroFilter = "Todos";
   return `
     <div class="harvest-filter-shell harvest-operational-filters">
-      <label class="harvest-date-range">Rango fechas
+      <label class="harvest-date-range">Fecha de escaneo
         <span>
           <input data-harvest-filter="from" type="date" value="${harvestDateFromFilter}" title="Fecha inicio">
           <input data-harvest-filter="to" type="date" value="${harvestDateToFilter}" title="Fecha termino">
         </span>
       </label>
       <label>Cuadrilla<select data-harvest-filter="crew">${crews.map((crew) => `<option value="${htmlAttr(crew)}" ${crew === harvestCrewFilter ? "selected" : ""}>${crew}</option>`).join("")}</select></label>
-      <label>SDP<select data-harvest-filter="sdp">${sdps.map((sdp) => `<option value="${htmlAttr(sdp)}" ${sdp === harvestSdpFilter ? "selected" : ""}>${sdp}</option>`).join("")}</select></label>
+      <label>Potrero<select data-harvest-filter="potrero">${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === harvestPotreroFilter ? "selected" : ""}>${potrero === "Todos" ? "Todos" : escapeHtml(harvestPotreroDisplay(potrero))}</option>`).join("")}</select></label>
       <label>Estado<select data-harvest-filter="status">
         <option value="Todos" ${harvestStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
         <option value="terreno" ${harvestStatusFilter === "terreno" ? "selected" : ""}>En terreno</option>
@@ -13431,10 +13980,20 @@ function wireHarvestFilters() {
   document.querySelectorAll("[data-harvest-filter]").forEach((control) => {
     control.addEventListener("change", (event) => {
       const target = event.target;
-      if (target.dataset.harvestFilter === "from") harvestDateFromFilter = target.value;
-      if (target.dataset.harvestFilter === "to") harvestDateToFilter = target.value;
+      if (target.dataset.harvestFilter === "from") {
+        harvestDateFromFilter = target.value;
+        if (harvestDateFromFilter && harvestDateToFilter && harvestDateFromFilter > harvestDateToFilter) {
+          harvestDateToFilter = harvestDateFromFilter;
+        }
+      }
+      if (target.dataset.harvestFilter === "to") {
+        harvestDateToFilter = target.value;
+        if (harvestDateFromFilter && harvestDateToFilter && harvestDateToFilter < harvestDateFromFilter) {
+          harvestDateFromFilter = harvestDateToFilter;
+        }
+      }
       if (target.dataset.harvestFilter === "crew") harvestCrewFilter = target.value;
-      if (target.dataset.harvestFilter === "sdp") harvestSdpFilter = target.value;
+      if (target.dataset.harvestFilter === "potrero") harvestPotreroFilter = target.value;
       if (target.dataset.harvestFilter === "status") harvestStatusFilter = target.value;
       selectedHarvestBinId = "";
       if (currentView === "harvestMap") refreshHarvestMapView();
@@ -13457,7 +14016,7 @@ function syncHarvestFilterControlValues() {
     if (control.dataset.harvestFilter === "from") control.value = harvestDateFromFilter;
     if (control.dataset.harvestFilter === "to") control.value = harvestDateToFilter;
     if (control.dataset.harvestFilter === "crew") control.value = harvestCrewFilter;
-    if (control.dataset.harvestFilter === "sdp") control.value = harvestSdpFilter;
+    if (control.dataset.harvestFilter === "potrero") control.value = harvestPotreroFilter;
     if (control.dataset.harvestFilter === "status") control.value = harvestStatusFilter;
   });
 }
@@ -13504,23 +14063,31 @@ function renderHarvestMap() {
 function renderHarvestInfo() {
   const records = filteredHarvestRecords();
   const stats = harvestStats(records);
+  const printedStats = harvestPrintedStats();
   const byDay = groupCount(records, (record) => harvestRecordDate(record) || "Sin fecha");
   const byCrew = groupCount(records, harvestCrewValue);
   const byContractor = groupCount(records, (record) => record.contractor || "Sin contratista");
   const byField = groupCount(records, (record) => `${record.field || "Sin cuartel"} / ${record.block || "Sin bloque"}`);
-  const bySdpFieldBlock = groupCount(records, (record) => `${record.sdp || "Sin SDP"} - ${record.sdpField || "Sin potrero SDP"} / ${record.sdpBlock || "Sin bloque SDP"}`);
   const byJornales = harvestBinsPerJornalRows(records);
-  const avgDaily = stats.days.size ? stats.total / stats.days.size : 0;
+  const byCrewDay = harvestBinsPerCrewDayRows(records);
+  const monthlyUsage = harvestPrintedMonthlyRows(records);
+  const avgDaily = stats.days.size ? stats.datedTotal / stats.days.size : 0;
+  const avgCrewDay = harvestAverageBinsPerCrewDay(records);
   views.harvestInfo.innerHTML = `
-    <div class="kpi-grid">
-      ${kpi("Total bines", stats.total, "Bines unicos escaneados")}
+    <div class="kpi-grid harvest-info-kpis">
+      ${kpi("Bines escaneados", number(stats.total, 0), stats.undated ? `${number(stats.undated)} sin fecha` : stats.recoveredDates ? `${number(stats.recoveredDates)} fechas recuperadas` : "Segun filtros aplicados")}
+      ${printedStats.available
+        ? kpi("Impresos desde inicio", number(printedStats.printed, 0), `${number(printedStats.scanned, 0)} escaneados · ${number(printedStats.percentage, 1)}%`)
+        : kpi("Impresos desde inicio", "-", "Datos de impresion no disponibles")}
       ${kpi("Dias activos", stats.days.size, `${number(avgDaily)} bins/dia`)}
+      ${kpi("Prom. cuadrilla/dia", number(avgCrewDay, 1), "Bines por cuadrilla activa")}
       ${kpi("Cuadrillas faltan hoy", stats.missingCrews.length, `${stats.scheduledCrews.size} programadas hoy`)}
       ${kpi("Jornales filtrados", filteredHarvestJornales().length, "Segun rango y cuadrilla")}
     </div>
     <section class="panel">
       <div class="panel-header">
-        <h2>Informacion de cosecha</h2>
+        <h2>Canelillo Harvest App</h2>
+        ${hasRole("admin", "supervisor") ? `<button class="primary-button harvest-crew-schedule-open" type="button" data-action="open-harvest-crew-schedule">Añadir cuadrillas del día</button>` : ""}
       </div>
       <div class="harvest-missing-compact">
         <strong>Sin escaneo hoy</strong>
@@ -13531,10 +14098,11 @@ function renderHarvestInfo() {
       </div>
       ${harvestFilterControls()}
       <div class="harvest-dashboard-grid">
+        ${harvestMonthlyUsageChart(monthlyUsage)}
         ${harvestRanking("Bines por dia", byDay, "Fecha")}
         ${harvestRanking("Ranking por cuadrilla", byCrew, "Cuadrilla")}
+        ${harvestRanking("Promedio diario por cuadrilla", byCrewDay, "Cuadrilla", { decimals: 1 })}
         ${harvestRanking("Ranking por contratista", byContractor, "Contratista")}
-        ${harvestRanking("Detalle SDP / potrero / bloque", bySdpFieldBlock, "SDP / sector")}
         ${harvestRanking("Bines por cuartel/bloque", byField, "Sector")}
         ${harvestRanking("Bines por jornal", byJornales, "Jornal", { decimals: 1 })}
       </div>
@@ -16512,7 +17080,7 @@ function groupCount(records, getKey) {
   records.forEach((record) => {
     const key = getKey(record) || "Sin dato";
     const set = map.get(key) || new Set();
-    set.add(harvestBinKey(record));
+    set.add(harvestBinOccurrenceKey(record));
     map.set(key, set);
   });
   return [...map.entries()].map(([label, bins]) => ({ label, value: bins.size })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "es", { numeric: true }));
@@ -17472,7 +18040,7 @@ async function loadCloudData(options = {}) {
 
   // Cargar solo las tablas que el rol necesita. Esto evita que un bodeguero
   // pierda Bodega/Stock porque RLS bloquee modulos que no debe ver.
-  const [seasons, programs, programProductRows, fields, harvestFieldRows, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, workers, nozzles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
+  const [seasons, programs, programProductRows, fields, harvestFieldRows, products, orders, orderProducts, dispatches, dispatchProducts, stockMovements, vehicles, workers, nozzles, calicatas, irrigationRows, irrigationProgramRows, irrigationObservationRows, evaporationRows, weatherDailyRowsRaw, weatherFrostRows, weatherLatestRows, harvestRecords, harvestPrintedRows, harvestCrewSchedule, harvestJornales, harvestAnalysisRows, harvestExportRows] = await Promise.all([
     loadPlanning ? sbSelect("temporadas", "select=*&order=anio_inicio.desc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programas", "select=*&order=numero_programa.asc") : Promise.resolve(null),
     loadPlanning ? sbSelect("programa_productos", "select=*&order=programa_id.asc,orden.asc").catch((error) => {
@@ -17578,11 +18146,21 @@ async function loadCloudData(options = {}) {
         console.warn("No se pudo cargar la ultima lectura de la estacion climatica", error);
         return [];
       }) : Promise.resolve(null),
-    loadHarvest ? sbSelectAll("registros_trazabilidad", "select=id,tipo_registro,num_bin,codigo_local,contratista,cuadrilla,cuartel,bloque,cuartel_sdp,bloque_sdp,sdp,especie,variedad,fecha_cosecha,fecha_escaneo,patente,conductor_nombre,fecha_despacho_camion,latitud,longitud,fecha_sincronizacion,ultima_sincronizacion&order=id.desc").catch((error) => {
+    loadHarvest ? sbSelectAll("registros_trazabilidad", "select=id,tipo_registro,num_bin,codigo_local,contratista,cuadrilla,cuartel,bloque,cuartel_sdp,bloque_sdp,sdp,especie,variedad,fecha_cosecha,fecha_escaneo,fecha_impresion,patente,conductor_nombre,fecha_despacho_camion,latitud,longitud,fecha_sincronizacion,ultima_sincronizacion&order=id.desc").catch((error) => {
       console.warn("No se pudieron cargar registros de cosecha", error);
       return [];
     }) : Promise.resolve(null),
-    loadHarvest ? sbSelect("v_programacion_cuadrillas_dia", "select=*").catch((error) => {
+    loadHarvest ? sbSelectAll("tarjas_borrador", "select=id,num_bin,codigo_local,fecha_impresion,fecha_cosecha,creado_en,cuadrilla,cuartel,cuartel_sdp&impreso=eq.true&order=id.asc")
+      .then((rows) => {
+        harvestPrintedCloudAvailable = true;
+        return rows;
+      })
+      .catch((error) => {
+        harvestPrintedCloudAvailable = false;
+        console.warn("No se pudo cargar el historial de impresiones", error);
+        return null;
+      }) : Promise.resolve(null),
+    loadHarvest ? sbSelectAll("v_programacion_cuadrillas_dia", "select=*&order=fecha.asc,codigo_cuadrilla.asc").catch((error) => {
       console.warn("No se pudo cargar programacion de cuadrillas", error);
       return [];
     }) : Promise.resolve(null),
@@ -17733,7 +18311,7 @@ async function loadCloudData(options = {}) {
     } : null;
   }
   const mapHarvestRecord = (item, source = "operativo") => {
-    const scanDate = harvestScanDateFromItem(item);
+    const scanDateInfo = harvestScanDateInfoFromItem(item);
     return {
       id: `${source}-${item.id || item.num_bin || item.codigo_local}`,
       source,
@@ -17752,7 +18330,10 @@ async function loadCloudData(options = {}) {
       crop: item.especie || "",
       variety: item.variedad || "",
       harvestDate: item.fecha_cosecha || "",
-      scanDate,
+      scanDate: scanDateInfo.value,
+      scanDateSource: scanDateInfo.source,
+      scanDateRecovered: scanDateInfo.recovered,
+      printedAt: normalizeHarvestScanDateValue(item.fecha_impresion || ""),
       truckPlate: item.patente || "",
       driverName: item.conductor_nombre || "",
       dispatchDate: item.fecha_despacho_camion || "",
@@ -17765,11 +18346,20 @@ async function loadCloudData(options = {}) {
     state.harvestRecords = harvestRecords.map((item) => mapHarvestRecord(item, "operativo"));
     state.harvestOfficialRecords = [];
   }
+  if (Array.isArray(harvestPrintedRows)) {
+    harvestPrintedDraftRows = harvestPrintedRows;
+  } else if (loadHarvest) {
+    harvestPrintedDraftRows = [];
+  }
   if (Array.isArray(harvestCrewSchedule)) {
     state.harvestCrewSchedule = harvestCrewSchedule.map((item) => ({
+      id: item.id,
       date: item.fecha || item.fecha_cosecha || "",
+      contractorId: item.contratista_id || "",
       contractor: item.nombre_empresa || item.contratista || "",
-      crew: item.codigo_cuadrilla || item.cuadrilla || ""
+      crewId: item.cuadrilla_id || "",
+      crew: item.codigo_cuadrilla || item.cuadrilla || "",
+      active: item.activo !== false
     }));
   }
   if (Array.isArray(harvestJornales)) {
@@ -18093,7 +18683,7 @@ function cloudModulesForRealtimeTable(table = "") {
   if (["riego", "programa_riego", "observaciones_riego", "evaporacion_bandeja"].includes(table)) return ["fields", "irrigation"];
   if (table === "estacion_climatica") return ["weather"];
   if (table === "calicatas") return ["fields", "calicatas"];
-  if (table === "registros_trazabilidad") return ["harvest"];
+  if (["registros_trazabilidad", "tarjas_borrador", "programacion_cuadrillas_dia"].includes(table)) return ["harvest"];
   if (table === "cosecha_analisis") return ["harvestAnalysis"];
   if (table === "exportacion_analisis") return ["harvestExport"];
   if (["fertilizante_casetas", "fertilizante_estanques", "fertilizante_estanque_potreros", "fertilizante_productos", "fertilizante_preparaciones", "fertilizante_aplicaciones", "fertilizante_aplicacion_consumos", "fertilizante_lotes", "programa_fertilizante"].includes(table)) return ["fertilizers"];
@@ -18147,6 +18737,8 @@ function startCloudSync() {
     "fertilizante_lotes",
     "programa_fertilizante",
     "registros_trazabilidad",
+    "tarjas_borrador",
+    "programacion_cuadrillas_dia",
     "cosecha_analisis",
     "exportacion_analisis",
     "ordenes_aplicacion",
@@ -19050,7 +19642,7 @@ function clearHarvestMapCache() {
 function harvestMapClusters(records, zoom) {
   if (zoom >= 20) {
     return records.map((record) => ({
-      key: `bin:${harvestBinKey(record)}`,
+      key: `bin:${harvestBinOccurrenceKey(record)}`,
       latitude: record.latitude,
       longitude: record.longitude,
       records: [record]
@@ -23374,6 +23966,22 @@ document.addEventListener("click", async (event) => {
   if (action === "save-harvest-excel-sync") {
     await saveHarvestExcelSyncAccepted();
   }
+  if (action === "open-harvest-crew-schedule") {
+    await openHarvestCrewScheduleDialog();
+  }
+  if (action === "shift-harvest-crew-schedule") {
+    const stateDialog = harvestCrewScheduleDialogState;
+    if (stateDialog) await navigateHarvestCrewScheduleDialog(harvestScheduleShiftDate(stateDialog.startDate, Number(actionTarget.dataset.days) || 0), stateDialog.days);
+  }
+  if (action === "today-harvest-crew-schedule") {
+    await navigateHarvestCrewScheduleDialog(harvestScheduleWeekStart(), harvestCrewScheduleDialogState?.days || 14);
+  }
+  if (action === "close-harvest-crew-schedule") {
+    closeHarvestCrewScheduleDialog();
+  }
+  if (action === "save-harvest-crew-schedule") {
+    await saveHarvestCrewSchedule();
+  }
   if (action === "select-harvest-analysis-species") {
     harvestAnalysisSelectedSpecies = actionTarget.dataset.value || "Todas";
     renderHarvestAnalysis();
@@ -23456,7 +24064,7 @@ document.addEventListener("click", async (event) => {
     harvestDateToFilter = "";
     harvestCrewFilter = "Todas";
     harvestStatusFilter = "Todos";
-    harvestSdpFilter = "Todos";
+    harvestPotreroFilter = "Todos";
     selectedHarvestBinId = "";
     if (currentView === "harvestMap") refreshHarvestMapView();
     if (currentView === "harvestInfo") renderHarvestInfo();

@@ -8591,6 +8591,485 @@ td span,
   margin-top: 16px;
 }
 
+.harvest-monthly-usage-panel {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 16px;
+}
+
+.harvest-monthly-usage-header {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.harvest-monthly-usage-header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.harvest-monthly-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.harvest-monthly-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.harvest-monthly-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.harvest-monthly-legend .printed,
+.harvest-month-bar.printed i {
+  background: #267d9a;
+}
+
+.harvest-monthly-legend .scanned,
+.harvest-month-bar.scanned i {
+  background: #17805e;
+}
+
+.harvest-monthly-chart-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  padding: 8px 2px 4px;
+}
+
+.harvest-monthly-chart {
+  display: grid;
+  grid-template-columns: repeat(var(--harvest-month-count), minmax(82px, 1fr));
+  align-items: end;
+  gap: 8px;
+  min-width: calc(var(--harvest-month-count) * 82px);
+  height: 250px;
+  padding: 12px 8px 2px;
+  border-bottom: 1px solid var(--line);
+  background: repeating-linear-gradient(to top, transparent 0, transparent 54px, rgba(32, 91, 67, 0.08) 55px);
+}
+
+.harvest-month-group {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.harvest-month-group > span {
+  align-self: end;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.harvest-month-bars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(22px, 1fr));
+  align-items: end;
+  gap: 5px;
+  min-height: 0;
+}
+
+.harvest-month-bar {
+  display: grid;
+  grid-template-rows: 22px minmax(0, 1fr);
+  align-items: end;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.harvest-month-bar strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.66rem;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-month-bar i {
+  display: block;
+  width: 100%;
+  height: var(--bar-height);
+  min-height: 0;
+  border-radius: 4px 4px 1px 1px;
+  transition: height 180ms ease;
+}
+
+.harvest-crew-schedule-open {
+  min-height: 36px;
+  padding: 8px 13px;
+  white-space: nowrap;
+}
+
+.harvest-crew-schedule-modal {
+  width: min(1480px, calc(100vw - 20px));
+  max-width: none;
+}
+
+.harvest-crew-schedule-dialog {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: min(780px, calc(100vh - 24px));
+  overflow: hidden;
+  padding: 18px;
+}
+
+.harvest-crew-schedule-head p,
+.harvest-crew-schedule-loading .modal-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.harvest-crew-schedule-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.harvest-crew-schedule-navigation,
+.harvest-crew-schedule-summary {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.harvest-crew-schedule-navigation label {
+  gap: 3px;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.harvest-crew-schedule-navigation input,
+.harvest-crew-schedule-navigation select {
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.harvest-crew-schedule-navigation .icon-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  font-size: 1.25rem;
+}
+
+.harvest-crew-schedule-navigation .secondary-button {
+  min-height: 34px;
+  padding: 6px 11px;
+}
+
+.harvest-crew-schedule-summary {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.harvest-crew-schedule-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 1px solid #c9dfd3;
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.harvest-crew-schedule-summary strong {
+  color: var(--brand);
+  font-size: 0.85rem;
+}
+
+.harvest-crew-schedule-table-wrap {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #bfd9cc;
+  border-radius: 7px;
+  background: #fff;
+  scrollbar-gutter: stable;
+}
+
+.harvest-crew-schedule-matrix {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.harvest-crew-schedule-matrix th,
+.harvest-crew-schedule-matrix td {
+  height: 38px;
+  border-right: 1px solid #d8e6de;
+  border-bottom: 1px solid #d8e6de;
+  padding: 0;
+  text-align: center;
+}
+
+.harvest-crew-schedule-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  width: 54px;
+  min-width: 54px;
+  background: #edf7f1;
+  color: var(--brand-dark);
+}
+
+.harvest-crew-schedule-matrix .harvest-crew-sticky-label {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: 230px;
+  min-width: 230px;
+  max-width: 230px;
+  padding: 7px 10px;
+  background: #fff;
+  text-align: left;
+}
+
+.harvest-crew-schedule-matrix thead .harvest-crew-sticky-label {
+  z-index: 7;
+  background: #e0f1e8;
+  font-size: 0.74rem;
+}
+
+.harvest-schedule-contractor-row .harvest-crew-sticky-label,
+.harvest-schedule-contractor-row td {
+  background: #dcefe5;
+}
+
+.harvest-schedule-contractor-row .harvest-crew-sticky-label {
+  z-index: 3;
+}
+
+.harvest-schedule-contractor-row strong {
+  display: block;
+  overflow: hidden;
+  color: #0f5b44;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-schedule-contractor-row span {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.harvest-schedule-crew-row .harvest-crew-sticky-label span {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harvest-crew-schedule-matrix .is-weekend {
+  background: #edf4fb;
+}
+
+.harvest-crew-schedule-matrix .is-today {
+  box-shadow: inset 2px 0 #e28a13, inset -2px 0 #e28a13;
+}
+
+.harvest-schedule-date-toggle {
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  height: 100%;
+  cursor: pointer;
+  color: inherit;
+}
+
+.harvest-schedule-date-toggle span {
+  font-size: 0.6rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.harvest-schedule-date-toggle strong {
+  font-size: 0.68rem;
+}
+
+.harvest-schedule-date-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+}
+
+.harvest-schedule-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.harvest-schedule-cell input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.harvest-schedule-cell span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #adc8ba;
+  border-radius: 5px;
+  background: #fff;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.harvest-schedule-cell input:checked + span {
+  border-color: #13775a;
+  background: #168461;
+  box-shadow: 0 2px 7px rgba(22, 132, 97, 0.22);
+}
+
+.harvest-schedule-cell input:checked + span::after {
+  content: "✓";
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.harvest-schedule-cell input:focus-visible + span {
+  outline: 3px solid rgba(31, 111, 74, 0.24);
+  outline-offset: 2px;
+}
+
+.harvest-crew-schedule-actions {
+  margin: 0;
+  padding-top: 2px;
+}
+
+.harvest-crew-schedule-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 150px;
+}
+
+.harvest-crew-schedule-loading {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.harvest-crew-schedule-loading-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  min-height: 260px;
+  color: var(--brand);
+}
+
+@media (max-width: 760px) {
+  .harvest-crew-schedule-modal {
+    width: calc(100vw - 8px);
+    max-height: calc(100vh - 8px);
+  }
+
+  .harvest-crew-schedule-dialog {
+    height: calc(100vh - 8px);
+    padding: 10px;
+  }
+
+  .harvest-crew-schedule-toolbar {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .harvest-crew-schedule-summary {
+    justify-content: flex-start;
+  }
+
+  .harvest-crew-schedule-matrix .harvest-crew-sticky-label {
+    width: 158px;
+    min-width: 158px;
+    max-width: 158px;
+  }
+
+  .harvest-crew-schedule-matrix thead th {
+    width: 48px;
+    min-width: 48px;
+  }
+
+  .harvest-crew-schedule-open {
+    width: 100%;
+    white-space: normal;
+  }
+}
+
+#harvestInfo .harvest-info-kpis {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#harvestInfo .harvest-info-kpis .kpi {
+  min-width: 0;
+  padding: 13px;
+}
+
+@media (max-width: 1180px) {
+  #harvestInfo .harvest-info-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  #harvestInfo .harvest-info-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  #harvestInfo .harvest-info-kpis {
+    grid-template-columns: 1fr;
+  }
+}
+
 .harvest-ranking {
   box-shadow: none;
   padding: 14px;
@@ -8617,6 +9096,14 @@ td span,
 
   .harvest-date-range span {
     grid-template-columns: 1fr;
+  }
+
+  .harvest-monthly-usage-header {
+    display: grid;
+  }
+
+  .harvest-monthly-legend {
+    justify-content: flex-start;
   }
 
   .harvest-analytics-bar,

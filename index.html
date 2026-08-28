@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-  <link rel="stylesheet" href="styles.css?v=365-fertilizer-work-species">
+  <link rel="stylesheet" href="styles.css?v=370-harvest-crew-schedule">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -100,7 +100,7 @@
           <button class="nav-group-toggle" type="button" data-action="toggle-harvest-menu" aria-expanded="false"><span class="nav-label">Cosecha</span></button>
           <div class="nav-group" id="harvestMenu">
             <button class="nav-item" data-view="harvestMap" title="Mapa cosecha"><span class="nav-label">Mapa</span></button>
-            <button class="nav-item" data-view="harvestInfo" title="Informacion cosecha"><span class="nav-label">Informacion</span></button>
+            <button class="nav-item" data-view="harvestInfo" title="Canelillo Harvest App"><span class="nav-label">Canelillo Harvest App</span></button>
             <button class="nav-item" data-view="harvestExport" title="Exportacion"><span class="nav-label">Exportacion</span></button>
             <button class="nav-item" data-view="harvestAnalysis" title="Cosecha Analisis"><span class="nav-label">Cosecha Analisis</span></button>
           </div>
@@ -168,6 +168,7 @@
     <dialog id="productDialog" class="modal"></dialog>
     <dialog id="purchaseDialog" class="modal"></dialog>
     <dialog id="harvestProductivityDialog" class="modal"></dialog>
+    <dialog id="harvestCrewScheduleDialog" class="modal harvest-crew-schedule-modal"></dialog>
     <dialog id="authDialog" class="modal"></dialog>
     <dialog id="irrigationProgramDialog" class="modal"></dialog>
     <dialog id="irrigationBaseHoursDialog" class="modal"></dialog>
@@ -182,6 +183,6 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="agricultural-map.js?v=358-calicata-shared-map"></script>
     <script src="index-color-scales.js?v=334-shared-agricultural-map"></script>
-  <script src="app.js?v=365-fertilizer-work-species"></script>
+  <script src="app.js?v=370-harvest-crew-schedule"></script>
   </body>
 </html>
