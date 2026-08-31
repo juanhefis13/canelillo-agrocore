@@ -545,6 +545,7 @@ let fertilizerAnalysisExpandedMonths = new Set();
 let fertilizerAnalysisExpandedDays = new Set();
 let fertilizerWorkSpeciesFilter = "Todas";
 let fertilizerWorkProductFilter = "";
+let fertilizerFolioDeletingId = "";
 let fertilizerCasetaFilter = "Todas";
 let fertilizerPotreroFilter = "Todos";
 let fertilizerStatusFilter = "Todos";
@@ -11720,6 +11721,9 @@ function renderFertilizerFolioMovement(movement) {
 function renderFertilizerFolioCard(row) {
   const status = fertilizerFolioStatus(row);
   const usedPercent = row.initial > 0 ? Math.max(0, Math.min(100, row.consumed / row.initial * 100)) : 0;
+  const canDelete = hasRole("admin", "supervisor", "bodeguero");
+  const hasPreparations = row.preparations.length > 0;
+  const isDeleting = fertilizerFolioDeletingId === row.id;
   return `
     <details class="fertilizer-folio-card status-${status}">
       <summary>
@@ -11737,6 +11741,10 @@ function renderFertilizerFolioCard(row) {
         <span class="fertilizer-folio-expand" aria-hidden="true">+</span>
       </summary>
       <div class="fertilizer-folio-detail">
+        ${canDelete ? `<div class="fertilizer-folio-actions">
+          <button class="danger-button small-button" type="button" data-action="delete-fertilizer-folio" data-id="${htmlAttr(row.id)}" ${hasPreparations || isDeleting ? "disabled" : ""} title="${hasPreparations ? "No se puede eliminar porque ya tiene preparaciones vinculadas" : "Eliminar este folio ingresado por error"}">${isDeleting ? "Eliminando..." : "Eliminar folio"}</button>
+          ${hasPreparations ? `<small>Con preparaciones vinculadas: se conserva para mantener la trazabilidad.</small>` : `<small>Disponible para eliminar mientras no tenga preparaciones.</small>`}
+        </div>` : ""}
         <div class="fertilizer-folio-metadata">
           <div><span>Fecha ingreso</span><strong>${escapeHtml(String(row.fecha || "-").slice(0, 10))}</strong></div>
           <div><span>Caseta</span><strong>${escapeHtml(row.caseta)}</strong></div>
@@ -12294,7 +12302,7 @@ function fertilizerWorkFieldKey(row = {}) {
 
 function buildFertilizerWorkModel(productKey, context, speciesFilter = "Todas") {
   const matchesSpecies = (row) => speciesFilter === "Todas"
-    || fertilizerReportKey(row.species) === fertilizerReportKey(speciesFilter);
+    || fertilizerReportKey(row.species || row.crop) === fertilizerReportKey(speciesFilter);
   const programRows = (fertilizerProgramRows || []).filter((row) =>
     row.month.startsWith(context.year)
     && row.month <= context.month
@@ -12341,6 +12349,15 @@ function buildFertilizerWorkModel(productKey, context, speciesFilter = "Todas") 
     const field = ensureField(row);
     if (!actualByField.has(field.key)) actualByField.set(field.key, []);
     actualByField.get(field.key).push(row);
+  });
+  // Una vez que un potrero pertenece al producto filtrado, la matriz debe
+  // mostrar todos sus bloques activos de campos, incluso si aun no tienen
+  // programa ni aplicaciones registradas.
+  const includedPotreros = new Set([...fields.values()].map((field) => fertilizerReportKey(field.potrero)));
+  fertilizerFields.forEach((field) => {
+    if (!includedPotreros.has(fertilizerReportKey(field.potrero)) || !matchesSpecies(field)) return;
+    const key = fertilizerWorkFieldKey({ ...field, campoId: field.id });
+    if (!fields.has(key)) fields.set(key, { ...field, key });
   });
   const preparation = fertilizerWorkPreparationSummary(productKey, context);
   const grouped = new Map();
@@ -23509,6 +23526,49 @@ async function saveFertilizerLot() {
   }
 }
 
+async function deleteFertilizerFolio(id) {
+  const folio = fertilizerFolioById(id);
+  if (!folio) {
+    showToast("No se encontro el folio seleccionado");
+    return;
+  }
+  if (!hasRole("admin", "supervisor", "bodeguero")) {
+    showToast("Tu rol no permite eliminar folios");
+    return;
+  }
+  if (folio.preparations.length) {
+    showToast("No se puede eliminar: el folio ya tiene preparaciones vinculadas");
+    return;
+  }
+  const label = folio.folio || folio.lote || "seleccionado";
+  if (!confirm(`¿Eliminar el folio ${label} de ${folio.caseta}? Esta accion lo retirara del inventario.`)) return;
+  fertilizerFolioDeletingId = id;
+  if (currentView === "fertilizers") renderFertilizers();
+  try {
+    const linkedPreparations = await sbSelect("fertilizante_preparaciones", `select=id&lote_id=eq.${encodeURIComponent(id)}&limit=1`);
+    if (linkedPreparations.length) {
+      throw new Error("el folio ya tiene preparaciones vinculadas y debe conservarse para trazabilidad");
+    }
+    await sbFetch(`/rest/v1/fertilizante_lotes?id=eq.${encodeURIComponent(id)}&activo=eq.true`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: JSON.stringify({ activo: false, actualizado_en: new Date().toISOString() })
+    });
+    fertilizerRows = null;
+    fertilizerStockRows = [];
+    fertilizerStockLots = [];
+    fertilizerStockError = "";
+    await loadFertilizerRows();
+    if (currentView === "fertilizers") renderFertilizers();
+    showToast(`Folio ${label} eliminado del inventario`);
+  } catch (error) {
+    showToast(`No se pudo eliminar el folio: ${error.message}`);
+  } finally {
+    fertilizerFolioDeletingId = "";
+    if (currentView === "fertilizers" && fertilizerRows) renderFertilizers();
+  }
+}
+
 async function savePurchase() {
   const form = document.getElementById("purchaseForm");
   if (!form.reportValidity()) return;
@@ -24094,6 +24154,9 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "open-fertilizer-lot-dialog") {
     openFertilizerLotDialog();
+  }
+  if (action === "delete-fertilizer-folio") {
+    await deleteFertilizerFolio(id);
   }
   if (action === "open-fertilizer-preparation-dialog") {
     await openFertilizerPreparationDialog();

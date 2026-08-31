@@ -2786,6 +2786,29 @@ td span,
   background: #f7fbf9;
 }
 
+.fertilizer-folio-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 9px;
+}
+
+.fertilizer-folio-actions small {
+  max-width: 380px;
+  color: #657a72;
+  font-size: 0.62rem;
+  font-weight: 750;
+  text-align: right;
+}
+
+.fertilizer-folio-actions .danger-button:disabled {
+  border-color: #d9e1dd;
+  background: #eef2f0;
+  color: #7a8a83;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .fertilizer-folio-metadata {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2824,6 +2847,8 @@ td span,
   .fertilizer-folio-balance { text-align: left; }
   .fertilizer-folio-metadata { grid-template-columns: 1fr; }
   .fertilizer-folio-metadata > div.wide { grid-column: auto; }
+  .fertilizer-folio-actions { align-items: stretch; flex-direction: column-reverse; }
+  .fertilizer-folio-actions small { max-width: none; text-align: left; }
 }
 
 .fertilizer-caseta-grid {
