@@ -13135,9 +13135,9 @@ function pestMonitoringBlockSummaries(records) {
   return summaries;
 }
 
-const PEST_RISK_MAXIMUM = 6;
-const PEST_RISK_BOUNDS = [1, 2, 3, 4, 5, PEST_RISK_MAXIMUM];
-const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#e96b32", "#d9362b"];
+const PEST_RISK_MAXIMUM = 7;
+const PEST_RISK_BOUNDS = [1, 2, 3, 4, 5, 6, PEST_RISK_MAXIMUM];
+const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#e96b32", "#d9362b", "#a91f24"];
 
 function pestMonitoringRiskScale(records) {
   const positives = records
@@ -13169,7 +13169,7 @@ function pestMonitoringLegend(scale) {
   if (!scale.positives) {
     return `<strong>${escapeHtml(pestMonitoringPest)} · sin presencia</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin individuos</div>`;
   }
-  const levelNames = ["", "Muy baja", "Baja", "Moderada", "Media alta", "Alta", "Crítica"];
+  const levelNames = ["", "Muy baja", "Baja", "Moderada", "Media alta", "Alta", "Crítica", "Crítica máxima"];
   const bounds = scale.bounds?.length ? scale.bounds : PEST_RISK_BOUNDS;
   const items = [[PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"]];
   bounds.forEach((upper, index) => {
@@ -13179,7 +13179,7 @@ function pestMonitoringLegend(scale) {
     items.push([PEST_RISK_COLORS[level], `${levelNames[level]} · ${range}`]);
   });
   const cappedNote = scale.observedMaximum > PEST_RISK_MAXIMUM ? ` · observado ${number(scale.observedMaximum, 1)}` : "";
-  return `<strong>${escapeHtml(pestMonitoringPest)} · escala fija 0 a ${PEST_RISK_MAXIMUM}${cappedNote} · 6 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+  return `<strong>${escapeHtml(pestMonitoringPest)} · escala fija 0 a ${PEST_RISK_MAXIMUM}${cappedNote} · 7 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
 }
 
 function pestMonitoringHeatColor(ratio) {
@@ -13190,7 +13190,8 @@ function pestMonitoringHeatColor(ratio) {
     [240, 207, 74],
     [238, 150, 56],
     [233, 107, 50],
-    [217, 54, 43]
+    [217, 54, 43],
+    [169, 31, 36]
   ];
   const position = Math.max(0, Math.min(1, ratio)) * (stops.length - 1);
   const lower = Math.floor(position);
