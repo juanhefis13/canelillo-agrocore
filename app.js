@@ -13135,30 +13135,30 @@ function pestMonitoringBlockSummaries(records) {
   return summaries;
 }
 
-const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#d9362b"];
+const PEST_RISK_MAXIMUM = 6;
+const PEST_RISK_BOUNDS = [1, 2, 3, 4, 5, PEST_RISK_MAXIMUM];
+const PEST_RISK_COLORS = ["#147d64", "#78c98b", "#b8d96b", "#f0cf4a", "#ee9638", "#e96b32", "#d9362b"];
 
 function pestMonitoringRiskScale(records) {
   const positives = records
     .map(pestMonitoringObservedTotal)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
-  const maximum = positives.at(-1) || 0;
-  const bounds = maximum
-    ? [0.2, 0.4, 0.6, 0.8, 1].map((ratio) => maximum * ratio)
-    : [];
   return {
-    bounds,
-    thresholds: bounds.slice(0, -1),
+    bounds: [...PEST_RISK_BOUNDS],
+    thresholds: PEST_RISK_BOUNDS.slice(0, -1),
     minimum: positives[0] || 0,
-    maximum,
+    maximum: PEST_RISK_MAXIMUM,
+    observedMaximum: positives.at(-1) || 0,
     positives: positives.length
   };
 }
 
 function pestMonitoringRiskLevel(value, scale) {
   if (value <= 0) return 0;
-  const maximum = Number(scale.maximum) || value;
-  return Math.max(1, Math.min(5, Math.ceil(value / maximum * 5)));
+  const bounds = scale?.bounds?.length ? scale.bounds : PEST_RISK_BOUNDS;
+  const index = bounds.findIndex((upper) => value <= upper);
+  return index < 0 ? PEST_RISK_COLORS.length - 1 : index + 1;
 }
 
 function pestMonitoringRiskColor(value, scale) {
@@ -13169,16 +13169,17 @@ function pestMonitoringLegend(scale) {
   if (!scale.positives) {
     return `<strong>${escapeHtml(pestMonitoringPest)} · sin presencia</strong><div><span style="background:${PEST_RISK_COLORS[0]}"></span>0 · monitoreado sin individuos</div>`;
   }
-  const levelNames = ["", "Muy baja", "Baja", "Media", "Alta", "Muy alta"];
-  const bounds = scale.bounds?.length ? scale.bounds : [scale.maximum];
+  const levelNames = ["", "Muy baja", "Baja", "Moderada", "Media alta", "Alta", "Crítica"];
+  const bounds = scale.bounds?.length ? scale.bounds : PEST_RISK_BOUNDS;
   const items = [[PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"]];
   bounds.forEach((upper, index) => {
-    const level = Math.min(5, index + 1);
+    const level = Math.min(PEST_RISK_COLORS.length - 1, index + 1);
     const previous = index ? bounds[index - 1] : 0;
     const range = `>${number(previous, 1)} a ${number(upper, 1)}`;
     items.push([PEST_RISK_COLORS[level], `${levelNames[level]} · ${range}`]);
   });
-  return `<strong>${escapeHtml(pestMonitoringPest)} · mín. ${number(scale.minimum, 1)} · máx. ${number(scale.maximum, 1)} · 5 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+  const cappedNote = scale.observedMaximum > PEST_RISK_MAXIMUM ? ` · observado ${number(scale.observedMaximum, 1)}` : "";
+  return `<strong>${escapeHtml(pestMonitoringPest)} · escala fija 0 a ${PEST_RISK_MAXIMUM}${cappedNote} · 6 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
 }
 
 function pestMonitoringHeatColor(ratio) {
@@ -13188,6 +13189,7 @@ function pestMonitoringHeatColor(ratio) {
     [184, 217, 107],
     [240, 207, 74],
     [238, 150, 56],
+    [233, 107, 50],
     [217, 54, 43]
   ];
   const position = Math.max(0, Math.min(1, ratio)) * (stops.length - 1);
