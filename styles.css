@@ -17111,6 +17111,7 @@ body {
 }
 
 .pest-kpis {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -17316,7 +17317,7 @@ body {
 
 .pest-coverage-table th:first-child,
 .pest-coverage-table td:first-child {
-  width: 52%;
+  width: 42%;
   text-align: left;
 }
 

@@ -1724,6 +1724,12 @@ function getOperator(id) {
   return state.operators.find((operator) => operator.id === id)?.name || String(id);
 }
 
+function dispatchOperatorName(dispatch) {
+  if (!dispatch) return "-";
+  if (dispatch.operatorId) return getOperator(dispatch.operatorId);
+  return dispatch.operatorNameOrigin || "-";
+}
+
 function getEquipment(id) {
   return state.equipment.find((item) => item.id === id)?.code || "Sin equipo";
 }
@@ -12792,6 +12798,7 @@ function mapSupabasePestMonitoringRecord(row) {
     pest: row.tipo_plaga || "",
     species: row.especie || "",
     variety: row.variedad || "",
+    hectares: Number(row.hectareas) || 0,
     potrero: row.potrero || "Sin potrero",
     canonicalPotrero: row.potrero || "Sin potrero",
     potreroNormalized: Boolean(row.campo_normalizado),
@@ -12831,7 +12838,7 @@ function normalizePestMonitoringField(record) {
 async function loadPestMonitoringFromSupabase() {
   if (!supabaseSession) throw new Error("Se requiere una sesion de Supabase");
   const select = [
-    "fecha", "tipo_plaga", "potrero", "bloque", "especie", "variedad", "campo_normalizado", "numero_arbol",
+    "fecha", "tipo_plaga", "potrero", "bloque", "especie", "variedad", "hectareas", "campo_normalizado", "numero_arbol",
     "orden_monitoreo", "encontrado_en", "total_calculado", "huevos", "ninfas_1",
     "ninfas_2", "ninfas_3", "adultos", "larvas", "pupas", "longitud", "latitud", "id"
   ].join(",");
@@ -12883,6 +12890,7 @@ function enrichPestMonitoringFields(records) {
     const field = fields.get(pestMonitoringBlockKey(record));
     record.species = record.species || field?.crop || "Sin especie";
     record.variety = record.variety || field?.variety || "";
+    record.hectares = Number(record.hectares) || Number(field?.hectares) || 0;
   });
   return records;
 }
@@ -13013,10 +13021,11 @@ function pestMonitoringEggNymphTotal(record) {
 }
 
 function pestMonitoringObservedTotal(record) {
-  return pestMonitoringEggNymphTotal(record)
+  const stageSum = pestMonitoringEggNymphTotal(record)
     + (Number(record.adults) || 0)
     + (Number(record.larvae) || 0)
     + (Number(record.pupae) || 0);
+  return Math.max(stageSum, Number(record.stageTotal) || 0);
 }
 
 function pestMonitoringFilteredRecords({ includePest = true } = {}) {
@@ -13104,6 +13113,8 @@ function pestMonitoringBlockSummaries(records) {
       excelBlocks: new Set(),
       samples: 0,
       positives: 0,
+      hectares: 0,
+      affectedHectares: 0,
       total: 0,
       eggNymphTotal: 0,
       latest: "",
@@ -13115,6 +13126,7 @@ function pestMonitoringBlockSummaries(records) {
     };
     const observedTotal = pestMonitoringObservedTotal(record);
     summary.samples += 1;
+    summary.hectares = Math.max(summary.hectares, Number(record.hectares) || 0);
     summary.total += observedTotal;
     summary.eggNymphTotal += pestMonitoringEggNymphTotal(record);
     if (observedTotal > 0) summary.positives += 1;
@@ -13131,6 +13143,7 @@ function pestMonitoringBlockSummaries(records) {
     summary.block = [...summary.excelBlocks].sort((a, b) => a.localeCompare(b, "es", { numeric: true })).join(", ");
     summary.incidence = summary.samples ? summary.positives / summary.samples * 100 : 0;
     summary.intensity = summary.samples ? summary.total / summary.samples : 0;
+    summary.affectedHectares = summary.hectares * summary.incidence / 100;
   });
   return summaries;
 }
@@ -13144,11 +13157,14 @@ function pestMonitoringRiskScale(records) {
     .map(pestMonitoringObservedTotal)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
+  const pestName = pestMonitoringPest !== "Todas" ? pestMonitoringPest : records[0]?.pest || "";
+  const maximum = pestName.trim().toLocaleLowerCase("es") === "escama" ? 6 : PEST_RISK_MAXIMUM;
+  const bounds = Array.from({ length: maximum }, (_, index) => index + 1);
   return {
-    bounds: [...PEST_RISK_BOUNDS],
-    thresholds: PEST_RISK_BOUNDS.slice(0, -1),
+    bounds,
+    thresholds: bounds.slice(0, -1),
     minimum: positives[0] || 0,
-    maximum: PEST_RISK_MAXIMUM,
+    maximum,
     observedMaximum: positives.at(-1) || 0,
     positives: positives.length
   };
@@ -13156,6 +13172,13 @@ function pestMonitoringRiskScale(records) {
 
 function pestMonitoringRiskLevel(value, scale) {
   if (value <= 0) return 0;
+  const maximum = Number(scale?.maximum) || 0;
+  if (maximum > 0) {
+    return Math.max(1, Math.min(
+      PEST_RISK_COLORS.length - 1,
+      Math.ceil(value / maximum * (PEST_RISK_COLORS.length - 1))
+    ));
+  }
   const bounds = scale?.bounds?.length ? scale.bounds : PEST_RISK_BOUNDS;
   const index = bounds.findIndex((upper) => value <= upper);
   return index < 0 ? PEST_RISK_COLORS.length - 1 : index + 1;
@@ -13173,13 +13196,13 @@ function pestMonitoringLegend(scale) {
   const bounds = scale.bounds?.length ? scale.bounds : PEST_RISK_BOUNDS;
   const items = [[PEST_RISK_COLORS[0], "0 · monitoreado sin presencia"]];
   bounds.forEach((upper, index) => {
-    const level = Math.min(PEST_RISK_COLORS.length - 1, index + 1);
+    const level = pestMonitoringRiskLevel(upper, scale);
     const previous = index ? bounds[index - 1] : 0;
     const range = `>${number(previous, 1)} a ${number(upper, 1)}`;
     items.push([PEST_RISK_COLORS[level], `${levelNames[level]} · ${range}`]);
   });
-  const cappedNote = scale.observedMaximum > PEST_RISK_MAXIMUM ? ` · observado ${number(scale.observedMaximum, 1)}` : "";
-  return `<strong>${escapeHtml(pestMonitoringPest)} · escala fija 0 a ${PEST_RISK_MAXIMUM}${cappedNote} · 7 tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
+  const cappedNote = scale.observedMaximum > scale.maximum ? ` · observado ${number(scale.observedMaximum, 1)}` : "";
+  return `<strong>${escapeHtml(pestMonitoringPest)} · escala fija 0 a ${scale.maximum}${cappedNote} · ${bounds.length} tramos</strong>${items.map(([color, label]) => `<div><span style="background:${color}"></span>${label}</div>`).join("")}`;
 }
 
 function pestMonitoringHeatColor(ratio) {
@@ -13366,7 +13389,14 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
         const risk = pestMonitoringRiskLevel(point.weight, this.scale) / (PEST_RISK_COLORS.length - 1);
         const blockSources = sourcesByBlock.get(point.key) || new Map();
         const sourceKey = `${centerX}:${centerY}`;
-        const source = blockSources.get(sourceKey) || { centerX, centerY, riskTotal: 0, count: 0 };
+        const source = blockSources.get(sourceKey) || {
+          centerX,
+          centerY,
+          riskMaximum: 0,
+          riskTotal: 0,
+          count: 0
+        };
+        source.riskMaximum = Math.max(source.riskMaximum, risk);
         source.riskTotal += risk;
         source.count += 1;
         blockSources.set(sourceKey, source);
@@ -13405,13 +13435,16 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
         const image = surfaceContext.createImageData(localWidth, localHeight);
         const sourceList = [...sources.values()].map((source) => ({
           ...source,
-          risk: source.riskTotal / source.count
+          risk: source.riskMaximum,
+          density: Math.min(1, source.riskTotal)
         }));
-        // IDW extends sparse samples across the whole block without circular gaps.
+        const densityRadiusSquared = Math.pow(smoothingRadius * 3.25, 2);
+        // IDW fills the block; the local density term preserves and accumulates nearby detections.
         for (let gridY = minimumY; gridY <= maximumY; gridY += 1) {
           for (let gridX = minimumX; gridX <= maximumX; gridX += 1) {
             let weightTotal = 0;
             let riskTotal = 0;
+            let densityRisk = 0;
             for (const source of sourceList) {
               const deltaX = gridX - source.centerX;
               const deltaY = gridY - source.centerY;
@@ -13419,9 +13452,14 @@ function createPestMonitoringHeatOverlay(maps, map, blockMasks = new Map()) {
               const influence = 1 / Math.pow(distanceSquared + smoothingRadius * smoothingRadius, distancePower);
               weightTotal += influence;
               riskTotal += source.risk * influence;
+              if (source.density > 0 && distanceSquared <= densityRadiusSquared) {
+                densityRisk += source.density * Math.exp(
+                  -distanceSquared / (2 * smoothingRadius * smoothingRadius)
+                );
+              }
             }
             if (!weightTotal) continue;
-            const riskRatio = Math.max(0, Math.min(1, riskTotal / weightTotal));
+            const riskRatio = Math.max(0, Math.min(1, Math.max(riskTotal / weightTotal, densityRisk)));
             const [red, green, blue] = pestMonitoringHeatColor(riskRatio);
             const pixelIndex = ((gridY - minimumY) * localWidth + gridX - minimumX) * 4;
             image.data[pixelIndex] = red;
@@ -13515,23 +13553,27 @@ function pestMonitoringKpis(records, summaries) {
   const total = records.reduce((sum, record) => sum + pestMonitoringObservedTotal(record), 0);
   const intensity = records.length ? total / records.length : 0;
   const affectedBlocks = [...summaries.values()].filter((summary) => summary.positives > 0).length;
+  const monitoredHectares = [...summaries.values()].reduce((sum, summary) => sum + summary.hectares, 0);
+  const affectedHectares = [...summaries.values()].reduce((sum, summary) => sum + summary.affectedHectares, 0);
   return `
     ${kpi("Monitoreos", records.length, "Registros del filtro")}
     ${kpi("Presencia", `${number(incidence, 1)}%`, `${positives} observaciones positivas`)}
     ${kpi("Carga observada", number(total, 0), `${number(intensity, 2)} por monitoreo`)}
     ${kpi("Bloques con presencia", affectedBlocks, `${summaries.size} bloques monitoreados`)}
+    ${kpi("Superficie afectada est.", `${number(affectedHectares, 1)} / ${number(monitoredHectares, 1)} ha`, "Proporcion estimada segun monitoreos positivos")}
   `;
 }
 
 function pestMonitoringCoverageRows(summaries, totalRecords) {
   const rows = [...summaries.values()].sort((a, b) => b.samples - a.samples || b.incidence - a.incidence || comparePotrero(a.potrero, b.potrero));
-  if (!rows.length) return `<tr><td colspan="4"><div class="empty-state compact"><strong>Sin datos</strong><span>Ajusta los filtros.</span></div></td></tr>`;
+  if (!rows.length) return `<tr><td colspan="5"><div class="empty-state compact"><strong>Sin datos</strong><span>Ajusta los filtros.</span></div></td></tr>`;
   return rows.map((summary) => `
     <tr>
       <td><button type="button" data-pest-block-key="${htmlAttr(summary.key)}">${escapeHtml(potreroLabel(summary.potrero))} <span>B${escapeHtml(summary.block || "-")}</span></button></td>
       <td>${summary.samples}</td>
       <td>${number(totalRecords ? summary.samples / totalRecords * 100 : 0, 1)}%</td>
       <td><strong>${number(summary.incidence, 1)}%</strong></td>
+      <td><strong>${summary.hectares ? `${number(summary.affectedHectares, 1)} / ${number(summary.hectares, 1)}` : "-"}</strong></td>
     </tr>
   `).join("");
 }
@@ -13698,10 +13740,11 @@ function renderPestMonitoring() {
           <div class="pest-coverage-explainer">
             <span><strong>Cobertura</strong> = registros del bloque respecto del total filtrado.</span>
             <span><strong>Presencia</strong> = monitoreos con individuos respecto de los realizados en ese bloque.</span>
+            <span><strong>Ha estimadas</strong> = hectareas del bloque multiplicadas por su porcentaje de presencia.</span>
           </div>
           <div class="pest-coverage-wrap">
             <table class="pest-coverage-table">
-              <thead><tr><th>Potrero / bloque</th><th>Reg.</th><th>% cobertura</th><th>% presencia</th></tr></thead>
+              <thead><tr><th>Potrero / bloque</th><th>Reg.</th><th>% cobertura</th><th>% presencia</th><th>Ha est.</th></tr></thead>
               <tbody id="pestMonitoringCoverage"></tbody>
             </table>
           </div>
@@ -13983,6 +14026,7 @@ function showPestMonitoringBlockInfo(key, position, summaries, maps) {
       <div><span>Monitoreos</span><b>${summary.samples}</b></div>
       <div><span>Positivos</span><b>${summary.positives}</b></div>
       <div><span>Incidencia</span><b>${number(summary.incidence, 1)}%</b></div>
+      <div><span>Superficie afectada est.</span><b>${summary.hectares ? `${number(summary.affectedHectares, 1)} / ${number(summary.hectares, 1)} ha` : "-"}</b></div>
       <div><span>Carga total</span><b>${number(summary.total, 0)}</b></div>
       <div><span>Total huevos + ninfas</span><b>${number(summary.eggNymphTotal, 0)}</b></div>
       <div><span>Arboles registrados</span><b>${summary.trees.size}</b></div>
@@ -18628,6 +18672,7 @@ async function loadCloudData(options = {}) {
       tractorCode: dispatch.codigo_tractor || dispatch.tractor || dispatch.tractor_code || "",
       machineCode: dispatch.codigo_maquina || dispatch.maquina || dispatch.machine_code || "",
       operatorId: dispatch.aplicador_id || dispatch.aplicador || dispatch.operator_id || "",
+      operatorNameOrigin: dispatch.aplicador_nombre_origen || "",
       note: dispatch.nota,
       products: Object.fromEntries((dispatchProductsByDispatch[dispatch.id] || []).map((item) => [item.producto_id, Number(item.cantidad) || 0]))
     })),
@@ -19413,7 +19458,7 @@ function warehouseDispatchRows(order) {
       <td data-label="Mojamiento">${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)} L</td>
       <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
       <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
-      <td data-label="Aplicador">${dispatch.operatorId ? getOperator(dispatch.operatorId) : "-"}</td>
+      <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
       <td data-label="Accion"><div class="dispatch-row-actions"><button class="secondary-button small-button" type="button" data-action="edit-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Modificar</button><button class="danger-button small-button" type="button" data-action="delete-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Borrar</button></div></td>
     </tr>
   `).join("");
@@ -20598,7 +20643,7 @@ function reportWaterByOperator(orders) {
   const grouped = {};
   orders.forEach((order) => {
     (order.dispatches || []).forEach((dispatch) => {
-      const operatorKey = dispatch.operatorId || "Sin asignar";
+      const operatorKey = dispatch.operatorId || dispatch.operatorNameOrigin || "Sin asignar";
       const sign = dispatch.type === "devolucion" ? -1 : 1;
       grouped[operatorKey] ||= { id: operatorKey, label: getOperator(operatorKey), water: 0, count: 0 };
       grouped[operatorKey].water += sign * (Number(dispatch.liters) || 0);
@@ -21787,7 +21832,7 @@ function dispatchInfoRows(order) {
         <td data-label="Mojamiento">${number(dispatch.liters || 0, 0)} L</td>
         <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
         <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
-        <td data-label="Aplicador">${dispatch.operatorId ? getOperator(dispatch.operatorId) : "-"}</td>
+        <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
         <td data-label="Productos">${products}</td>
       </tr>
     `;
@@ -22442,7 +22487,7 @@ function exportExcel() {
       if (!productEntries.length) {
         dispatchRows.push([
           order.number, status, index + 1, dispatch.type === "devolucion" ? "Devolucion" : "Salida", dispatch.date || "", dispatchDisplayTime(dispatch),
-          dispatch.liters || 0, "", "", 0, 0, 0, dispatch.tractorCode || "", dispatch.machineCode || "", dispatch.operatorId ? getOperator(dispatch.operatorId) : "", dispatch.note || ""
+          dispatch.liters || 0, "", "", 0, 0, 0, dispatch.tractorCode || "", dispatch.machineCode || "", dispatchOperatorName(dispatch), dispatch.note || ""
         ]);
       }
 
@@ -22455,14 +22500,14 @@ function exportExcel() {
         dispatchRows.push([
           order.number, status, index + 1, dispatch.type === "devolucion" ? "Devolucion" : "Salida", dispatch.date || "", dispatchDisplayTime(dispatch),
           dispatch.liters || 0, product.name || "", product.unit || "", quantity, cost, quantity * cost,
-          dispatch.tractorCode || "", dispatch.machineCode || "", dispatch.operatorId ? getOperator(dispatch.operatorId) : "", dispatch.note || ""
+          dispatch.tractorCode || "", dispatch.machineCode || "", dispatchOperatorName(dispatch), dispatch.note || ""
         ]);
       });
 
       dispatchSummaryRows.push([
         order.number, index + 1, dispatch.type === "devolucion" ? "Devolucion" : "Salida", dispatch.date || "", dispatchDisplayTime(dispatch),
         dispatch.liters || 0, dispatchProductsText(order, dispatch), dispatchQuantityTotal, dispatchCostTotal,
-        dispatch.tractorCode || "", dispatch.machineCode || "", dispatch.operatorId ? getOperator(dispatch.operatorId) : "", dispatch.note || ""
+        dispatch.tractorCode || "", dispatch.machineCode || "", dispatchOperatorName(dispatch), dispatch.note || ""
       ]);
     });
   });
@@ -22904,7 +22949,7 @@ async function downloadApplicationOrderPdf(orderId) {
         appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
         dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
         dispatch || tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch || tank ? `${isReturn ? "-" : ""}${number(processLiters, 0)}` : "",
-        dispatch?.operatorId ? getOperator(dispatch.operatorId) : "-", tank?.tractorCode || dispatch?.tractorCode || "-",
+        dispatchOperatorName(dispatch), tank?.tractorCode || dispatch?.tractorCode || "-",
         tank?.machineCode || dispatch?.machineCode || "-", dispatch ? applicationOrderTemperatureLabel(dispatch, temperatureReadings) : "-"
       ];
     });
