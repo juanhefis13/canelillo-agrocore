@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-  <link rel="stylesheet" href="styles.css?v=380-pest-area-estimate">
+  <link rel="stylesheet" href="styles.css?v=384-informaticos-dialogs">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -88,6 +88,7 @@
             <button class="nav-item" data-view="fertilizerWork" title="Trabajo fertilizante"><span class="nav-label">Trabajo fertilizante</span></button>
           </div>
           <button class="nav-item" data-view="pestMonitoring" title="Monitoreo de plagas"><span class="nav-label">Monitoreo de plagas</span></button>
+          <button class="nav-item" data-view="informatics" title="Informáticos"><span class="nav-label">Informáticos</span></button>
           <button class="nav-group-toggle" type="button" data-action="toggle-applications-menu" aria-expanded="false"><span class="nav-label">Aplicaciones</span></button>
           <div class="nav-group" id="applicationsMenu">
             <button class="nav-item" data-view="applicationDashboard" title="Panel principal"><span class="nav-label">Panel principal</span></button>
@@ -141,6 +142,7 @@
         <section id="fertilizerAnalysis" class="view"></section>
         <section id="fertilizerWork" class="view"></section>
         <section id="pestMonitoring" class="view"></section>
+        <section id="informatics" class="view"></section>
         <section id="applicationDashboard" class="view"></section>
         <section id="program" class="view"></section>
         <section id="manager" class="view"></section>
@@ -169,6 +171,8 @@
     <dialog id="purchaseDialog" class="modal"></dialog>
     <dialog id="harvestProductivityDialog" class="modal"></dialog>
     <dialog id="harvestCrewScheduleDialog" class="modal harvest-crew-schedule-modal"></dialog>
+    <dialog id="informaticsTaskDialog" class="modal informatics-task-dialog"></dialog>
+    <dialog id="informaticsStaffDialog" class="modal informatics-staff-dialog"></dialog>
     <dialog id="authDialog" class="modal"></dialog>
     <dialog id="irrigationProgramDialog" class="modal"></dialog>
     <dialog id="irrigationBaseHoursDialog" class="modal"></dialog>
@@ -183,6 +187,6 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="agricultural-map.js?v=358-calicata-shared-map"></script>
     <script src="index-color-scales.js?v=334-shared-agricultural-map"></script>
-  <script src="app.js?v=380-pest-area-estimate"></script>
+  <script src="app.js?v=384-informaticos-dialogs"></script>
   </body>
 </html>

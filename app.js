@@ -571,6 +571,15 @@ let weatherStationMonth = "Todos";
 let weatherStationView = "heladas";
 let weatherStationCloudAvailable = true;
 let weatherStationImportPreview = null;
+let informaticsPeople = null;
+let informaticsTasks = null;
+let informaticsEntries = null;
+let informaticsLoading = false;
+let informaticsLoadError = "";
+let informaticsSelectedDate = todayChileIso();
+let informaticsPersonFilter = "Todos";
+let informaticsStatusFilter = "Todos";
+let informaticsDialogContext = null;
 let irrigationEvaporationLoadedMonths = new Set();
 let irrigationEvaporationLoadingMonths = new Set();
 let irrigationCloudLoadedMonths = new Set();
@@ -626,6 +635,7 @@ const views = {
   fertilizerAnalysis: document.getElementById("fertilizerAnalysis"),
   fertilizerWork: document.getElementById("fertilizerWork"),
   pestMonitoring: document.getElementById("pestMonitoring"),
+  informatics: document.getElementById("informatics"),
   applicationDashboard: document.getElementById("applicationDashboard"),
   program: document.getElementById("program"),
   manager: document.getElementById("manager"),
@@ -650,6 +660,7 @@ const titles = {
   fertilizerAnalysis: "Fertilizante analisis",
   fertilizerWork: "Trabajo fertilizante",
   pestMonitoring: "Monitoreo de plagas",
+  informatics: "Informáticos",
   applicationDashboard: "Panel principal de aplicaciones",
   program: "Programa de aplicaciones",
   manager: "Panel supervisor encargado",
@@ -1220,8 +1231,8 @@ function currentUserRole() {
 function roleCanAccessView(role, view) {
   const normalized = normalizeRole(role);
   const permissions = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "informatics", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "informatics", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis", "orders", "execution", "masters"],
     bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "warehouse", "inventory", "prices"],
     operador: ["execution"],
     lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
@@ -1239,8 +1250,8 @@ function defaultViewForRole(role) {
 function visibleViewsForRole(role) {
   const normalized = normalizeRole(role);
   const viewsByRole = {
-    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
-    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    admin: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "informatics", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
+    supervisor: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "informatics", "applicationDashboard", "program", "manager", "warehouse", "inventory", "prices", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"],
     bodeguero: ["dashboard", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "warehouse", "inventory", "prices"],
     operador: ["execution"],
     lectura: ["dashboard", "irrigation", "calicatas", "fertilizers", "fertilizerAnalysis", "fertilizerWork", "pestMonitoring", "reports", "harvestMap", "harvestInfo", "harvestExport", "harvestAnalysis"]
@@ -7751,6 +7762,7 @@ async function logoutSupabase() {
   });
   if (CLOUD_ONLY_MODE) localStorage.removeItem(STORAGE_KEY);
   resetCloudModuleCache();
+  resetInformaticsData();
 
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === currentView));
@@ -7805,6 +7817,9 @@ function switchView(view) {
     return;
   }
   render();
+  if (view === "informatics" && informaticsPeople) {
+    loadInformaticsData({ force: true }).catch((error) => console.warn("No se pudo refrescar Informáticos", error));
+  }
   ensureCloudDataForView(view).catch((error) => console.warn("No se pudo refrescar modulo", view, error));
 }
 
@@ -7817,6 +7832,7 @@ function render() {
     fertilizerAnalysis: renderFertilizerAnalysis,
     fertilizerWork: renderFertilizerWork,
     pestMonitoring: renderPestMonitoring,
+    informatics: renderInformatics,
     applicationDashboard: renderApplicationDashboard,
     program: renderProgram,
     manager: renderManager,
@@ -18800,6 +18816,9 @@ function startCloudSync() {
     "estacion_climatica",
     "monitoreo_plagas",
     "monitoreo_arboles",
+    "informaticos_personas",
+    "informaticos_labores",
+    "informaticos_labor_registros",
     "fertilizante_casetas",
     "fertilizante_estanques",
     "fertilizante_estanque_potreros",
@@ -18853,6 +18872,11 @@ function startCloudSync() {
             pestMonitoringTreeLoadError = "";
             pestMonitoringTreeDataSource = "";
             if (currentView === "pestMonitoring") renderPestMonitoring();
+            return;
+          }
+          if (table.startsWith("informaticos_")) {
+            resetInformaticsData();
+            if (currentView === "informatics" && !hasOpenModal()) loadInformaticsData({ force: true });
             return;
           }
           if (table.startsWith("fertilizante_") || table === "programa_fertilizante") {
@@ -23894,6 +23918,683 @@ function importData(event) {
   };
   reader.readAsText(file);
 }
+
+function informaticsIsoDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function informaticsShiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + Number(days || 0));
+  return informaticsIsoDate(date);
+}
+
+function informaticsWeekStart(value = informaticsSelectedDate) {
+  const date = new Date(`${value || todayChileIso()}T12:00:00`);
+  const offset = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - offset);
+  return informaticsIsoDate(date);
+}
+
+function informaticsWeekDays(value = informaticsSelectedDate) {
+  const start = informaticsWeekStart(value);
+  return Array.from({ length: 7 }, (_, index) => informaticsShiftDate(start, index));
+}
+
+function informaticsDateLabel(value, options = {}) {
+  const date = new Date(`${value}T12:00:00`);
+  return new Intl.DateTimeFormat("es-CL", options).format(date);
+}
+
+function informaticsTimeMinutes(value = "") {
+  const [hours, minutes] = String(value).slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+  return hours * 60 + minutes;
+}
+
+function informaticsEntryMinutes(entry = {}) {
+  return Math.max(0, informaticsTimeMinutes(entry.hora_fin) - informaticsTimeMinutes(entry.hora_inicio));
+}
+
+function informaticsDurationLabel(minutes, compact = false) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (compact) return rest ? `${hours} h ${rest} min` : `${hours} h`;
+  if (!hours) return `${rest} minutos`;
+  return rest ? `${hours} horas ${rest} minutos` : `${hours} horas`;
+}
+
+function informaticsCalendarDays(start, end) {
+  if (!start || !end) return 0;
+  const first = new Date(`${start}T12:00:00`);
+  const last = new Date(`${end}T12:00:00`);
+  return Math.max(1, Math.round((last - first) / 86400000) + 1);
+}
+
+function informaticsUserName() {
+  return currentProfile?.full_name
+    || currentProfile?.nombre_completo
+    || supabaseSession?.user?.email
+    || "Usuario AgroCore";
+}
+
+function informaticsPersonName(id) {
+  return informaticsPeople?.find((person) => person.id === id)?.nombre || "Sin informático";
+}
+
+function informaticsTaskById(id) {
+  return informaticsTasks?.find((task) => task.id === id) || null;
+}
+
+function informaticsEntriesForTask(taskId) {
+  return (informaticsEntries || []).filter((entry) => entry.labor_id === taskId);
+}
+
+function informaticsTaskMetrics(task, reportEnd = todayChileIso()) {
+  const entries = informaticsEntriesForTask(task.id)
+    .filter((entry) => !reportEnd || entry.fecha <= reportEnd);
+  const minutes = entries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+  const workDays = new Set(entries.map((entry) => entry.fecha)).size;
+  const lastEntryDate = [...entries].map((entry) => entry.fecha).sort().at(-1) || task.fecha_inicio;
+  const resolvedByReport = task.estado === "resuelta"
+    && task.fecha_resuelta
+    && (!reportEnd || task.fecha_resuelta <= reportEnd);
+  const end = resolvedByReport
+    ? task.fecha_resuelta
+    : (reportEnd || lastEntryDate);
+  return {
+    minutes,
+    workDays,
+    calendarDays: informaticsCalendarDays(task.fecha_inicio, end),
+    lastEntryDate,
+    resolvedByReport
+  };
+}
+
+function informaticsFilteredTasks() {
+  return (informaticsTasks || []).filter((task) => {
+    if (informaticsPersonFilter !== "Todos" && task.informatico_id !== informaticsPersonFilter) return false;
+    if (informaticsStatusFilter !== "Todos" && task.estado !== informaticsStatusFilter) return false;
+    return true;
+  });
+}
+
+async function loadInformaticsData({ force = false } = {}) {
+  if (!supabaseSession || informaticsLoading) return;
+  if (!force && informaticsPeople && informaticsTasks && informaticsEntries) return;
+  informaticsLoading = true;
+  informaticsLoadError = "";
+  if (currentView === "informatics") renderInformatics();
+  try {
+    const [people, tasks, entries] = await Promise.all([
+      sbSelectAll("informaticos_personas", "select=id,usuario_id,nombre,activo,creado_en,actualizado_en&order=activo.desc,nombre.asc", 1000),
+      sbSelectAll("informaticos_labores", "select=*&order=fecha_inicio.desc,creado_en.desc", 5000),
+      sbSelectAll("informaticos_labor_registros", "select=*&order=fecha.asc,hora_inicio.asc", 10000)
+    ]);
+    informaticsPeople = people || [];
+    informaticsTasks = tasks || [];
+    informaticsEntries = entries || [];
+  } catch (error) {
+    console.error("No se pudo cargar Informáticos", error);
+    informaticsLoadError = error.message || "No se pudo consultar el módulo";
+  } finally {
+    informaticsLoading = false;
+    if (currentView === "informatics") renderInformatics();
+  }
+}
+
+function resetInformaticsData() {
+  informaticsPeople = null;
+  informaticsTasks = null;
+  informaticsEntries = null;
+  informaticsLoadError = "";
+  informaticsLoading = false;
+}
+
+function informaticsPersonOptions(selected = "", includeAll = false) {
+  const active = (informaticsPeople || [])
+    .filter((person) => person.activo !== false || person.id === selected)
+    .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { sensitivity: "base" }));
+  return `${includeAll ? `<option value="Todos" ${selected === "Todos" ? "selected" : ""}>Todos los informáticos</option>` : `<option value="">Seleccionar informático</option>`}${active.map((person) => `
+    <option value="${htmlAttr(person.id)}" ${person.id === selected ? "selected" : ""}>${escapeHtml(person.nombre)}</option>
+  `).join("")}`;
+}
+
+function informaticsEntryCard(entry, task) {
+  const canContinue = task.estado !== "resuelta";
+  return `
+    <article class="informatics-entry-card ${task.estado === "resuelta" ? "is-resolved" : "is-pending"}">
+      <div class="informatics-entry-time">
+        <strong>${escapeHtml(String(entry.hora_inicio || "").slice(0, 5))} - ${escapeHtml(String(entry.hora_fin || "").slice(0, 5))}</strong>
+        <span>${escapeHtml(informaticsDurationLabel(informaticsEntryMinutes(entry), true))}</span>
+      </div>
+      <div class="informatics-entry-copy">
+        <span class="informatics-status ${task.estado}">${task.estado === "resuelta" ? "Resuelta" : "Pendiente"}</span>
+        <strong title="${htmlAttr(task.labor)}">${escapeHtml(task.labor)}</strong>
+        <small>${escapeHtml(informaticsPersonName(task.informatico_id))}</small>
+        ${entry.detalle ? `<p>${escapeHtml(entry.detalle)}</p>` : ""}
+      </div>
+      <div class="informatics-entry-actions">
+        <button type="button" class="icon-action" data-action="edit-informatics-entry" data-entry-id="${htmlAttr(entry.id)}" title="Editar registro" aria-label="Editar registro">Editar</button>
+        ${canContinue ? `<button type="button" class="icon-action primary" data-action="continue-informatics-task" data-task-id="${htmlAttr(task.id)}" data-date="${htmlAttr(entry.fecha)}" title="Añadir otra jornada">Continuar</button>` : ""}
+      </div>
+    </article>`;
+}
+
+function renderInformaticsDay(date, tasks) {
+  const entries = (informaticsEntries || [])
+    .filter((entry) => entry.fecha === date)
+    .map((entry) => ({ entry, task: tasks.find((task) => task.id === entry.labor_id) }))
+    .filter((item) => item.task)
+    .sort((a, b) => String(a.entry.hora_inicio).localeCompare(String(b.entry.hora_inicio)));
+  const minutes = entries.reduce((sum, item) => sum + informaticsEntryMinutes(item.entry), 0);
+  const isToday = date === todayChileIso();
+  return `
+    <section class="informatics-day ${isToday ? "is-today" : ""}">
+      <header>
+        <div>
+          <span>${escapeHtml(informaticsDateLabel(date, { weekday: "long" }))}</span>
+          <strong>${escapeHtml(informaticsDateLabel(date, { day: "2-digit", month: "short" }))}</strong>
+        </div>
+        <button type="button" class="informatics-day-add" data-action="new-informatics-task" data-date="${date}" title="Añadir labor el ${date}" aria-label="Añadir labor">+</button>
+      </header>
+      <div class="informatics-day-total">${entries.length} ${entries.length === 1 ? "registro" : "registros"} · ${informaticsDurationLabel(minutes, true)}</div>
+      <div class="informatics-day-entries">
+        ${entries.length ? entries.map(({ entry, task }) => informaticsEntryCard(entry, task)).join("") : `<div class="informatics-day-empty">Sin labores registradas</div>`}
+      </div>
+    </section>`;
+}
+
+function renderInformatics() {
+  const root = views.informatics;
+  if (!root) return;
+  if (!informaticsPeople && !informaticsLoading && !informaticsLoadError) {
+    queueMicrotask(() => loadInformaticsData());
+  }
+  if (informaticsLoading || (!informaticsPeople && !informaticsLoadError)) {
+    root.innerHTML = cloudModuleLoadingHtml("informatics");
+    return;
+  }
+  if (informaticsLoadError) {
+    const missing = isMissingSupabaseRelation({ message: informaticsLoadError }, ["informaticos_personas", "informaticos_labores", "informaticos_labor_registros"]);
+    root.innerHTML = `
+      <section class="panel informatics-error-panel">
+        <div class="empty-state">
+          <strong>${missing ? "Falta habilitar el módulo Informáticos" : "No se pudieron cargar las labores"}</strong>
+          <p>${escapeHtml(informaticsLoadError)}</p>
+          ${missing ? `<p>Ejecuta <code>supabase_informaticos.sql</code> en Supabase y vuelve a intentar.</p>` : ""}
+          <button type="button" class="primary-button" data-action="reload-informatics">Reintentar</button>
+        </div>
+      </section>`;
+    return;
+  }
+
+  const weekStart = informaticsWeekStart();
+  const days = informaticsWeekDays();
+  const weekEnd = days.at(-1);
+  const tasks = informaticsFilteredTasks();
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const weekEntries = (informaticsEntries || []).filter((entry) => taskIds.has(entry.labor_id) && entry.fecha >= weekStart && entry.fecha <= weekEnd);
+  const weeklyMinutes = weekEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+  const activePeople = new Set(weekEntries.map((entry) => informaticsTaskById(entry.labor_id)?.informatico_id).filter(Boolean)).size;
+  const pending = tasks.filter((task) => task.estado === "pendiente");
+  const resolvedInWeek = tasks.filter((task) => task.estado === "resuelta" && task.fecha_resuelta >= weekStart && task.fecha_resuelta <= weekEnd).length;
+
+  root.innerHTML = `
+    <div class="informatics-module">
+      <section class="panel informatics-toolbar">
+        <div class="informatics-toolbar-heading">
+          <div>
+            <p class="eyebrow">Gestión semanal</p>
+            <h2>Labores informáticas</h2>
+          </div>
+          <div class="informatics-toolbar-actions">
+            <button type="button" class="secondary-button" data-action="manage-informatics-people">Equipo</button>
+            <button type="button" class="secondary-button" data-action="export-informatics-pdf">Reporte PDF</button>
+            <button type="button" class="primary-button" data-action="new-informatics-task" data-date="${htmlAttr(informaticsSelectedDate)}">Nueva labor</button>
+          </div>
+        </div>
+        <div class="informatics-filters">
+          <div class="informatics-week-navigation">
+            <button type="button" class="icon-action" data-action="shift-informatics-week" data-days="-7" title="Semana anterior" aria-label="Semana anterior">‹</button>
+            <label>Semana de
+              <input id="informaticsSelectedDate" type="date" value="${htmlAttr(informaticsSelectedDate)}">
+            </label>
+            <button type="button" class="icon-action" data-action="shift-informatics-week" data-days="7" title="Semana siguiente" aria-label="Semana siguiente">›</button>
+            <button type="button" class="secondary-button compact" data-action="today-informatics-week">Hoy</button>
+          </div>
+          <label>Informático
+            <select id="informaticsPersonFilter">${informaticsPersonOptions(informaticsPersonFilter, true)}</select>
+          </label>
+          <label>Estado
+            <select id="informaticsStatusFilter">
+              <option value="Todos" ${informaticsStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
+              <option value="pendiente" ${informaticsStatusFilter === "pendiente" ? "selected" : ""}>Pendientes</option>
+              <option value="resuelta" ${informaticsStatusFilter === "resuelta" ? "selected" : ""}>Resueltas</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="informatics-kpis" aria-label="Resumen semanal">
+        <div><span>Periodo</span><strong>${informaticsDateLabel(weekStart, { day: "2-digit", month: "short" })} - ${informaticsDateLabel(weekEnd, { day: "2-digit", month: "short", year: "numeric" })}</strong></div>
+        <div><span>Horas registradas</span><strong>${informaticsDurationLabel(weeklyMinutes, true)}</strong></div>
+        <div><span>Informáticos activos</span><strong>${activePeople}</strong></div>
+        <div class="is-pending"><span>Labores pendientes</span><strong>${pending.length}</strong></div>
+        <div class="is-resolved"><span>Resueltas esta semana</span><strong>${resolvedInWeek}</strong></div>
+      </section>
+
+      <section class="informatics-week-board" aria-label="Labores por día">
+        ${days.map((day) => renderInformaticsDay(day, tasks)).join("")}
+      </section>
+
+      <section class="panel informatics-pending-panel">
+        <header class="section-heading">
+          <div><h3>Labores pendientes</h3><p>Continúan abiertas hasta que se registre su término.</p></div>
+          <span class="informatics-count">${pending.length}</span>
+        </header>
+        <div class="informatics-pending-list">
+          ${pending.length ? pending.map((task) => {
+            const metrics = informaticsTaskMetrics(task, weekEnd);
+            return `
+              <article>
+                <div><strong>${escapeHtml(task.labor)}</strong><span>${escapeHtml(informaticsPersonName(task.informatico_id))}</span></div>
+                <div class="informatics-pending-metrics"><span>${metrics.workDays} días con registro</span><span>${informaticsDurationLabel(metrics.minutes, true)}</span><span>Abierta ${metrics.calendarDays} días</span></div>
+                <button type="button" class="primary-button compact" data-action="continue-informatics-task" data-task-id="${htmlAttr(task.id)}" data-date="${htmlAttr(informaticsSelectedDate)}">Registrar avance</button>
+              </article>`;
+          }).join("") : `<div class="empty-state compact"><strong>No hay labores pendientes con estos filtros.</strong></div>`}
+        </div>
+      </section>
+    </div>`;
+}
+
+function openInformaticsTaskDialog({ mode = "new", date = informaticsSelectedDate, taskId = "", entryId = "", resolve = false } = {}) {
+  const dialog = document.getElementById("informaticsTaskDialog");
+  if (!dialog) return;
+  if (!(informaticsPeople || []).some((person) => person.activo !== false)) {
+    showToast("Primero agrega al menos un informático a la lista");
+    openInformaticsStaffDialog();
+    return;
+  }
+  const task = taskId ? informaticsTaskById(taskId) : null;
+  const entry = entryId ? informaticsEntries?.find((item) => item.id === entryId) : null;
+  const selectedPerson = task?.informatico_id || (informaticsPersonFilter !== "Todos" ? informaticsPersonFilter : "");
+  const selectedDate = entry?.fecha || date || todayChileIso();
+  const title = mode === "new" ? "Nueva labor" : mode === "edit" ? "Editar jornada" : "Registrar avance";
+  informaticsDialogContext = { mode, taskId: task?.id || "", entryId: entry?.id || "" };
+  dialog.innerHTML = `
+    <form id="informaticsTaskForm" class="modal-body informatics-task-form">
+      <div class="modal-head informatics-dialog-head">
+        <div><p class="eyebrow">Jornada informática</p><h2>${title}</h2><p>${informaticsDateLabel(selectedDate, { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</p></div>
+        <button type="button" class="icon-button" data-action="close-informatics-dialog" title="Cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="informatics-task-summary ${task ? "has-task" : ""}">
+        ${task ? `<span>Labor en seguimiento</span><strong>${escapeHtml(task.labor)}</strong><small>Iniciada el ${informaticsDateLabel(task.fecha_inicio, { day: "2-digit", month: "long", year: "numeric" })}</small>` : `<span>Registro inicial</span><strong>Nueva labor del equipo</strong>`}
+      </div>
+      <div class="form-grid informatics-form-grid">
+        <label>Informático
+          ${task ? `<input value="${htmlAttr(informaticsPersonName(task.informatico_id))}" readonly><input type="hidden" name="informatico_id" value="${htmlAttr(task.informatico_id)}">` : `<select name="informatico_id" required>${informaticsPersonOptions(selectedPerson)}</select>`}
+        </label>
+        <label>Fecha<input name="fecha" type="date" value="${htmlAttr(selectedDate)}" required></label>
+        <label class="full">Labor realizada<textarea name="labor" rows="3" minlength="3" placeholder="Describe la labor de forma concreta" required ${mode === "continue" ? "readonly" : ""}>${escapeHtml(task?.labor || "")}</textarea></label>
+        <label>Hora de inicio<input name="hora_inicio" type="time" step="300" value="${htmlAttr(String(entry?.hora_inicio || "09:00").slice(0, 5))}" required></label>
+        <label>Hora de término<input name="hora_fin" type="time" step="300" value="${htmlAttr(String(entry?.hora_fin || "10:00").slice(0, 5))}" required></label>
+        <label class="full">Detalle de la jornada<textarea name="detalle" rows="2" placeholder="Resultado, diagnóstico o avance realizado">${escapeHtml(entry?.detalle || "")}</textarea></label>
+        <label>Estado
+          <select name="estado" required>
+            <option value="pendiente" ${!resolve && task?.estado !== "resuelta" ? "selected" : ""}>Pendiente</option>
+            <option value="resuelta" ${resolve || task?.estado === "resuelta" ? "selected" : ""}>Labor terminada</option>
+          </select>
+        </label>
+        <div class="informatics-time-preview" id="informaticsTimePreview"><span>Tiempo de la jornada</span><strong>${informaticsDurationLabel(informaticsEntryMinutes({ hora_inicio: entry?.hora_inicio || "09:00", hora_fin: entry?.hora_fin || "10:00" }), true)}</strong></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" data-action="close-informatics-dialog">Cancelar</button>
+        <button type="button" class="primary-button" data-action="save-informatics-task">${mode === "edit" ? "Guardar cambios" : "Guardar jornada"}</button>
+      </div>
+    </form>`;
+  dialog.showModal();
+}
+
+function closeInformaticsTaskDialog() {
+  document.getElementById("informaticsTaskDialog")?.close();
+  informaticsDialogContext = null;
+}
+
+async function saveInformaticsTask() {
+  const form = document.getElementById("informaticsTaskForm");
+  if (!form?.reportValidity() || !supabaseSession?.user?.id) return;
+  const data = Object.fromEntries(new FormData(form).entries());
+  if (informaticsTimeMinutes(data.hora_fin) <= informaticsTimeMinutes(data.hora_inicio)) {
+    showToast("La hora de término debe ser posterior a la hora de inicio");
+    form.elements.hora_fin?.focus();
+    return;
+  }
+  const context = informaticsDialogContext || { mode: "new" };
+  const button = form.querySelector('[data-action="save-informatics-task"]');
+  button.disabled = true;
+  button.textContent = "Guardando...";
+  const userName = informaticsUserName();
+  try {
+    if (context.mode === "new") {
+      await sbFetch("/rest/v1/rpc/informaticos_crear_labor", {
+        method: "POST",
+        body: JSON.stringify({
+          p_informatico_id: data.informatico_id,
+          p_labor: data.labor.trim(),
+          p_fecha: data.fecha,
+          p_hora_inicio: data.hora_inicio,
+          p_hora_fin: data.hora_fin,
+          p_detalle: data.detalle?.trim() || null,
+          p_estado: data.estado,
+          p_usuario_nombre: userName
+        })
+      });
+    } else if (context.mode === "continue") {
+      await sbFetch("/rest/v1/rpc/informaticos_agregar_jornada", {
+        method: "POST",
+        body: JSON.stringify({
+          p_labor_id: context.taskId,
+          p_fecha: data.fecha,
+          p_hora_inicio: data.hora_inicio,
+          p_hora_fin: data.hora_fin,
+          p_detalle: data.detalle?.trim() || null,
+          p_estado: data.estado,
+          p_usuario_nombre: userName
+        })
+      });
+    } else {
+      const task = informaticsTaskById(context.taskId);
+      const taskEntryDates = informaticsEntriesForTask(context.taskId)
+        .filter((entry) => entry.id !== context.entryId)
+        .map((entry) => entry.fecha)
+        .concat(data.fecha)
+        .sort();
+      const fechaInicio = taskEntryDates[0] || data.fecha;
+      const wasClosingEntry = task?.estado === "resuelta"
+        && task.fecha_resuelta
+        && task.fecha_resuelta === informaticsEntries?.find((entry) => entry.id === context.entryId)?.fecha;
+      const resolvedDate = data.estado === "resuelta"
+        ? (wasClosingEntry || task?.estado !== "resuelta" ? data.fecha : task.fecha_resuelta)
+        : null;
+      const taskUpdate = {
+        informatico_id: data.informatico_id,
+        labor: data.labor.trim(),
+        estado: data.estado,
+        fecha_inicio: fechaInicio,
+        fecha_resuelta: resolvedDate && resolvedDate >= fechaInicio ? resolvedDate : fechaInicio,
+        actualizado_por: supabaseSession.user.id,
+        actualizado_por_nombre: userName
+      };
+      await Promise.all([
+        sbFetch(`/rest/v1/informaticos_labores?id=eq.${encodeURIComponent(context.taskId)}`, {
+          method: "PATCH", prefer: "return=minimal", body: JSON.stringify(taskUpdate)
+        }),
+        sbFetch(`/rest/v1/informaticos_labor_registros?id=eq.${encodeURIComponent(context.entryId)}`, {
+          method: "PATCH", prefer: "return=minimal", body: JSON.stringify({
+            fecha: data.fecha,
+            hora_inicio: data.hora_inicio,
+            hora_fin: data.hora_fin,
+            detalle: data.detalle?.trim() || null,
+            actualizado_por: supabaseSession.user.id,
+            actualizado_por_nombre: userName
+          })
+        })
+      ]);
+    }
+    closeInformaticsTaskDialog();
+    resetInformaticsData();
+    await loadInformaticsData({ force: true });
+    showToast(context.mode === "edit" ? "Jornada actualizada" : "Jornada registrada");
+  } catch (error) {
+    console.error("No se pudo guardar la jornada informática", error);
+    showToast(`No se pudo guardar: ${error.message}`);
+    button.disabled = false;
+    button.textContent = context.mode === "edit" ? "Guardar cambios" : "Guardar jornada";
+  }
+}
+
+function openInformaticsStaffDialog() {
+  const dialog = document.getElementById("informaticsStaffDialog");
+  if (!dialog) return;
+  const people = [...(informaticsPeople || [])].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es"));
+  dialog.innerHTML = `
+    <div class="modal-body informatics-staff-card">
+      <div class="modal-head informatics-dialog-head">
+        <div><p class="eyebrow">Equipo</p><h2>Catálogo de informáticos</h2><p>Personas disponibles al registrar una labor.</p></div>
+        <button type="button" class="icon-button" data-action="close-informatics-staff" title="Cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <section class="informatics-staff-section">
+        <h3>Agregar persona</h3>
+        <form id="informaticsStaffForm" class="informatics-staff-add">
+          <label>Nombre completo<input name="nombre" minlength="3" autocomplete="name" placeholder="Nombre y apellido" required></label>
+          <button type="button" class="primary-button" data-action="add-informatics-person">Agregar</button>
+        </form>
+      </section>
+      <section class="informatics-staff-section informatics-staff-roster">
+        <div class="informatics-staff-heading"><h3>Equipo registrado</h3><span>${people.length}</span></div>
+        <div class="informatics-staff-list">
+          ${people.length ? people.map((person) => `
+            <div class="${person.activo === false ? "is-inactive" : ""}">
+              <span class="user-avatar" aria-hidden="true">${escapeHtml(accountInitials(person.nombre))}</span>
+              <div><strong>${escapeHtml(person.nombre)}</strong><small>${person.activo === false ? "No disponible" : "Disponible"}</small></div>
+              <button type="button" class="secondary-button compact" data-action="toggle-informatics-person" data-id="${htmlAttr(person.id)}" data-active="${person.activo !== false}">${person.activo === false ? "Activar" : "Desactivar"}</button>
+            </div>`).join("") : `<div class="empty-state compact"><strong>No hay personas registradas.</strong></div>`}
+        </div>
+      </section>
+      <div class="modal-actions"><button type="button" class="primary-button" data-action="close-informatics-staff">Listo</button></div>
+    </div>`;
+  if (!dialog.open) dialog.showModal();
+}
+
+async function addInformaticsPerson() {
+  const form = document.getElementById("informaticsStaffForm");
+  if (!form?.reportValidity()) return;
+  const name = String(new FormData(form).get("nombre") || "").trim();
+  const button = form.querySelector('[data-action="add-informatics-person"]');
+  if ((informaticsPeople || []).some((person) => String(person.nombre).trim().toLocaleLowerCase("es") === name.toLocaleLowerCase("es"))) {
+    showToast("Ese informático ya está registrado");
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Agregando...";
+  try {
+    await sbFetch("/rest/v1/informaticos_personas", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: JSON.stringify({ nombre: name, activo: true, creado_por: supabaseSession?.user?.id || null })
+    });
+    resetInformaticsData();
+    await loadInformaticsData({ force: true });
+    openInformaticsStaffDialog();
+    showToast("Informático agregado");
+  } catch (error) {
+    showToast(`No se pudo agregar: ${error.message}`);
+    button.disabled = false;
+    button.textContent = "Agregar";
+  }
+}
+
+async function toggleInformaticsPerson(id, active) {
+  try {
+    await sbFetch(`/rest/v1/informaticos_personas?id=eq.${encodeURIComponent(id)}`, {
+      method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ activo: !active })
+    });
+    resetInformaticsData();
+    await loadInformaticsData({ force: true });
+    openInformaticsStaffDialog();
+  } catch (error) {
+    showToast(`No se pudo actualizar: ${error.message}`);
+  }
+}
+
+function informaticsPdfWrap(text, font, size, width) {
+  const words = String(text || "-").replace(/\s+/g, " ").trim().split(" ");
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (!current || font.widthOfTextAtSize(candidate, size) <= width) current = candidate;
+    else { lines.push(current); current = word; }
+  });
+  if (current) lines.push(current);
+  return lines.length ? lines : ["-"];
+}
+
+async function exportInformaticsWeeklyPdf() {
+  if (!window.PDFLib?.PDFDocument) {
+    showToast("No se pudo cargar el generador PDF");
+    return;
+  }
+  const weekStart = informaticsWeekStart();
+  const weekEnd = informaticsShiftDate(weekStart, 6);
+  const tasks = informaticsFilteredTasks();
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const entries = (informaticsEntries || []).filter((entry) => taskIds.has(entry.labor_id) && entry.fecha >= weekStart && entry.fecha <= weekEnd);
+  if (!entries.length) {
+    showToast("No hay labores en el periodo y filtros seleccionados");
+    return;
+  }
+  showToast("Generando reporte semanal...");
+  try {
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const pdfDoc = await PDFDocument.create();
+    const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    let logo = null;
+    try {
+      const logoResponse = await fetch("logo-canelillo.png");
+      if (logoResponse.ok) logo = await pdfDoc.embedPng(await logoResponse.arrayBuffer());
+    } catch {}
+    const size = [841.89, 595.28];
+    const margin = 34;
+    const green = rgb(0.02, 0.39, 0.27);
+    const dark = rgb(0.08, 0.16, 0.13);
+    const muted = rgb(0.36, 0.43, 0.40);
+    const pale = rgb(0.93, 0.97, 0.95);
+    const orange = rgb(0.86, 0.45, 0.06);
+    let page;
+    let y;
+
+    const addPage = () => {
+      page = pdfDoc.addPage(size);
+      y = size[1] - margin;
+      if (logo) page.drawImage(logo, { x: margin, y: y - 38, width: 48, height: 38 });
+      page.drawText("AGRICOLA EL CANELILLO", { x: logo ? 90 : margin, y: y - 10, size: 8, font: bold, color: green });
+      page.drawText("Reporte semanal de labores informáticas", { x: logo ? 90 : margin, y: y - 28, size: 18, font: bold, color: dark });
+      page.drawText(`${informaticsDateLabel(weekStart, { day: "2-digit", month: "long", year: "numeric" })} al ${informaticsDateLabel(weekEnd, { day: "2-digit", month: "long", year: "numeric" })}`, { x: logo ? 90 : margin, y: y - 43, size: 9, font: regular, color: muted });
+      page.drawText(`Generado por: ${informaticsUserName()}`, { x: 590, y: y - 12, size: 8, font: regular, color: muted });
+      page.drawLine({ start: { x: margin, y: y - 54 }, end: { x: size[0] - margin, y: y - 54 }, thickness: 1.2, color: green });
+      y -= 70;
+    };
+    const ensureSpace = (height) => { if (y - height < margin + 20) addPage(); };
+    const drawWrapped = (text, x, width, font, fontSize, color = dark, lineHeight = fontSize + 2) => {
+      const lines = informaticsPdfWrap(text, font, fontSize, width);
+      lines.forEach((line, index) => page.drawText(line, { x, y: y - index * lineHeight, size: fontSize, font, color }));
+      return lines.length * lineHeight;
+    };
+
+    addPage();
+    const totalMinutes = entries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+    const reportPeople = [...new Set(entries.map((entry) => informaticsTaskById(entry.labor_id)?.informatico_id).filter(Boolean))];
+    page.drawRectangle({ x: margin, y: y - 44, width: size[0] - margin * 2, height: 44, color: pale });
+    page.drawText(`${entries.length}`, { x: margin + 15, y: y - 23, size: 16, font: bold, color: green });
+    page.drawText("jornadas", { x: margin + 48, y: y - 21, size: 8, font: regular, color: muted });
+    page.drawText(informaticsDurationLabel(totalMinutes, true), { x: margin + 180, y: y - 23, size: 16, font: bold, color: green });
+    page.drawText("trabajadas en la semana", { x: margin + 270, y: y - 21, size: 8, font: regular, color: muted });
+    page.drawText(`${reportPeople.length}`, { x: margin + 510, y: y - 23, size: 16, font: bold, color: green });
+    page.drawText("informáticos con actividad", { x: margin + 540, y: y - 21, size: 8, font: regular, color: muted });
+    y -= 60;
+
+    for (const personId of reportPeople.sort((a, b) => informaticsPersonName(a).localeCompare(informaticsPersonName(b), "es"))) {
+      const personEntries = entries.filter((entry) => informaticsTaskById(entry.labor_id)?.informatico_id === personId);
+      const personTaskIds = [...new Set(personEntries.map((entry) => entry.labor_id))];
+      ensureSpace(52);
+      page.drawRectangle({ x: margin, y: y - 24, width: size[0] - margin * 2, height: 24, color: green });
+      page.drawText(informaticsPersonName(personId), { x: margin + 10, y: y - 16, size: 11, font: bold, color: rgb(1, 1, 1) });
+      page.drawText(`${informaticsDurationLabel(personEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0), true)} en la semana`, { x: size[0] - margin - 130, y: y - 16, size: 8, font: regular, color: rgb(1, 1, 1) });
+      y -= 34;
+
+      for (const taskId of personTaskIds) {
+        const task = informaticsTaskById(taskId);
+        const taskWeekEntries = personEntries.filter((entry) => entry.labor_id === taskId);
+        const metrics = informaticsTaskMetrics(task, weekEnd);
+        const titleLines = informaticsPdfWrap(task.labor, bold, 9, 480);
+        const needed = 42 + titleLines.length * 11 + taskWeekEntries.length * 18;
+        ensureSpace(Math.min(needed, 150));
+        page.drawText(metrics.resolvedByReport ? "RESUELTA" : "PENDIENTE", { x: margin, y, size: 7, font: bold, color: metrics.resolvedByReport ? green : orange });
+        y -= 13;
+        y -= drawWrapped(task.labor, margin, 480, bold, 9, dark, 11);
+        page.drawText(`Semana: ${informaticsDurationLabel(taskWeekEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0), true)} | Acumulado: ${informaticsDurationLabel(metrics.minutes, true)} | ${metrics.workDays} días trabajados | ${metrics.calendarDays} días calendario`, { x: margin, y, size: 7.5, font: regular, color: muted });
+        y -= 15;
+        for (const entry of taskWeekEntries) {
+          const detailLines = informaticsPdfWrap(entry.detalle || "Sin detalle adicional", regular, 7.5, 500);
+          const entryHeight = Math.max(17, detailLines.length * 9 + 4);
+          ensureSpace(entryHeight + 4);
+          page.drawText(informaticsDateLabel(entry.fecha, { weekday: "short", day: "2-digit", month: "2-digit" }), { x: margin + 8, y, size: 7.5, font: bold, color: dark });
+          page.drawText(`${String(entry.hora_inicio).slice(0, 5)}-${String(entry.hora_fin).slice(0, 5)}`, { x: margin + 90, y, size: 7.5, font: regular, color: dark });
+          page.drawText(informaticsDurationLabel(informaticsEntryMinutes(entry), true), { x: margin + 155, y, size: 7.5, font: regular, color: green });
+          detailLines.forEach((line, index) => {
+            page.drawText(line, { x: margin + 230, y: y - index * 9, size: 7.5, font: regular, color: muted });
+          });
+          y -= entryHeight;
+        }
+        page.drawLine({ start: { x: margin, y }, end: { x: size[0] - margin, y }, thickness: 0.4, color: rgb(0.80, 0.86, 0.83) });
+        y -= 12;
+      }
+    }
+
+    pdfDoc.getPages().forEach((pdfPage, index) => {
+      pdfPage.drawText(`Canelillo AgroCore | Página ${index + 1} de ${pdfDoc.getPageCount()}`, { x: margin, y: 16, size: 7, font: regular, color: muted });
+    });
+    const bytes = await pdfDoc.save();
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Labores-informaticos-${weekStart}-al-${weekEnd}.pdf`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("Reporte semanal descargado");
+  } catch (error) {
+    console.error("No se pudo generar el reporte de informáticos", error);
+    showToast(`No se pudo generar el PDF: ${error.message}`);
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const target = event.target.closest?.("[data-action]");
+  const action = target?.dataset.action || "";
+  if (action === "new-informatics-task") openInformaticsTaskDialog({ mode: "new", date: target.dataset.date || informaticsSelectedDate });
+  if (action === "continue-informatics-task") openInformaticsTaskDialog({ mode: "continue", taskId: target.dataset.taskId, date: target.dataset.date || informaticsSelectedDate });
+  if (action === "edit-informatics-entry") {
+    const entry = informaticsEntries?.find((item) => item.id === target.dataset.entryId);
+    if (entry) openInformaticsTaskDialog({ mode: "edit", taskId: entry.labor_id, entryId: entry.id });
+  }
+  if (action === "close-informatics-dialog") closeInformaticsTaskDialog();
+  if (action === "save-informatics-task") await saveInformaticsTask();
+  if (action === "reload-informatics") { resetInformaticsData(); await loadInformaticsData({ force: true }); }
+  if (action === "manage-informatics-people") openInformaticsStaffDialog();
+  if (action === "close-informatics-staff") document.getElementById("informaticsStaffDialog")?.close();
+  if (action === "add-informatics-person") await addInformaticsPerson();
+  if (action === "toggle-informatics-person") await toggleInformaticsPerson(target.dataset.id, target.dataset.active === "true");
+  if (action === "shift-informatics-week") { informaticsSelectedDate = informaticsShiftDate(informaticsWeekStart(), Number(target.dataset.days)); renderInformatics(); }
+  if (action === "today-informatics-week") { informaticsSelectedDate = todayChileIso(); renderInformatics(); }
+  if (action === "export-informatics-pdf") await exportInformaticsWeeklyPdf();
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.id === "informaticsSelectedDate") { informaticsSelectedDate = event.target.value || todayChileIso(); renderInformatics(); }
+  if (event.target.id === "informaticsPersonFilter") { informaticsPersonFilter = event.target.value || "Todos"; renderInformatics(); }
+  if (event.target.id === "informaticsStatusFilter") { informaticsStatusFilter = event.target.value || "Todos"; renderInformatics(); }
+  if (event.target.closest?.("#informaticsTaskForm") && ["hora_inicio", "hora_fin"].includes(event.target.name)) {
+    const form = event.target.form;
+    const minutes = Math.max(0, informaticsTimeMinutes(form.elements.hora_fin.value) - informaticsTimeMinutes(form.elements.hora_inicio.value));
+    const preview = document.getElementById("informaticsTimePreview");
+    if (preview) preview.innerHTML = `<span>Tiempo de la jornada</span><strong>${escapeHtml(informaticsDurationLabel(minutes, true))}</strong>`;
+  }
+});
 
 document.addEventListener("touchstart", (event) => {
   const input = event.target.closest?.(".irrigation-hour-input");
