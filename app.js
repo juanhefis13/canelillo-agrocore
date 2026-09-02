@@ -202,7 +202,7 @@ let activeRecipeProductLine = null;
 let programFilters = { seasonId: "Todas", search: "", species: "Todas", number: "Todos", type: "Todos", status: "Todos" };
 let officialProgramFallbackCache = null;
 let programSearchTimer = null;
-let reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
+let reportFilters = { seasonId: "", species: "", programNumber: "Todos" };
 let managerYear = String(new Date().getFullYear());
 let managerMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let managerOrdersMonths = new Set([managerMonth]);
@@ -20564,20 +20564,36 @@ function renderPrices() {
 }
 
 function renderReports() {
-  const seasons = ["Todas", ...state.seasons.map((season) => season.id).filter(Boolean)];
-  const seasonLabel = (seasonId) => seasonId === "Todas" ? "Todas" : getSeason(seasonId).name;
-  const species = ["Todas", ...new Set(state.orders.map((order) => order.crop).filter(Boolean))];
-  const programNumbers = ["Todos", ...new Set(state.orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber]).filter((value) => value !== "" && value !== undefined).map(String))].sort((a, b) => a === "Todos" ? -1 : Number(a) - Number(b));
+  const seasons = reportSeasonOptions();
+  if (!seasons.some((season) => String(season.id) === String(reportFilters.seasonId))) {
+    const currentSeasonId = state.settings?.currentSeasonId;
+    reportFilters.seasonId = seasons.some((season) => String(season.id) === String(currentSeasonId))
+      ? currentSeasonId
+      : seasons[0]?.id || "";
+  }
+  const species = reportSpeciesOptions(reportFilters.seasonId);
+  if (!species.some((item) => normalizeCatalogText(item) === normalizeCatalogText(reportFilters.species))) {
+    reportFilters.species = species[0] || "";
+  }
+  const scopedOrders = state.orders.filter((order) => {
+    const seasonOk = String(order.seasonId || "") === String(reportFilters.seasonId || "");
+    const speciesOk = normalizeCatalogText(order.crop) === normalizeCatalogText(reportFilters.species);
+    return seasonOk && speciesOk;
+  });
+  const availableProgramNumbers = [...new Set(scopedOrders.flatMap(reportProgramNumbers))].sort(compareProgramNumbers);
+  if (reportFilters.programNumber !== "Todos" && !availableProgramNumbers.includes(String(reportFilters.programNumber))) {
+    reportFilters.programNumber = "Todos";
+  }
+  const programNumbers = ["Todos", ...availableProgramNumbers];
   const orders = state.orders.filter((order) => {
-    const seasonOk = reportFilters.seasonId === "Todas" || order.seasonId === reportFilters.seasonId;
-    const speciesOk = reportFilters.species === "Todas" || order.crop === reportFilters.species;
-    const programOk = reportFilters.programNumber === "Todos" || (order.programNumbers?.length ? order.programNumbers.map(String).includes(String(reportFilters.programNumber)) : String(order.programNumber) === String(reportFilters.programNumber));
+    const seasonOk = String(order.seasonId || "") === String(reportFilters.seasonId || "");
+    const speciesOk = normalizeCatalogText(order.crop) === normalizeCatalogText(reportFilters.species);
+    const programOk = reportFilters.programNumber === "Todos" || reportProgramNumbers(order).includes(String(reportFilters.programNumber));
     return seasonOk && speciesOk && programOk;
   });
   const productRows = reportProductRows(orders);
   const byProduct = reportByProduct(orders);
-  const byProgram = reportByKey(orders, (order) => programLabel(order));
-  const waterByProgram = reportWaterByProgram(orders);
+  const byProgram = reportProgramPerformanceRows(orders, reportFilters.programNumber);
   const waterByOperator = reportWaterByOperator(orders);
   const productHaByPotrero = reportProductHaByPotrero(orders);
   const monthly = reportByMonth(orders);
@@ -20588,6 +20604,7 @@ function renderReports() {
   const cost = orders.reduce((sum, order) => sum + dispatchCost(order), 0);
   const hectares = orders.reduce((sum, order) => sum + (Number(order.hectares) || 0), 0);
   const avgWaterHa = hectares ? dispatchedWater / hectares : 0;
+  const theoreticalAvgWaterHa = hectares ? plannedWater / hectares : 0;
   const completion = plannedWater ? dispatchedWater / plannedWater * 100 : 0;
 
   views.reports.innerHTML = `
@@ -20598,39 +20615,51 @@ function renderReports() {
       </div>
       <div class="report-filters">
         <label>Temporada
-          <select id="reportSeasonFilter">${seasons.map((item) => `<option value="${item}" ${item === reportFilters.seasonId ? "selected" : ""}>${seasonLabel(item)}</option>`).join("")}</select>
+          <select id="reportSeasonFilter" ${seasons.length ? "" : "disabled"}>${seasons.map((season) => `<option value="${htmlAttr(season.id)}" ${String(season.id) === String(reportFilters.seasonId) ? "selected" : ""}>${escapeHtml(season.name || season.id)}</option>`).join("") || `<option>Sin temporadas</option>`}</select>
         </label>
         <label>Especie
-          <select id="reportSpeciesFilter">${species.map((item) => `<option value="${item}" ${item === reportFilters.species ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select id="reportSpeciesFilter" ${species.length ? "" : "disabled"}>${species.map((item) => `<option value="${htmlAttr(item)}" ${normalizeCatalogText(item) === normalizeCatalogText(reportFilters.species) ? "selected" : ""}>${escapeHtml(item)}</option>`).join("") || `<option>Sin especies</option>`}</select>
         </label>
         <label>N programa
-          <select id="reportProgramFilter">${programNumbers.map((item) => `<option value="${item}" ${item === reportFilters.programNumber ? "selected" : ""}>${item}</option>`).join("")}</select>
+          <select id="reportProgramFilter">${programNumbers.map((item) => `<option value="${htmlAttr(item)}" ${String(item) === String(reportFilters.programNumber) ? "selected" : ""}>${item === "Todos" ? "Todos" : `Programa ${escapeHtml(item)}`}</option>`).join("")}</select>
         </label>
         <button class="secondary-button" data-action="clear-report-filter">Limpiar</button>
       </div>
     </section>
     <div class="kpi-grid report-kpis">
       ${kpi("Avance programa", `${number(completion, 0)}%`, `${number(dispatchedWater, 0)} de ${number(plannedWater, 0)} L`)}
-      ${kpi("Mojamiento prom.", `${number(avgWaterHa, 0)} L/ha`, "Salidas netas / hectareas")}
+      ${kpi("Mojamiento real prom.", `${number(avgWaterHa, 0)} L/ha`, `Teorico ${number(theoreticalAvgWaterHa, 0)} L/ha`)}
       ${kpi("Kg/L usados", `${number(dispatchedKg)} kg/L`, `Faltan ${number(plannedKg - dispatchedKg)} kg/L`)}
       ${kpi("Costo usado", money(cost), "Valorizado por salidas")}
     </div>
     <div class="report-grid">
-      ${chartPanel("Avance por programa", "Mojamiento salido vs planificado", byProgram.map((row) => progressBar(row.label, row.dispatchedWater, row.plannedWater, `${number(row.percent, 0)}%`)).join(""))}
+      ${chartPanel("Avance por programa", "Ordenado por numero: mojamiento real versus teorico", byProgram.map((row) => progressBar(escapeHtml(row.label), row.dispatchedWater, row.plannedWater, `${number(row.percent, 0)}%`)).join(""))}
+      ${chartPanel("Mojamiento promedio por programa", "Compara el mojamiento real acumulado con el valor teorico", byProgram.map(waterProgramDetails).join(""))}
+      <section class="panel chart-panel report-program-products-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Producto utilizado por programa</h2>
+            <p>Salidas netas, dosis real, dosis teorica y mojamiento total.</p>
+          </div>
+        </div>
+        <div class="chart-body">${reportProgramProductTable(byProgram)}</div>
+      </section>
       ${chartPanel("Mojamiento por tractorista", "Ranking por litros netos salidos en la temporada/filtro", waterByOperator.map((row) => valueBar(row.label, row.water, waterByOperator[0]?.water || 0, `${number(row.water, 0)} L`)).join(""))}
       ${chartPanel("Producto por hectarea por potrero", "Potreros con mayor cantidad neta de producto aplicado por ha", productHaByPotrero.map((row) => valueBar(row.label, row.productHa, productHaByPotrero[0]?.productHa || 0, `${number(row.productHa)} kg/L ha`)).join(""))}
       ${chartPanel("Costo por producto", "Valorizado con precio kg/L", byProduct.map((row) => valueBar(row.product.name, row.value, byProduct[0]?.value || 0, money(row.value))).join(""))}
       ${chartPanel("Stock utilizado por producto", "Total ingresado, usado y saldo disponible", stockUsageReport())}
-      ${chartPanel("Mojamiento promedio por programa", "Despliega cada programa para ver potrero y bloque", waterByProgram.map(waterProgramDetails).join(""))}
       ${chartPanel("Tendencia mensual", "Mojamiento y costo por mes", monthly.map((row) => stackedMetric(row.label, row.water, Math.max(...monthly.map((item) => item.water), 1), `${number(row.water, 0)} L`, money(row.cost))).join(""))}
     </div>
   `;
   document.getElementById("reportSeasonFilter")?.addEventListener("change", (event) => {
     reportFilters.seasonId = event.target.value;
+    reportFilters.species = "";
+    reportFilters.programNumber = "Todos";
     renderReports();
   });
   document.getElementById("reportSpeciesFilter")?.addEventListener("change", (event) => {
     reportFilters.species = event.target.value;
+    reportFilters.programNumber = "Todos";
     renderReports();
   });
   document.getElementById("reportProgramFilter")?.addEventListener("change", (event) => {
@@ -20744,16 +20773,151 @@ function stockUsageReport() {
   `;
 }
 
-function reportByKey(orders, keyFn) {
-  return Object.values(orders.reduce((acc, order) => {
-    const key = keyFn(order);
-    acc[key] ||= { label: key, plannedWater: 0, dispatchedWater: 0, cost: 0 };
-    acc[key].plannedWater += plannedLiters(order);
-    acc[key].dispatchedWater += dispatchedLiters(order);
-    acc[key].cost += dispatchCost(order);
-    acc[key].percent = acc[key].plannedWater ? acc[key].dispatchedWater / acc[key].plannedWater * 100 : 0;
-    return acc;
-  }, {})).sort((a, b) => b.cost - a.cost);
+function reportSeasonOptions() {
+  return [...state.seasons]
+    .filter((season) => season?.id)
+    .sort((a, b) => (Number(b.startYear) || 0) - (Number(a.startYear) || 0));
+}
+
+function reportSpeciesOptions(seasonId) {
+  const values = [
+    ...state.orders.filter((order) => String(order.seasonId || "") === String(seasonId || "")).map((order) => order.crop),
+    ...state.programs.filter((program) => String(program.seasonId || "") === String(seasonId || "")).map((program) => program.crop)
+  ].filter(Boolean);
+  const unique = new Map();
+  values.forEach((value) => unique.set(normalizeCatalogText(value), String(value).trim()));
+  return [...unique.values()].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+}
+
+function reportProgramNumbers(order) {
+  const values = order?.programNumbers?.length ? order.programNumbers : [order?.programNumber];
+  return [...new Set(values.filter((value) => value !== "" && value !== null && value !== undefined).map(String))];
+}
+
+function compareProgramNumbers(a, b) {
+  const aNumber = Number(a);
+  const bNumber = Number(b);
+  if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+  if (Number.isFinite(aNumber)) return -1;
+  if (Number.isFinite(bNumber)) return 1;
+  return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
+}
+
+function reportProgramDefinition(order, programNumber) {
+  return state.programs.find((program) => String(program.seasonId || "") === String(order.seasonId || "")
+    && String(program.number) === String(programNumber)
+    && (!program.crop || !order.crop || normalizeCatalogText(program.crop) === normalizeCatalogText(order.crop)));
+}
+
+function reportProgramPerformanceRows(orders, selectedProgramNumber = "Todos") {
+  const grouped = {};
+  const ensureProgram = (order, programNumber) => {
+    const key = String(programNumber || "SN");
+    const definition = reportProgramDefinition(order, key);
+    grouped[key] ||= {
+      programNumber: key,
+      label: key === "SN" ? "Programa s/n" : `Programa ${key}`,
+      programName: definition?.name || "",
+      hectares: 0,
+      plannedWater: 0,
+      dispatchedWater: 0,
+      cost: 0,
+      products: {},
+      children: {}
+    };
+    return grouped[key];
+  };
+
+  orders.forEach((order) => {
+    const programNumbers = reportProgramNumbers(order);
+    const allAssignedPrograms = programNumbers.length ? programNumbers : ["SN"];
+    const assignedPrograms = selectedProgramNumber === "Todos"
+      ? allAssignedPrograms
+      : allAssignedPrograms.filter((programNumber) => String(programNumber) === String(selectedProgramNumber));
+    if (!assignedPrograms.length) return;
+    const hectares = Number(order.hectares) || 0;
+    const realWater = dispatchedLiters(order);
+    const orderCostValue = dispatchCost(order);
+
+    assignedPrograms.forEach((programNumber) => {
+      const row = ensureProgram(order, programNumber);
+      const definition = reportProgramDefinition(order, programNumber);
+      const theoreticalWaterHa = Number(definition?.waterHa) || Number(order.waterHa) || 0;
+      const theoreticalWater = hectares * theoreticalWaterHa;
+      row.hectares += hectares;
+      row.plannedWater += theoreticalWater;
+      row.dispatchedWater += realWater;
+      row.cost += orderCostValue;
+
+      const fieldKey = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
+      row.children[fieldKey] ||= { label: fieldKey, hectares: 0, plannedWater: 0, dispatchedWater: 0 };
+      row.children[fieldKey].hectares += hectares;
+      row.children[fieldKey].plannedWater += theoreticalWater;
+      row.children[fieldKey].dispatchedWater += realWater;
+    });
+
+    const recipe = order.recipe || [];
+    const plannedByProduct = recipe.reduce((acc, line) => {
+      acc[line.productId] = (acc[line.productId] || 0) + Math.max(0, plannedProduct(order, line));
+      return acc;
+    }, {});
+    recipe.forEach((line) => {
+      const declaredProgram = String(line.programNumber || allAssignedPrograms[0]);
+      if (selectedProgramNumber !== "Todos" && declaredProgram !== String(selectedProgramNumber)) return;
+      const lineProgram = assignedPrograms.includes(String(line.programNumber)) ? String(line.programNumber) : assignedPrograms[0];
+      const row = ensureProgram(order, lineProgram);
+      const product = getProduct(line.productId) || {};
+      const planned = Math.max(0, plannedProduct(order, line));
+      const productPlanTotal = plannedByProduct[line.productId] || 0;
+      const matchingLineCount = recipe.filter((item) => item.productId === line.productId).length;
+      const allocation = productPlanTotal > 0 ? planned / productPlanTotal : 1 / Math.max(1, matchingLineCount);
+      const dispatched = dispatchedProduct(order, line.productId) * allocation;
+      row.products[line.productId] ||= {
+        productId: line.productId,
+        name: product.name || line.productId || "Producto sin nombre",
+        unit: product.unit || line.outputUnit || "kg/L",
+        planned: 0,
+        dispatched: 0
+      };
+      row.products[line.productId].planned += planned;
+      row.products[line.productId].dispatched += dispatched;
+    });
+
+    const recipeProductIds = new Set(recipe.map((line) => line.productId));
+    const extraProductIds = [...new Set((order.dispatches || []).flatMap((dispatch) => Object.keys(dispatch.products || {})))]
+      .filter((productId) => !recipeProductIds.has(productId));
+    extraProductIds.forEach((productId) => {
+      const row = ensureProgram(order, assignedPrograms[0]);
+      const product = getProduct(productId) || {};
+      row.products[productId] ||= {
+        productId,
+        name: product.name || productId || "Producto sin nombre",
+        unit: product.unit || "kg/L",
+        planned: 0,
+        dispatched: 0
+      };
+      row.products[productId].dispatched += dispatchedProduct(order, productId);
+    });
+  });
+
+  return Object.values(grouped).map((row) => ({
+    ...row,
+    percent: row.plannedWater ? row.dispatchedWater / row.plannedWater * 100 : 0,
+    realWaterHa: row.hectares ? row.dispatchedWater / row.hectares : 0,
+    theoreticalWaterHa: row.hectares ? row.plannedWater / row.hectares : 0,
+    products: Object.values(row.products).map((product) => ({
+      ...product,
+      realPerHa: row.hectares ? product.dispatched / row.hectares : 0,
+      realPer100: row.dispatchedWater ? product.dispatched / row.dispatchedWater * 100 : 0,
+      theoreticalPerHa: row.hectares ? product.planned / row.hectares : 0,
+      theoreticalPer100: row.plannedWater ? product.planned / row.plannedWater * 100 : 0
+    })).sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
+    children: Object.values(row.children).map((child) => ({
+      ...child,
+      realWaterHa: child.hectares ? child.dispatchedWater / child.hectares : 0,
+      theoreticalWaterHa: child.hectares ? child.plannedWater / child.hectares : 0
+    })).sort((a, b) => a.label.localeCompare(b.label, "es", { numeric: true, sensitivity: "base" }))
+  })).sort((a, b) => compareProgramNumbers(a.programNumber, b.programNumber));
 }
 
 function reportByField(orders) {
@@ -20769,37 +20933,69 @@ function reportByField(orders) {
   }, {})).sort((a, b) => b.avgWaterHa - a.avgWaterHa);
 }
 
-function reportWaterByProgram(orders) {
-  const grouped = {};
-  orders.forEach((order) => {
-    const programs = order.programNumbers?.length ? order.programNumbers : [order.programNumber || "SN"];
-    programs.forEach((programNumber) => {
-      const key = String(programNumber || "SN");
-      grouped[key] ||= { label: `Programa ${key}`, hectares: 0, water: 0, children: {} };
-      grouped[key].hectares += Number(order.hectares) || 0;
-      grouped[key].water += dispatchedLiters(order);
-      const fieldKey = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
-      grouped[key].children[fieldKey] ||= { label: fieldKey, hectares: 0, water: 0 };
-      grouped[key].children[fieldKey].hectares += Number(order.hectares) || 0;
-      grouped[key].children[fieldKey].water += dispatchedLiters(order);
-    });
-  });
-  return Object.values(grouped).map((row) => ({
-    ...row,
-    avg: row.hectares ? row.water / row.hectares : 0,
-    children: Object.values(row.children).map((child) => ({
-      ...child,
-      avg: child.hectares ? child.water / child.hectares : 0
-    })).sort((a, b) => b.avg - a.avg)
-  })).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-}
-
 function waterProgramDetails(row) {
   return `
     <details class="report-drill">
-      <summary><strong>${row.label}</strong><span>${number(row.avg, 0)} L/ha promedio / ${number(row.water, 0)} L</span></summary>
-      ${row.children.map((child) => valueBar(child.label, child.avg, Math.max(...row.children.map((item) => item.avg), 1), `${number(child.avg, 0)} L/ha`)).join("")}
+      <summary><strong>${escapeHtml(row.label)}</strong><span>Real ${number(row.realWaterHa, 0)} L/ha · Teorico ${number(row.theoreticalWaterHa, 0)} L/ha</span></summary>
+      <div class="report-water-comparison-list">
+        ${row.children.map((child) => `
+          <div class="report-water-comparison">
+            <span>${escapeHtml(child.label)}</span>
+            <strong>Real ${number(child.realWaterHa, 0)} L/ha</strong>
+            <small>Teorico ${number(child.theoreticalWaterHa, 0)} L/ha</small>
+          </div>
+        `).join("") || `<div class="empty">Sin potreros asociados.</div>`}
+      </div>
     </details>
+  `;
+}
+
+function reportProgramProductTable(rows) {
+  if (!rows.length) return `<div class="empty">Sin programas para los filtros seleccionados.</div>`;
+  return `
+    <div class="table-wrap report-program-product-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Unidad</th>
+            <th>Usado neto</th>
+            <th>Real por ha</th>
+            <th>Real cada 100 L</th>
+            <th>Teorico por ha</th>
+            <th>Teorico cada 100 L</th>
+            <th>Mojamiento total real</th>
+            <th>Mojamiento total teorico</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr class="report-program-group-row">
+              <td colspan="9">
+                <strong>${escapeHtml(row.label)}</strong>
+                ${row.programName ? `<span>${escapeHtml(row.programName)}</span>` : ""}
+                <span>Avance ${number(row.percent, 0)}%</span>
+                <span>Real ${number(row.realWaterHa, 0)} L/ha</span>
+                <span>Teorico ${number(row.theoreticalWaterHa, 0)} L/ha</span>
+              </td>
+            </tr>
+            ${row.products.map((product) => `
+              <tr>
+                <td data-label="Producto"><strong>${escapeHtml(product.name)}</strong></td>
+                <td data-label="Unidad">${escapeHtml(product.unit)}</td>
+                <td data-label="Usado neto">${number(product.dispatched, 3)} ${escapeHtml(product.unit)}</td>
+                <td data-label="Real por ha">${number(product.realPerHa, 3)} ${escapeHtml(product.unit)}/ha</td>
+                <td data-label="Real cada 100 L">${number(product.realPer100, 3)} ${escapeHtml(product.unit)}/100 L</td>
+                <td data-label="Teorico por ha">${number(product.theoreticalPerHa, 3)} ${escapeHtml(product.unit)}/ha</td>
+                <td data-label="Teorico cada 100 L">${number(product.theoreticalPer100, 3)} ${escapeHtml(product.unit)}/100 L</td>
+                <td data-label="Mojamiento total real">${number(row.dispatchedWater, 0)} L</td>
+                <td data-label="Mojamiento total teorico">${number(row.plannedWater, 0)} L</td>
+              </tr>
+            `).join("") || `<tr><td colspan="9" class="empty">Sin productos registrados para este programa.</td></tr>`}
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -23952,6 +24148,36 @@ function informaticsTimeMinutes(value = "") {
   return hours * 60 + minutes;
 }
 
+function informaticsIsHoliday(value) {
+  return CHILE_HOLIDAYS_2026.has(String(value || "").slice(0, 10));
+}
+
+function informaticsScheduleForDate(value) {
+  if (informaticsIsHoliday(value)) return null;
+  const weekday = new Date(`${value || todayChileIso()}T12:00:00`).getDay();
+  const endByWeekday = { 1: "17:00", 2: "18:00", 3: "17:00", 4: "18:00", 5: "17:00" };
+  return endByWeekday[weekday] ? { start: "08:00", end: endByWeekday[weekday] } : null;
+}
+
+function informaticsScheduleLabel(value, compact = false) {
+  if (informaticsIsHoliday(value)) return "Feriado";
+  const schedule = informaticsScheduleForDate(value);
+  if (!schedule) return compact ? "Sin jornada" : "Sin jornada estándar";
+  return compact ? `${schedule.start}-${schedule.end}` : `Jornada estándar ${schedule.start} a ${schedule.end}`;
+}
+
+function informaticsTimePreviewHtml(date, start, end) {
+  const minutes = Math.max(0, informaticsTimeMinutes(end) - informaticsTimeMinutes(start));
+  const schedule = informaticsScheduleForDate(date);
+  const outsideSchedule = schedule
+    && (informaticsTimeMinutes(start) < informaticsTimeMinutes(schedule.start)
+      || informaticsTimeMinutes(end) > informaticsTimeMinutes(schedule.end));
+  return `
+    <span>Tiempo registrado</span>
+    <strong>${escapeHtml(informaticsDurationLabel(minutes, true))}</strong>
+    <small class="${outsideSchedule ? "is-outside" : ""}">${escapeHtml(informaticsScheduleLabel(date))}${outsideSchedule ? " · Fuera de jornada" : ""}</small>`;
+}
+
 function informaticsEntryMinutes(entry = {}) {
   return Math.max(0, informaticsTimeMinutes(entry.hora_fin) - informaticsTimeMinutes(entry.hora_inicio));
 }
@@ -24090,18 +24316,23 @@ function renderInformaticsDay(date, tasks) {
     .sort((a, b) => String(a.entry.hora_inicio).localeCompare(String(b.entry.hora_inicio)));
   const minutes = entries.reduce((sum, item) => sum + informaticsEntryMinutes(item.entry), 0);
   const isToday = date === todayChileIso();
+  const isHoliday = informaticsIsHoliday(date);
   return `
-    <section class="informatics-day ${isToday ? "is-today" : ""}">
+    <section class="informatics-day ${isToday ? "is-today" : ""} ${isHoliday ? "is-holiday" : ""}">
       <header>
         <div>
           <span>${escapeHtml(informaticsDateLabel(date, { weekday: "long" }))}</span>
           <strong>${escapeHtml(informaticsDateLabel(date, { day: "2-digit", month: "short" }))}</strong>
+          <small>${escapeHtml(informaticsScheduleLabel(date, true))}</small>
         </div>
+        ${isHoliday ? `<b class="informatics-holiday-badge">Feriado</b>` : ""}
         <button type="button" class="informatics-day-add" data-action="new-informatics-task" data-date="${date}" title="Añadir labor el ${date}" aria-label="Añadir labor">+</button>
       </header>
       <div class="informatics-day-total">${entries.length} ${entries.length === 1 ? "registro" : "registros"} · ${informaticsDurationLabel(minutes, true)}</div>
       <div class="informatics-day-entries">
-        ${entries.length ? entries.map(({ entry, task }) => informaticsEntryCard(entry, task)).join("") : `<div class="informatics-day-empty">Sin labores registradas</div>`}
+        ${entries.length ? entries.map(({ entry, task }) => informaticsEntryCard(entry, task)).join("") : (isHoliday
+          ? `<div class="informatics-day-empty informatics-holiday-empty"><strong>Feriado</strong><span>Sin jornada programada</span></div>`
+          : `<div class="informatics-day-empty">Sin labores registradas</div>`)}
       </div>
     </section>`;
 }
@@ -24221,6 +24452,9 @@ function openInformaticsTaskDialog({ mode = "new", date = informaticsSelectedDat
   const entry = entryId ? informaticsEntries?.find((item) => item.id === entryId) : null;
   const selectedPerson = task?.informatico_id || (informaticsPersonFilter !== "Todos" ? informaticsPersonFilter : "");
   const selectedDate = entry?.fecha || date || todayChileIso();
+  const selectedSchedule = informaticsScheduleForDate(selectedDate);
+  const selectedStart = String(entry?.hora_inicio || selectedSchedule?.start || "08:00").slice(0, 5);
+  const selectedEnd = String(entry?.hora_fin || "09:00").slice(0, 5);
   const title = mode === "new" ? "Nueva labor" : mode === "edit" ? "Editar jornada" : "Registrar avance";
   informaticsDialogContext = { mode, taskId: task?.id || "", entryId: entry?.id || "" };
   dialog.innerHTML = `
@@ -24238,8 +24472,8 @@ function openInformaticsTaskDialog({ mode = "new", date = informaticsSelectedDat
         </label>
         <label>Fecha<input name="fecha" type="date" value="${htmlAttr(selectedDate)}" required></label>
         <label class="full">Labor realizada<textarea name="labor" rows="3" minlength="3" placeholder="Describe la labor de forma concreta" required ${mode === "continue" ? "readonly" : ""}>${escapeHtml(task?.labor || "")}</textarea></label>
-        <label>Hora de inicio<input name="hora_inicio" type="time" step="300" value="${htmlAttr(String(entry?.hora_inicio || "09:00").slice(0, 5))}" required></label>
-        <label>Hora de término<input name="hora_fin" type="time" step="300" value="${htmlAttr(String(entry?.hora_fin || "10:00").slice(0, 5))}" required></label>
+        <label>Hora de inicio<input name="hora_inicio" type="time" step="300" value="${htmlAttr(selectedStart)}" ${selectedSchedule ? `min="${selectedSchedule.start}" max="${selectedSchedule.end}"` : ""} required></label>
+        <label>Hora de término<input name="hora_fin" type="time" step="300" value="${htmlAttr(selectedEnd)}" ${selectedSchedule ? `min="${selectedSchedule.start}" max="${selectedSchedule.end}"` : ""} required></label>
         <label class="full">Detalle de la jornada<textarea name="detalle" rows="2" placeholder="Resultado, diagnóstico o avance realizado">${escapeHtml(entry?.detalle || "")}</textarea></label>
         <label>Estado
           <select name="estado" required>
@@ -24247,7 +24481,7 @@ function openInformaticsTaskDialog({ mode = "new", date = informaticsSelectedDat
             <option value="resuelta" ${resolve || task?.estado === "resuelta" ? "selected" : ""}>Labor terminada</option>
           </select>
         </label>
-        <div class="informatics-time-preview" id="informaticsTimePreview"><span>Tiempo de la jornada</span><strong>${informaticsDurationLabel(informaticsEntryMinutes({ hora_inicio: entry?.hora_inicio || "09:00", hora_fin: entry?.hora_fin || "10:00" }), true)}</strong></div>
+        <div class="informatics-time-preview" id="informaticsTimePreview">${informaticsTimePreviewHtml(selectedDate, selectedStart, selectedEnd)}</div>
       </div>
       <div class="modal-actions">
         <button type="button" class="secondary-button" data-action="close-informatics-dialog">Cancelar</button>
@@ -24451,11 +24685,13 @@ async function exportInformaticsWeeklyPdf() {
   const weekEnd = informaticsShiftDate(weekStart, 6);
   const tasks = informaticsFilteredTasks();
   const taskIds = new Set(tasks.map((task) => task.id));
-  const entries = (informaticsEntries || []).filter((entry) => taskIds.has(entry.labor_id) && entry.fecha >= weekStart && entry.fecha <= weekEnd);
+  const entries = (informaticsEntries || [])
+    .filter((entry) => taskIds.has(entry.labor_id) && entry.fecha >= weekStart && entry.fecha <= weekEnd);
   if (!entries.length) {
     showToast("No hay labores en el periodo y filtros seleccionados");
     return;
   }
+
   showToast("Generando reporte semanal...");
   try {
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
@@ -24467,86 +24703,278 @@ async function exportInformaticsWeeklyPdf() {
       const logoResponse = await fetch("logo-canelillo.png");
       if (logoResponse.ok) logo = await pdfDoc.embedPng(await logoResponse.arrayBuffer());
     } catch {}
+
     const size = [841.89, 595.28];
-    const margin = 34;
-    const green = rgb(0.02, 0.39, 0.27);
+    const margin = 28;
+    const contentWidth = size[0] - margin * 2;
+    const blue = rgb(0.07, 0.32, 0.62);
+    const blueSoft = rgb(0.89, 0.94, 0.99);
     const dark = rgb(0.08, 0.16, 0.13);
     const muted = rgb(0.36, 0.43, 0.40);
-    const pale = rgb(0.93, 0.97, 0.95);
+    const pale = rgb(0.95, 0.97, 0.96);
+    const line = rgb(0.78, 0.86, 0.82);
     const orange = rgb(0.86, 0.45, 0.06);
+    const completedTask = rgb(0.06, 0.48, 0.27);
+    const pendingTask = rgb(0.96, 0.72, 0.08);
+    const holiday = rgb(0.72, 0.16, 0.18);
+    const holidaySoft = rgb(1, 0.90, 0.90);
+    const white = rgb(1, 1, 1);
+    const weekDays = informaticsWeekDays(weekStart);
+    const totalMinutes = entries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+    const reportPeople = [...new Set(entries
+      .map((entry) => informaticsTaskById(entry.labor_id)?.informatico_id)
+      .filter(Boolean))]
+      .sort((a, b) => informaticsPersonName(a).localeCompare(informaticsPersonName(b), "es"));
+    const reportTaskIds = [...new Set(entries.map((entry) => entry.labor_id))];
+    const resolvedTasks = reportTaskIds
+      .filter((taskId) => informaticsTaskMetrics(informaticsTaskById(taskId), weekEnd).resolvedByReport)
+      .length;
     let page;
     let y;
 
-    const addPage = () => {
+    const addPage = (first = false) => {
       page = pdfDoc.addPage(size);
       y = size[1] - margin;
-      if (logo) page.drawImage(logo, { x: margin, y: y - 38, width: 48, height: 38 });
-      page.drawText("AGRICOLA EL CANELILLO", { x: logo ? 90 : margin, y: y - 10, size: 8, font: bold, color: green });
-      page.drawText("Reporte semanal de labores informáticas", { x: logo ? 90 : margin, y: y - 28, size: 18, font: bold, color: dark });
-      page.drawText(`${informaticsDateLabel(weekStart, { day: "2-digit", month: "long", year: "numeric" })} al ${informaticsDateLabel(weekEnd, { day: "2-digit", month: "long", year: "numeric" })}`, { x: logo ? 90 : margin, y: y - 43, size: 9, font: regular, color: muted });
-      page.drawText(`Generado por: ${informaticsUserName()}`, { x: 590, y: y - 12, size: 8, font: regular, color: muted });
-      page.drawLine({ start: { x: margin, y: y - 54 }, end: { x: size[0] - margin, y: y - 54 }, thickness: 1.2, color: green });
-      y -= 70;
-    };
-    const ensureSpace = (height) => { if (y - height < margin + 20) addPage(); };
-    const drawWrapped = (text, x, width, font, fontSize, color = dark, lineHeight = fontSize + 2) => {
-      const lines = informaticsPdfWrap(text, font, fontSize, width);
-      lines.forEach((line, index) => page.drawText(line, { x, y: y - index * lineHeight, size: fontSize, font, color }));
-      return lines.length * lineHeight;
-    };
-
-    addPage();
-    const totalMinutes = entries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
-    const reportPeople = [...new Set(entries.map((entry) => informaticsTaskById(entry.labor_id)?.informatico_id).filter(Boolean))];
-    page.drawRectangle({ x: margin, y: y - 44, width: size[0] - margin * 2, height: 44, color: pale });
-    page.drawText(`${entries.length}`, { x: margin + 15, y: y - 23, size: 16, font: bold, color: green });
-    page.drawText("jornadas", { x: margin + 48, y: y - 21, size: 8, font: regular, color: muted });
-    page.drawText(informaticsDurationLabel(totalMinutes, true), { x: margin + 180, y: y - 23, size: 16, font: bold, color: green });
-    page.drawText("trabajadas en la semana", { x: margin + 270, y: y - 21, size: 8, font: regular, color: muted });
-    page.drawText(`${reportPeople.length}`, { x: margin + 510, y: y - 23, size: 16, font: bold, color: green });
-    page.drawText("informáticos con actividad", { x: margin + 540, y: y - 21, size: 8, font: regular, color: muted });
-    y -= 60;
-
-    for (const personId of reportPeople.sort((a, b) => informaticsPersonName(a).localeCompare(informaticsPersonName(b), "es"))) {
-      const personEntries = entries.filter((entry) => informaticsTaskById(entry.labor_id)?.informatico_id === personId);
-      const personTaskIds = [...new Set(personEntries.map((entry) => entry.labor_id))];
-      ensureSpace(52);
-      page.drawRectangle({ x: margin, y: y - 24, width: size[0] - margin * 2, height: 24, color: green });
-      page.drawText(informaticsPersonName(personId), { x: margin + 10, y: y - 16, size: 11, font: bold, color: rgb(1, 1, 1) });
-      page.drawText(`${informaticsDurationLabel(personEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0), true)} en la semana`, { x: size[0] - margin - 130, y: y - 16, size: 8, font: regular, color: rgb(1, 1, 1) });
-      y -= 34;
-
-      for (const taskId of personTaskIds) {
-        const task = informaticsTaskById(taskId);
-        const taskWeekEntries = personEntries.filter((entry) => entry.labor_id === taskId);
-        const metrics = informaticsTaskMetrics(task, weekEnd);
-        const titleLines = informaticsPdfWrap(task.labor, bold, 9, 480);
-        const needed = 42 + titleLines.length * 11 + taskWeekEntries.length * 18;
-        ensureSpace(Math.min(needed, 150));
-        page.drawText(metrics.resolvedByReport ? "RESUELTA" : "PENDIENTE", { x: margin, y, size: 7, font: bold, color: metrics.resolvedByReport ? green : orange });
-        y -= 13;
-        y -= drawWrapped(task.labor, margin, 480, bold, 9, dark, 11);
-        page.drawText(`Semana: ${informaticsDurationLabel(taskWeekEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0), true)} | Acumulado: ${informaticsDurationLabel(metrics.minutes, true)} | ${metrics.workDays} días trabajados | ${metrics.calendarDays} días calendario`, { x: margin, y, size: 7.5, font: regular, color: muted });
-        y -= 15;
-        for (const entry of taskWeekEntries) {
-          const detailLines = informaticsPdfWrap(entry.detalle || "Sin detalle adicional", regular, 7.5, 500);
-          const entryHeight = Math.max(17, detailLines.length * 9 + 4);
-          ensureSpace(entryHeight + 4);
-          page.drawText(informaticsDateLabel(entry.fecha, { weekday: "short", day: "2-digit", month: "2-digit" }), { x: margin + 8, y, size: 7.5, font: bold, color: dark });
-          page.drawText(`${String(entry.hora_inicio).slice(0, 5)}-${String(entry.hora_fin).slice(0, 5)}`, { x: margin + 90, y, size: 7.5, font: regular, color: dark });
-          page.drawText(informaticsDurationLabel(informaticsEntryMinutes(entry), true), { x: margin + 155, y, size: 7.5, font: regular, color: green });
-          detailLines.forEach((line, index) => {
-            page.drawText(line, { x: margin + 230, y: y - index * 9, size: 7.5, font: regular, color: muted });
-          });
-          y -= entryHeight;
-        }
-        page.drawLine({ start: { x: margin, y }, end: { x: size[0] - margin, y }, thickness: 0.4, color: rgb(0.80, 0.86, 0.83) });
-        y -= 12;
+      if (first) {
+        if (logo) page.drawImage(logo, { x: margin, y: y - 34, width: 43, height: 34 });
+        page.drawText("AGRÍCOLA EL CANELILLO", { x: logo ? 80 : margin, y: y - 7, size: 7.5, font: bold, color: blue });
+        page.drawText("Reporte semanal de labores informáticas", { x: logo ? 80 : margin, y: y - 24, size: 16, font: bold, color: dark });
+        page.drawText(`${informaticsDateLabel(weekStart, { day: "2-digit", month: "long", year: "numeric" })} al ${informaticsDateLabel(weekEnd, { day: "2-digit", month: "long", year: "numeric" })}`, { x: logo ? 80 : margin, y: y - 38, size: 8, font: regular, color: muted });
+        page.drawText(`Generado por ${informaticsUserName()}`, { x: size[0] - margin - 190, y: y - 8, size: 7, font: regular, color: muted });
+        y -= 52;
+      } else {
+        page.drawText("Reporte semanal de labores informáticas", { x: margin, y, size: 8, font: bold, color: blue });
+        page.drawText(`${weekStart} al ${weekEnd}`, { x: size[0] - margin - 92, y, size: 7, font: regular, color: muted });
+        page.drawLine({ start: { x: margin, y: y - 7 }, end: { x: size[0] - margin, y: y - 7 }, thickness: 0.5, color: line });
+        y -= 19;
       }
-    }
+    };
+    const drawBox = (x, top, width, height, fill = white, border = line) => {
+      page.drawRectangle({ x, y: top - height, width, height, color: fill, borderColor: border, borderWidth: 0.45 });
+    };
+    const ensureSpace = (height) => {
+      if (y - height >= margin + 18) return false;
+      addPage(false);
+      return true;
+    };
+    const drawSummary = () => {
+      const summaryHeight = 34;
+      const summaryItems = [
+        ["HORAS SEMANA", informaticsDurationLabel(totalMinutes, true)],
+        ["LABORES", String(reportTaskIds.length)],
+        ["TERMINADAS", String(resolvedTasks)],
+        ["PENDIENTES", String(reportTaskIds.length - resolvedTasks)]
+      ];
+      const summaryWidth = contentWidth / summaryItems.length;
+      summaryItems.forEach(([label, value], index) => {
+        const x = margin + summaryWidth * index;
+        drawBox(x, y, summaryWidth, summaryHeight, index % 2 ? white : pale);
+        page.drawText(label, { x: x + 8, y: y - 11, size: 5.8, font: bold, color: muted });
+        page.drawText(value, { x: x + 8, y: y - 26, size: 10.5, font: bold, color: index === 3 ? orange : blue });
+      });
+      y -= summaryHeight + 7;
+      page.drawText("Jornada estándar: Lun 08:00-17:00 · Mar 08:00-18:00 · Mié 08:00-17:00 · Jue 08:00-18:00 · Vie 08:00-17:00", { x: margin + 6, y: y - 9, size: 6.5, font: regular, color: muted });
+      y -= 18;
+    };
+    const layoutDayEntries = (dailyEntries) => {
+      const laneEnds = [];
+      const positioned = [...dailyEntries]
+        .sort((a, b) => String(a.hora_inicio).localeCompare(String(b.hora_inicio)))
+        .map((entry) => {
+          const start = informaticsTimeMinutes(entry.hora_inicio);
+          const end = informaticsTimeMinutes(entry.hora_fin);
+          let laneIndex = laneEnds.findIndex((laneEnd) => start >= laneEnd);
+          if (laneIndex < 0) laneIndex = laneEnds.length;
+          laneEnds[laneIndex] = end;
+          return { entry, start, end, laneIndex };
+        });
+      return { positioned, laneCount: Math.max(1, laneEnds.length) };
+    };
+    const drawPersonGantt = (personId, personEntries) => {
+      const personMinutes = personEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+      const personTaskIds = [...new Set(personEntries.map((entry) => entry.labor_id))];
+      const chartHeaderHeight = 31;
+      const chartBodyHeight = 250;
+      const personHeaderHeight = 21;
+      ensureSpace(personHeaderHeight + chartHeaderHeight + chartBodyHeight + 12);
+
+      drawBox(margin, y, contentWidth, personHeaderHeight, blueSoft);
+      page.drawText(informaticsPersonName(personId), { x: margin + 8, y: y - 14, size: 8.5, font: bold, color: blue });
+      page.drawText(`${personTaskIds.length} labores · ${informaticsDurationLabel(personMinutes, true)}`, { x: size[0] - margin - 118, y: y - 14, size: 6.5, font: bold, color: blue });
+      y -= personHeaderHeight;
+
+      const timeWidth = 43;
+      const dayWidth = (contentWidth - timeWidth) / 7;
+      const chartTop = y;
+      drawBox(margin, chartTop, timeWidth, chartHeaderHeight, blue);
+      page.drawText("HORA", { x: margin + 9, y: chartTop - 19, size: 6.5, font: bold, color: white });
+      weekDays.forEach((date, dayIndex) => {
+        const x = margin + timeWidth + dayIndex * dayWidth;
+        const isHoliday = informaticsIsHoliday(date);
+        const weekday = new Date(`${date}T12:00:00`).getDay();
+        const isWeekend = weekday === 0 || weekday === 6;
+        drawBox(x, chartTop, dayWidth, chartHeaderHeight, isHoliday ? holidaySoft : (isWeekend ? pale : blueSoft), isHoliday ? holiday : line);
+        page.drawText(informaticsDateLabel(date, { weekday: "long" }).toUpperCase(), { x: x + 6, y: chartTop - 11, size: 6.4, font: bold, color: isHoliday ? holiday : blue });
+        page.drawText(informaticsDateLabel(date, { day: "2-digit", month: "2-digit", year: "numeric" }), { x: x + 6, y: chartTop - 22, size: 5.8, font: regular, color: muted });
+        if (isHoliday) page.drawText("FERIADO", { x: x + dayWidth - 34, y: chartTop - 22, size: 5.2, font: bold, color: holiday });
+      });
+      y -= chartHeaderHeight;
+
+      const bodyTop = y;
+      const bodyBottom = bodyTop - chartBodyHeight;
+      const startMinute = 8 * 60;
+      const endMinute = 18 * 60;
+      const minuteRange = endMinute - startMinute;
+      drawBox(margin, bodyTop, timeWidth, chartBodyHeight, white);
+      weekDays.forEach((date, dayIndex) => {
+        const x = margin + timeWidth + dayIndex * dayWidth;
+        const isHoliday = informaticsIsHoliday(date);
+        const schedule = informaticsScheduleForDate(date);
+        drawBox(x, bodyTop, dayWidth, chartBodyHeight, isHoliday ? holidaySoft : (schedule ? white : pale), isHoliday ? holiday : line);
+        if (schedule && informaticsTimeMinutes(schedule.end) < endMinute) {
+          const endY = bodyTop - ((informaticsTimeMinutes(schedule.end) - startMinute) / minuteRange) * chartBodyHeight;
+          page.drawRectangle({ x, y: bodyBottom, width: dayWidth, height: endY - bodyBottom, color: pale });
+        }
+        if (isHoliday) {
+          page.drawText("FERIADO", { x: x + dayWidth / 2 - 19, y: bodyTop - chartBodyHeight / 2, size: 8, font: bold, color: holiday });
+        }
+      });
+
+      for (let hour = 8; hour <= 18; hour += 1) {
+        const lineY = bodyTop - ((hour * 60 - startMinute) / minuteRange) * chartBodyHeight;
+        page.drawLine({ start: { x: margin, y: lineY }, end: { x: size[0] - margin, y: lineY }, thickness: hour === 8 || hour === 18 ? 0.65 : 0.35, color: line });
+        page.drawText(`${String(hour).padStart(2, "0")}:00`, { x: margin + 7, y: lineY - 3, size: 5.5, font: regular, color: muted });
+      }
+      for (let dayIndex = 0; dayIndex <= 7; dayIndex += 1) {
+        const x = margin + timeWidth + dayIndex * dayWidth;
+        page.drawLine({ start: { x, y: bodyTop }, end: { x, y: bodyBottom }, thickness: 0.45, color: line });
+      }
+
+      weekDays.forEach((date, dayIndex) => {
+        const dailyEntries = personEntries.filter((entry) => entry.fecha === date);
+        const { positioned, laneCount } = layoutDayEntries(dailyEntries);
+        const dayX = margin + timeWidth + dayIndex * dayWidth;
+        const laneWidth = (dayWidth - 4) / laneCount;
+        positioned.forEach(({ entry, start, end, laneIndex }) => {
+          const clippedStart = Math.max(startMinute, start);
+          const clippedEnd = Math.min(endMinute, end);
+          if (clippedEnd <= clippedStart) return;
+          const blockTop = bodyTop - ((clippedStart - startMinute) / minuteRange) * chartBodyHeight;
+          const blockBottom = bodyTop - ((clippedEnd - startMinute) / minuteRange) * chartBodyHeight;
+          const blockHeight = Math.max(6, blockTop - blockBottom);
+          const task = informaticsTaskById(entry.labor_id);
+          const taskMetrics = informaticsTaskMetrics(task, weekEnd);
+          const isHoliday = informaticsIsHoliday(date);
+          const fill = isHoliday ? holiday : (taskMetrics.resolvedByReport ? completedTask : pendingTask);
+          const blockTextColor = !isHoliday && !taskMetrics.resolvedByReport ? dark : white;
+          const blockX = dayX + 2 + laneIndex * laneWidth;
+          page.drawRectangle({ x: blockX, y: blockTop - blockHeight, width: Math.max(5, laneWidth - 2), height: blockHeight, color: fill, borderColor: white, borderWidth: 0.5 });
+          page.drawText(`${String(entry.hora_inicio).slice(0, 5)}-${String(entry.hora_fin).slice(0, 5)}`, { x: blockX + 2, y: blockTop - 7, size: 4.8, font: bold, color: blockTextColor });
+          if (blockHeight >= 16) {
+            const titleSize = 5.3;
+            const titleLineHeight = 6.1;
+            const titleWidth = Math.max(8, laneWidth - 6);
+            const wrappedTitle = informaticsPdfWrap(task?.labor || "Labor", bold, titleSize, titleWidth)
+              .flatMap((lineText) => {
+                const chunks = [];
+                let remaining = lineText;
+                while (remaining && bold.widthOfTextAtSize(remaining, titleSize) > titleWidth) {
+                  let cut = remaining.length;
+                  while (cut > 1 && bold.widthOfTextAtSize(remaining.slice(0, cut), titleSize) > titleWidth) cut -= 1;
+                  chunks.push(remaining.slice(0, cut));
+                  remaining = remaining.slice(cut);
+                }
+                if (remaining) chunks.push(remaining);
+                return chunks;
+              });
+            const maxTitleLines = Math.max(1, Math.floor((blockHeight - 12.5) / titleLineHeight));
+            const visibleTitle = wrappedTitle.slice(0, maxTitleLines);
+            if (wrappedTitle.length > maxTitleLines && visibleTitle.length) {
+              let lastLine = visibleTitle.at(-1).replace(/\.*$/, "").trimEnd();
+              while (lastLine && bold.widthOfTextAtSize(`${lastLine}...`, titleSize) > titleWidth) {
+                lastLine = lastLine.slice(0, -1).trimEnd();
+              }
+              visibleTitle[visibleTitle.length - 1] = lastLine ? `${lastLine}...` : "...";
+            }
+            visibleTitle.forEach((titleLine, titleIndex) => {
+              page.drawText(titleLine, { x: blockX + 2, y: blockTop - 14.5 - titleIndex * titleLineHeight, size: titleSize, font: bold, color: blockTextColor });
+            });
+          }
+        });
+      });
+      y = bodyBottom - 10;
+    };
+    const drawPersonDetails = (personId, personEntries) => {
+      ensureSpace(24);
+      page.drawText("LABORES Y DETALLE", { x: margin, y, size: 8, font: bold, color: blue });
+      page.drawText("Registros agrupados por fecha y ordenados por horario", { x: margin + 108, y, size: 6.2, font: regular, color: muted });
+      y -= 9;
+      page.drawLine({ start: { x: margin, y }, end: { x: size[0] - margin, y }, thickness: 0.6, color: line });
+      y -= 9;
+
+      const groupedDates = [...new Set(personEntries.map((entry) => entry.fecha))]
+        .sort((a, b) => a.localeCompare(b));
+      const timeColumnWidth = 76;
+      const detailX = margin + timeColumnWidth + 10;
+      const detailWidth = contentWidth - timeColumnWidth - 20;
+      const drawDateHeader = (date, dateEntries, continuation = false) => {
+        const isHoliday = informaticsIsHoliday(date);
+        const dailyMinutes = dateEntries.reduce((sum, entry) => sum + informaticsEntryMinutes(entry), 0);
+        const label = informaticsDateLabel(date, { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+        drawBox(margin, y, contentWidth, 21, isHoliday ? holidaySoft : blueSoft, isHoliday ? holiday : line);
+        page.drawText(`${label.toUpperCase()}${continuation ? " · CONTINUACIÓN" : ""}`, { x: margin + 8, y: y - 14, size: 7, font: bold, color: isHoliday ? holiday : blue });
+        page.drawText(`${dateEntries.length} ${dateEntries.length === 1 ? "registro" : "registros"} · ${informaticsDurationLabel(dailyMinutes, true)}${isHoliday ? " · FERIADO" : ""}`, { x: size[0] - margin - 124, y: y - 14, size: 6, font: bold, color: isHoliday ? holiday : muted });
+        y -= 21;
+      };
+
+      groupedDates.forEach((date) => {
+        const dateEntries = personEntries
+          .filter((entry) => entry.fecha === date)
+          .sort((a, b) => String(a.hora_inicio).localeCompare(String(b.hora_inicio)));
+        const rows = dateEntries.map((entry) => {
+          const task = informaticsTaskById(entry.labor_id);
+          const metrics = informaticsTaskMetrics(task, weekEnd);
+          const titleLines = informaticsPdfWrap(task?.labor || "Labor", bold, 7.2, detailWidth - 76).slice(0, 2);
+          const detailLines = informaticsPdfWrap(entry.detalle || "Sin descripción adicional", regular, 6.2, detailWidth).slice(0, 4);
+          const contentHeight = titleLines.length * 8 + detailLines.length * 7 + 13;
+          return { entry, task, metrics, titleLines, detailLines, height: Math.max(37, contentHeight) };
+        });
+        ensureSpace(21 + Math.min(rows[0]?.height || 37, 58) + 4);
+        drawDateHeader(date, dateEntries);
+
+        rows.forEach((row, rowIndex) => {
+          if (ensureSpace(row.height + 4)) drawDateHeader(date, dateEntries, true);
+          const rowTop = y;
+          drawBox(margin, rowTop, contentWidth, row.height, rowIndex % 2 ? white : pale);
+          page.drawLine({ start: { x: margin + timeColumnWidth, y: rowTop }, end: { x: margin + timeColumnWidth, y: rowTop - row.height }, thickness: 0.45, color: line });
+          page.drawText(`${String(row.entry.hora_inicio).slice(0, 5)} - ${String(row.entry.hora_fin).slice(0, 5)}`, { x: margin + 8, y: rowTop - 15, size: 6.8, font: bold, color: dark });
+          page.drawText(informaticsDurationLabel(informaticsEntryMinutes(row.entry), true), { x: margin + 8, y: rowTop - 27, size: 5.8, font: regular, color: muted });
+          row.titleLines.forEach((text, index) => page.drawText(text, { x: detailX, y: rowTop - 13 - index * 8, size: 7.2, font: bold, color: dark }));
+          const descriptionY = rowTop - 13 - row.titleLines.length * 8 - 2;
+          row.detailLines.forEach((text, index) => page.drawText(text, { x: detailX, y: descriptionY - index * 7, size: 6.2, font: regular, color: muted }));
+          const statusX = size[0] - margin - 68;
+          const statusFill = row.metrics.resolvedByReport ? completedTask : pendingTask;
+          const statusTextColor = row.metrics.resolvedByReport ? white : dark;
+          page.drawRectangle({ x: statusX, y: rowTop - 18, width: 62, height: 12, color: statusFill });
+          page.drawText(row.metrics.resolvedByReport ? "TERMINADA" : "PENDIENTE", { x: statusX + 6, y: rowTop - 14.2, size: 5.8, font: bold, color: statusTextColor });
+          page.drawText(`Acumulado labor: ${informaticsDurationLabel(row.metrics.minutes, true)}`, { x: detailX, y: rowTop - row.height + 7, size: 5.5, font: regular, color: muted });
+          y -= row.height;
+        });
+        y -= 8;
+      });
+    };
+
+    addPage(true);
+    drawSummary();
+    reportPeople.forEach((personId, index) => {
+      if (index > 0) addPage(false);
+      const personEntries = entries.filter((entry) => informaticsTaskById(entry.labor_id)?.informatico_id === personId);
+      drawPersonGantt(personId, personEntries);
+      drawPersonDetails(personId, personEntries);
+    });
 
     pdfDoc.getPages().forEach((pdfPage, index) => {
-      pdfPage.drawText(`Canelillo AgroCore | Página ${index + 1} de ${pdfDoc.getPageCount()}`, { x: margin, y: 16, size: 7, font: regular, color: muted });
+      pdfPage.drawText(`Canelillo AgroCore · Página ${index + 1} de ${pdfDoc.getPageCount()}`, { x: margin, y: 13, size: 6.2, font: regular, color: muted });
     });
     const bytes = await pdfDoc.save();
     const blob = new Blob([bytes], { type: "application/pdf" });
@@ -24562,7 +24990,6 @@ async function exportInformaticsWeeklyPdf() {
     showToast(`No se pudo generar el PDF: ${error.message}`);
   }
 }
-
 document.addEventListener("click", async (event) => {
   const target = event.target.closest?.("[data-action]");
   const action = target?.dataset.action || "";
@@ -24588,11 +25015,25 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "informaticsSelectedDate") { informaticsSelectedDate = event.target.value || todayChileIso(); renderInformatics(); }
   if (event.target.id === "informaticsPersonFilter") { informaticsPersonFilter = event.target.value || "Todos"; renderInformatics(); }
   if (event.target.id === "informaticsStatusFilter") { informaticsStatusFilter = event.target.value || "Todos"; renderInformatics(); }
-  if (event.target.closest?.("#informaticsTaskForm") && ["hora_inicio", "hora_fin"].includes(event.target.name)) {
+  if (event.target.closest?.("#informaticsTaskForm") && ["fecha", "hora_inicio", "hora_fin"].includes(event.target.name)) {
     const form = event.target.form;
-    const minutes = Math.max(0, informaticsTimeMinutes(form.elements.hora_fin.value) - informaticsTimeMinutes(form.elements.hora_inicio.value));
+    const schedule = informaticsScheduleForDate(form.elements.fecha.value);
+    [form.elements.hora_inicio, form.elements.hora_fin].forEach((input) => {
+      if (!input) return;
+      if (schedule) {
+        input.min = schedule.start;
+        input.max = schedule.end;
+      } else {
+        input.removeAttribute("min");
+        input.removeAttribute("max");
+      }
+    });
     const preview = document.getElementById("informaticsTimePreview");
-    if (preview) preview.innerHTML = `<span>Tiempo de la jornada</span><strong>${escapeHtml(informaticsDurationLabel(minutes, true))}</strong>`;
+    if (preview) preview.innerHTML = informaticsTimePreviewHtml(
+      form.elements.fecha.value,
+      form.elements.hora_inicio.value,
+      form.elements.hora_fin.value
+    );
   }
 });
 
@@ -24873,7 +25314,7 @@ document.addEventListener("click", async (event) => {
     renderProgram();
   }
   if (action === "clear-report-filter") {
-    reportFilters = { seasonId: "Todas", species: "Todas", programNumber: "Todos" };
+    reportFilters = { seasonId: "", species: "", programNumber: "Todos" };
     renderReports();
   }
   if (action === "clear-harvest-filter") {
@@ -25273,7 +25714,10 @@ if (resetDemoButton) {
 }
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker
+    .register("./sw.js?v=393-informaticos-detail-status", { updateViaCache: "none" })
+    .then((registration) => registration.update())
+    .catch(() => {}));
 }
 
 async function initApp() {

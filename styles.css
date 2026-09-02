@@ -245,6 +245,42 @@ body.auth-locked {
   background: #d9eee5;
 }
 
+.informatics-day.is-holiday {
+  border-color: #d98787;
+  background: #fff8f8;
+  box-shadow: inset 0 3px 0 #b91c1c;
+}
+
+.informatics-day.is-holiday > header {
+  background: #fee2e2;
+  border-bottom-color: #e8aaaa;
+}
+
+.informatics-day.is-holiday > header span,
+.informatics-day.is-holiday > header strong,
+.informatics-day.is-holiday > header small {
+  color: #8f1d1d;
+}
+
+.informatics-holiday-badge {
+  flex: 0 0 auto;
+  border: 1px solid #c75d5d;
+  border-radius: 4px;
+  background: #b91c1c;
+  color: #fff;
+  padding: 4px 6px;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.informatics-day.is-holiday .informatics-day-total {
+  border-bottom-color: #f0cccc;
+  background: #fff0f0;
+  color: #972828;
+}
+
 .informatics-day > header div,
 .informatics-day > header span,
 .informatics-day > header strong {
@@ -313,6 +349,26 @@ body.auth-locked {
   color: #84928d;
   font-size: 12px;
   text-align: center;
+}
+
+.informatics-holiday-empty {
+  align-content: center;
+  gap: 4px;
+  color: #a32929;
+}
+
+.informatics-holiday-empty strong,
+.informatics-holiday-empty span {
+  display: block;
+}
+
+.informatics-holiday-empty strong {
+  font-size: 13px;
+}
+
+.informatics-holiday-empty span {
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .informatics-entry-card {
@@ -12832,6 +12888,33 @@ th {
   font-weight: 700;
 }
 
+.report-water-comparison-list {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+
+.report-water-comparison {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.report-water-comparison span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-water-comparison small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .report-kpis {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -12840,6 +12923,47 @@ th {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+}
+
+.report-program-products-panel {
+  grid-column: 1 / -1;
+}
+
+.report-program-product-table {
+  max-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.report-program-product-table table {
+  min-width: 1180px;
+}
+
+.report-program-product-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #eef7f2;
+}
+
+.report-program-group-row td {
+  position: sticky;
+  left: 0;
+  padding: 8px 10px;
+  background: #dff1e8;
+  color: #0d513d;
+  border-top: 2px solid #9dcfba;
+}
+
+.report-program-group-row td,
+.report-program-group-row span {
+  white-space: normal;
+}
+
+.report-program-group-row strong,
+.report-program-group-row span {
+  display: inline-block;
+  margin-right: 16px;
 }
 
 .chart-panel {
@@ -24246,4 +24370,112 @@ dialog.informatics-staff-dialog {
   .informatics-staff-dialog .informatics-staff-list > div .user-avatar {
     display: grid;
   }
+}
+
+.informatics-day > header small {
+  display: block;
+  margin-top: 2px;
+  color: #477066;
+  font-size: 0.56rem;
+  font-weight: 800;
+}
+
+.informatics-time-preview small {
+  display: block;
+  color: #62766e;
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.informatics-time-preview small.is-outside {
+  color: #a34b16;
+}
+
+.informatics-module button,
+.informatics-task-dialog button,
+.informatics-staff-dialog button {
+  letter-spacing: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.informatics-toolbar-actions .primary-button,
+.informatics-toolbar-actions .secondary-button,
+.informatics-pending-list .primary-button,
+.informatics-task-dialog .modal-actions button,
+.informatics-staff-dialog .primary-button,
+.informatics-staff-dialog .secondary-button {
+  min-height: 34px;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.informatics-toolbar-actions .primary-button,
+.informatics-pending-list .primary-button,
+.informatics-task-dialog .primary-button,
+.informatics-staff-dialog .primary-button {
+  border: 1px solid #087557;
+  background: #087557;
+  color: #fff;
+}
+
+.informatics-toolbar-actions .secondary-button,
+.informatics-task-dialog .secondary-button,
+.informatics-staff-dialog .secondary-button {
+  border: 1px solid #b9d3c8;
+  background: #fff;
+  color: #145d49;
+}
+
+.informatics-module button:hover,
+.informatics-task-dialog button:hover,
+.informatics-staff-dialog button:hover {
+  filter: brightness(0.96);
+  transform: translateY(-1px);
+}
+
+.informatics-module button:focus-visible,
+.informatics-task-dialog button:focus-visible,
+.informatics-staff-dialog button:focus-visible {
+  outline: 3px solid rgb(28 139 105 / 22%);
+  outline-offset: 1px;
+}
+
+.informatics-day-add {
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.informatics-entry-actions .icon-action {
+  min-height: 28px;
+  border: 1px solid #c8dbd2;
+  border-radius: 5px;
+  background: #fff;
+  color: #315e51;
+  font-weight: 800;
+}
+
+.informatics-entry-actions .icon-action.primary {
+  border-color: #9fcbb9;
+  background: #e8f5ee;
+  color: #087052;
+}
+
+.informatics-week-navigation .icon-action {
+  border: 1px solid #bfd7cc;
+  border-radius: 6px;
+  background: #fff;
+  color: #0c674f;
+}
+
+.informatics-week-navigation .secondary-button {
+  min-height: 38px;
+  border: 1px solid #bfd7cc;
+  border-radius: 6px;
+  background: #f7fbf9;
+  color: #145d49;
+  font-weight: 800;
 }
