@@ -10510,6 +10510,17 @@ td span,
   font-weight: 900;
 }
 
+.harvest-report-range-summary {
+  margin: -4px 0 0;
+  padding: 8px 10px;
+  border: 1px solid #cde0d6;
+  border-radius: 6px;
+  background: #f3faf6;
+  color: #315548;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
 .harvest-report-fields {
   display: flex;
   flex-wrap: wrap;

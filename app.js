@@ -7094,6 +7094,31 @@ function closeHarvestReportDialog() {
   document.getElementById("harvestReportDialog")?.close();
 }
 
+function harvestReportFormRange(form) {
+  const data = new FormData(form);
+  const dateFrom = String(data.get("dateFrom") || "").trim();
+  const dateTo = String(data.get("dateTo") || "").trim();
+  const validIsoDate = /^\d{4}-\d{2}-\d{2}$/;
+  return {
+    dateFrom: validIsoDate.test(dateFrom) ? dateFrom : "",
+    dateTo: validIsoDate.test(dateTo) ? dateTo : ""
+  };
+}
+
+function harvestReportDisplayDate(value = "") {
+  const [year, month, day] = String(value).split("-");
+  return year && month && day ? `${day}-${month}-${year}` : "-";
+}
+
+function updateHarvestReportRangeSummary(form) {
+  const summary = form?.querySelector("[data-harvest-report-range-summary]");
+  if (!summary) return;
+  const { dateFrom, dateTo } = harvestReportFormRange(form);
+  summary.textContent = dateFrom && dateTo
+    ? `Se exportará desde ${harvestReportDisplayDate(dateFrom)} hasta ${harvestReportDisplayDate(dateTo)}, ambas fechas incluidas.`
+    : "Selecciona las dos fechas del informe.";
+}
+
 function openHarvestReportDialog() {
   const dialog = document.getElementById("harvestReportDialog");
   if (!dialog) return;
@@ -7111,6 +7136,7 @@ function openHarvestReportDialog() {
         <label>Desde<input name="dateFrom" type="date" required value="${htmlAttr(dateFrom)}"></label>
         <label>Hasta<input name="dateTo" type="date" required value="${htmlAttr(dateTo)}"></label>
       </div>
+      <p class="harvest-report-range-summary" data-harvest-report-range-summary></p>
       <div class="harvest-report-fields">
         <strong>Columnas del informe</strong>
         <span>Fecha de cosecha</span><span>Potrero</span><span>Bloque</span><span>Variedad</span>
@@ -7118,7 +7144,7 @@ function openHarvestReportDialog() {
       </div>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-harvest-report">Cancelar</button>
-        <button class="primary-button" type="submit" data-action="generate-harvest-report">Generar Excel</button>
+        <button class="primary-button" type="button" data-action="generate-harvest-report">Generar Excel</button>
       </div>
     </form>`;
   const form = dialog.querySelector("[data-harvest-report-form]");
@@ -7126,6 +7152,11 @@ function openHarvestReportDialog() {
     event.preventDefault();
     generateHarvestReportWorkbook(form);
   });
+  form?.querySelectorAll("input[type='date']").forEach((input) => {
+    input.addEventListener("input", () => updateHarvestReportRangeSummary(form));
+    input.addEventListener("change", () => updateHarvestReportRangeSummary(form));
+  });
+  updateHarvestReportRangeSummary(form);
   dialog.oncancel = (event) => {
     if (!harvestReportExporting) return;
     event.preventDefault();
@@ -7140,8 +7171,7 @@ async function generateHarvestReportWorkbook(form = document.querySelector("[dat
     showToast("No se pudo cargar el exportador Excel");
     return;
   }
-  const dateFrom = String(form.elements.dateFrom?.value || "");
-  const dateTo = String(form.elements.dateTo?.value || "");
+  const { dateFrom, dateTo } = harvestReportFormRange(form);
   if (!dateFrom || !dateTo || dateFrom > dateTo) {
     showToast("Selecciona un rango de fechas válido");
     return;
@@ -7159,6 +7189,9 @@ async function generateHarvestReportWorkbook(form = document.querySelector("[dat
     if (!rows.length) {
       showToast("No hay cosecha registrada en el rango seleccionado");
       return;
+    }
+    if (rows.some((row) => row["FECHA COSECHA"] < dateFrom || row["FECHA COSECHA"] > dateTo)) {
+      throw new Error("El informe contiene fechas fuera del rango solicitado");
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
     const workbook = window.XLSX.utils.book_new();
@@ -22489,10 +22522,41 @@ function renderMasters() {
   `;
 }
 
+const APPLICATION_ORDER_SEQUENCE_FLOOR = 670;
+
+function localNextApplicationOrderNumber() {
+  const highest = state.orders.reduce((maximum, order) => Math.max(maximum, Number(order.number) || 0), 0);
+  return Math.floor(Math.max(APPLICATION_ORDER_SEQUENCE_FLOOR, highest)) + 1;
+}
+
+async function nextApplicationOrderNumber() {
+  const localNext = localNextApplicationOrderNumber();
+  if (!supabaseSession) return localNext;
+  try {
+    const rows = await sbFetch("/rest/v1/ordenes_aplicacion?select=numero_orden&order=numero_orden.desc.nullslast&limit=1");
+    const cloudHighest = Number(rows?.[0]?.numero_orden) || 0;
+    return Math.floor(Math.max(APPLICATION_ORDER_SEQUENCE_FLOOR, localNext - 1, cloudHighest)) + 1;
+  } catch (error) {
+    console.warn("No se pudo verificar el siguiente numero correlativo de orden", error);
+    return localNext;
+  }
+}
+
+async function refreshNewOrderNumber(form) {
+  if (!form || form.dataset.orderId) return;
+  const numberInput = form.elements.number;
+  if (!numberInput) return;
+  numberInput.value = localNextApplicationOrderNumber();
+  const verifiedNumber = await nextApplicationOrderNumber();
+  if (!form.isConnected) return;
+  numberInput.value = verifiedNumber;
+}
+
 function openOrderDialog(orderId, presetProgramId = "") {
   const dialog = document.getElementById("orderDialog");
   const order = orderId ? state.orders.find((item) => item.id === orderId) : null;
-  const nextNumber = Math.max(0, ...state.orders.map((item) => Number(item.number) || 0)) + 1;
+  const initialSeasonId = order?.seasonId || state.settings.currentSeasonId || state.seasons[0]?.id || "";
+  const nextNumber = localNextApplicationOrderNumber();
   const selectedRecipe = order?.recipe || [];
   const potreros = uniquePotreros();
   const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
@@ -22510,8 +22574,8 @@ function openOrderDialog(orderId, presetProgramId = "") {
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
-        <label>Numero<input name="number" type="number" step="0.01" value="${order?.number || nextNumber}" readonly required></label>
-        <label>Temporada<select name="seasonId">${state.seasons.map((season) => `<option value="${season.id}" ${season.id === (order?.seasonId || state.settings.currentSeasonId) ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}</select></label>
+        <label>Numero<input name="number" type="number" min="1" step="1" value="${order?.number || nextNumber}" readonly required></label>
+        <label>Temporada<select name="seasonId">${state.seasons.map((season) => `<option value="${season.id}" ${season.id === initialSeasonId ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}</select></label>
         <label>Fecha de inicio<input name="plannedDate" type="date" value="${order ? orderStartDate(order) : new Date().toISOString().slice(0, 10)}" required></label>
         <label>Fecha termino aplicacion<input name="endDate" type="date" value="${order?.endDate || order?.plannedEndDate || (order ? orderStartDate(order) : new Date().toISOString().slice(0, 10))}" required></label>
         <div class="program-picker official-order-program-picker full">
@@ -22592,6 +22656,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
     </form>
   `;
   const formElement = document.getElementById("orderForm");
+  formElement.dataset.orderId = order?.id || "";
   formElement.dataset.savedNozzle = order?.nozzle || "";
   dialog.showModal();
   renderOrderProgramPicker(selectedPrograms);
@@ -22653,6 +22718,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
   dialog.addEventListener("click", removeOrderBlock);
   dialog.addEventListener("click", removeOrderProgram);
   document.getElementById("saveOrder").addEventListener("click", () => saveOrder(order?.id));
+  if (!order) refreshNewOrderNumber(formElement);
   if (presetProgramId && !order) applyOfficialProgramToOrder(presetProgramId);
   updateOrderRecipeCalculations();
 }
@@ -23151,6 +23217,11 @@ async function saveOrder(orderId) {
   if (!form.reportValidity()) return;
   syncAllRecipeProductPickers();
   const data = Object.fromEntries(new FormData(form));
+  if (!orderId) {
+    const verifiedNumber = await nextApplicationOrderNumber();
+    data.number = String(verifiedNumber);
+    form.elements.number.value = verifiedNumber;
+  }
   const selectedBlocks = data.blocks.split(",").map((item) => item.trim()).filter(Boolean);
   const selectedPrograms = data.programNumbers.split(",").map((item) => Number(item.trim())).filter(Boolean);
   if (!selectedBlocks.length) {
@@ -24466,15 +24537,15 @@ async function downloadApplicationOrderPdf(orderId) {
       const dose = Number(line.dose ?? line.dose100) || 0;
       const doseUnit = line.doseUnit || (line.doseBasis === "per_ha" ? `${product.unit || "kg/L"}/ha` : `${product.unit || "kg/L"}/100 L`);
       return [
-        { text: product.name || "Producto", bold: true }, `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
+        { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
         String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
         `${number(order.waterHa, 0)} L/ha`, order.objective || program?.objective || "-", `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
       ];
     });
     const recipeCount = Math.max(6, recipeRows.length);
-    while (recipeRows.length < recipeCount) recipeRows.push(Array(9).fill(""));
+    while (recipeRows.length < recipeCount) recipeRows.push(Array(10).fill(""));
     const productRowHeight = recipeCount > 8 ? Math.max(9, Math.min(13, 112 / recipeCount)) : 15;
-    top = pdfDrawTable(page, top, [100, 72, 72, 48, 48, 58, 70, 265, 72], ["Producto", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia etiqueta", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
+    top = pdfDrawTable(page, top, [95, 82, 66, 66, 45, 45, 55, 65, 215, 71], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia etiqueta", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
       x: margin, headerHeight: 24, rowHeight: productRowHeight, headerSize: 6.1, rowSize: recipeCount > 8 ? 5.7 : 6.3,
       font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border
     });
@@ -26657,6 +26728,11 @@ document.addEventListener("click", async (event) => {
   if (action === "close-harvest-report") {
     closeHarvestReportDialog();
   }
+  if (action === "generate-harvest-report") {
+    event.preventDefault();
+    await generateHarvestReportWorkbook(actionTarget.closest("[data-harvest-report-form]"));
+    return;
+  }
   if (action === "select-harvest-analysis-species") {
     harvestAnalysisSelectedSpecies = actionTarget.dataset.value || "Todas";
     renderHarvestAnalysis();
@@ -27173,7 +27249,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=408-cache-refresh", { updateViaCache: "none" })
+    .register("./sw.js?v=412-global-order-counter", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
