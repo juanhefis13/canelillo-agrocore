@@ -3,7 +3,7 @@ import path from "node:path";
 
 const sourcePath = process.argv[2];
 if (!sourcePath || !fs.existsSync(sourcePath)) {
-  throw new Error("Uso: node tools/build_programa_fitosanitario.mjs <programa_rows.json>");
+  throw new Error("Uso: node tools/build_programa_fitosanitario.mjs <programa_rows.json> [temporada] [salida.sql]");
 }
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -40,6 +40,12 @@ const doseMeta = (unitValue) => {
   return { basis: "unknown", outputUnit: "kg/L", divisor: 1 };
 };
 const sqlQuote = (value) => value === null || value === undefined ? "null" : `'${String(value).replace(/'/g, "''")}'`;
+const requestedSeason = process.argv[3] ? seasonInfo(process.argv[3]).name : "";
+const sqlOutputName = process.argv[4] || "supabase_programa_fitosanitario.sql";
+const requestedYears = requestedSeason.match(/\d{4}-\d{4}/)?.[0]?.replace("-", "_") || "";
+const reportOutputName = requestedSeason
+  ? `PROGRAMA_FITOSANITARIO_${requestedYears}_IMPORTACION.md`
+  : "PROGRAMA_FITOSANITARIO_IMPORTACION.md";
 
 const rawRows = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 const rows = rawRows.map((raw) => {
@@ -47,9 +53,12 @@ const rows = rawRows.map((raw) => {
   const crop = sourceSpecies === "NARANJOS" ? "NARANJA" : sourceSpecies;
   const season = seasonInfo(raw.temporada);
   const isLateSet = [146, 147, 148].includes(Number(raw.excelRow));
-  const appNumber = numberOrNull(raw.numeroAplicacion) ?? (isLateSet ? 7 : null);
-  const code = isLateSet ? "7-TARDIA" : String(appNumber ?? `SIN-NUMERO-${raw.excelRow}`);
-  const productName = compactText(raw.producto) || (Number(raw.excelRow) === 220 ? "UREA" : "");
+  const sourceCode = compactText(raw.numeroAplicacion);
+  const leadingNumber = sourceCode.match(/^\d+/)?.[0];
+  const appNumber = numberOrNull(raw.numeroAplicacion) ?? numberOrNull(leadingNumber) ?? (isLateSet ? 7 : null);
+  const code = isLateSet ? "7-TARDIA" : sourceCode || String(appNumber ?? `SIN-NUMERO-${raw.excelRow}`);
+  const inferredUreaRow = [220, 474].includes(Number(raw.excelRow));
+  const productName = compactText(raw.producto) || (inferredUreaRow ? "UREA" : "");
   const unit = compactText(raw.unidad);
   const dose = numberOrNull(raw.dosis);
   const meta = doseMeta(unit);
@@ -61,7 +70,8 @@ const rows = rawRows.map((raw) => {
     carency: cleanText(raw.carencia), observations: cleanText(raw.observaciones),
     incomplete: !productName || dose === null || meta.basis === "unknown"
   };
-}).filter((row) => row.appNumber !== null && row.productName);
+}).filter((row) => row.appNumber !== null && row.productName)
+  .filter((row) => !requestedSeason || row.season.name === requestedSeason);
 
 const groupMap = new Map();
 for (const row of rows) {
@@ -124,8 +134,10 @@ const catalog = {
   programs
 };
 
-fs.mkdirSync(path.join(root, "data"), { recursive: true });
-fs.writeFileSync(path.join(root, "data", "programa_fitosanitario.json"), JSON.stringify(catalog, null, 2) + "\n");
+if (!requestedSeason) {
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+  fs.writeFileSync(path.join(root, "data", "programa_fitosanitario.json"), JSON.stringify(catalog, null, 2) + "\n");
+}
 
 const programRows = programs.map((program) => ({
   source_key: program.sourceKey,
@@ -207,6 +219,7 @@ create index if not exists programa_productos_programa_id_idx on public.programa
 create index if not exists programa_productos_producto_id_idx on public.programa_productos(producto_id);
 
 alter table public.orden_productos add column if not exists programa_producto_id uuid references public.programa_productos(id);
+alter table public.orden_productos add column if not exists numero_programa integer;
 alter table public.orden_productos add column if not exists dosis numeric(14,4);
 alter table public.orden_productos add column if not exists unidad_dosis text;
 alter table public.orden_productos add column if not exists base_dosis text;
@@ -289,7 +302,10 @@ select * from jsonb_to_recordset($productos$${JSON.stringify(productRows)}$produ
 delete from public.programa_productos pp
 using public.programas pr
 where pp.programa_id = pr.id
-  and pr.fuente = 'PROGRAMA.xlsx';
+  and exists (
+    select 1 from tmp_programas_fitosanitarios x
+    where x.source_key = pr.clave_fuente
+  );
 
 insert into public.programa_productos (
   programa_id, producto_id, nombre_producto_oficial, tipo_producto, dosis,
@@ -332,14 +348,22 @@ end $$;
 commit;
 
 select
-  (select count(*) from public.programas where fuente = 'PROGRAMA.xlsx') as programas_oficiales,
-  (select count(*) from public.programa_productos pp join public.programas p on p.id = pp.programa_id where p.fuente = 'PROGRAMA.xlsx') as lineas_producto,
-  (select count(*) from public.programa_productos pp join public.programas p on p.id = pp.programa_id where p.fuente = 'PROGRAMA.xlsx' and pp.incompleto) as lineas_por_revisar;
+  (select count(*) from public.programas p where p.clave_fuente like '${requestedSeason || "CITRICOS TEMPORADA %"}|%') as programas_oficiales,
+  (select count(*) from public.programa_productos pp join public.programas p on p.id = pp.programa_id where p.clave_fuente like '${requestedSeason || "CITRICOS TEMPORADA %"}|%') as lineas_producto,
+  (select count(*) from public.programa_productos pp join public.programas p on p.id = pp.programa_id where p.clave_fuente like '${requestedSeason || "CITRICOS TEMPORADA %"}|%' and pp.incompleto) as lineas_por_revisar;
 `;
 
-fs.writeFileSync(path.join(root, "supabase_programa_fitosanitario.sql"), sql);
+fs.writeFileSync(path.join(root, sqlOutputName), sql);
 
-const report = `# Importacion Programa Fitosanitario\n\n- Programas oficiales: ${catalog.summary.programs}\n- Lineas de producto: ${catalog.summary.productLines}\n- Productos unicos: ${catalog.summary.uniqueProducts}\n- Lineas por revisar: ${catalog.summary.incompleteLines}\n\n## Criterios aplicados\n\n- \`NARANJOS\` se normaliza como \`NARANJA\`; el valor original queda en \`especie_fuente\`.\n- Las filas 146 a 148 sin numero se agrupan como aplicacion \`7-TARDIA\`, porque forman la etapa de cuaja tardia entre las aplicaciones 7 y 8.\n- La fila 220 se registra como \`UREA\`, indicada expresamente en el objetivo de esa fila.\n- Las dosis ausentes o unidades no interpretables quedan con \`incompleto = true\`; no se inventan cantidades.\n- Las fechas numericas de Excel se convierten a fecha ISO.\n\n## Filas por revisar\n\n- 68: GARLON sin dosis.\n- 81 y 84: PROTECTOR SOLAR sin dosis ni unidad.\n- 190: ENVIDOR con dosis, pero sin unidad.\n- 224 a 227: FOSTROL, FOSFIMAX4020, FOSFIMAX y BIOREND sin dosis.\n- 235: POLI MAGNESIO contiene \`200\` en la columna unidad.\n\nEstas lineas aparecen en el catalogo, pero no se copian a una orden hasta completar su dosis oficial.\n\n## Ejecucion\n\nEjecuta \`supabase_programa_fitosanitario.sql\` completo en Supabase SQL Editor. El bloque final informa cuantas filas quedaron cargadas.\n`;
-fs.writeFileSync(path.join(root, "PROGRAMA_FITOSANITARIO_IMPORTACION.md"), report);
+const incompleteReport = rows
+  .filter((row) => row.incomplete)
+  .map((row) => `- Fila ${row.excelRow}: ${row.productName}; ${row.dose === null ? "sin dosis" : `dosis ${row.dose}`} y ${row.doseUnit ? `unidad ${row.doseUnit}` : "sin unidad"}.`)
+  .join("\n") || "- Sin lineas pendientes.";
+const inferredRows = rows
+  .filter((row) => [220, 474].includes(row.excelRow) && row.productName === "UREA")
+  .map((row) => row.excelRow)
+  .join(", ");
+const report = `# Importacion Programa Fitosanitario${requestedSeason ? ` ${requestedSeason}` : ""}\n\n- Programas oficiales: ${catalog.summary.programs}\n- Lineas de producto: ${catalog.summary.productLines}\n- Productos unicos: ${catalog.summary.uniqueProducts}\n- Lineas por revisar: ${catalog.summary.incompleteLines}\n\n## Criterios aplicados\n\n- \`NARANJOS\` se normaliza como \`NARANJA\`; el valor original queda en \`especie_fuente\`.\n- Los codigos alfanumericos, como \`7A\`, se conservan en \`codigo_aplicacion\`.\n${inferredRows ? `- ${inferredRows.includes(",") ? "Las filas" : "La fila"} ${inferredRows} se ${inferredRows.includes(",") ? "registran" : "registra"} como \`UREA\`, indicada expresamente en el objetivo.\n` : ""}- Las dosis ausentes o unidades no interpretables quedan con \`incompleto = true\`; no se inventan cantidades.\n- Las fechas numericas de Excel se convierten a fecha ISO.\n\n## Filas por revisar\n\n${incompleteReport}\n\nEstas lineas aparecen en el catalogo, pero no se copian a una orden hasta completar su dosis oficial.\n\n## Ejecucion\n\nEjecuta \`${sqlOutputName}\` completo en Supabase SQL Editor. El bloque final informa cuantas filas quedaron cargadas.\n`;
+fs.writeFileSync(path.join(root, reportOutputName), report);
 
-console.log(JSON.stringify(catalog.summary, null, 2));
+console.log(JSON.stringify({ ...catalog.summary, season: requestedSeason || "todas", sql: sqlOutputName, report: reportOutputName }, null, 2));

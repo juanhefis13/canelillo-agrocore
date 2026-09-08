@@ -20448,7 +20448,7 @@ async function cloudSaveOrder(order) {
       await sbFetch("/rest/v1/orden_productos", {
         method: "POST",
         prefer: "return=minimal",
-        body: JSON.stringify(recipeRows.map(({ programa_producto_id, dosis, unidad_dosis, base_dosis, unidad_resultado, divisor_conversion, ...row }) => row))
+        body: JSON.stringify(recipeRows.map(({ programa_producto_id, numero_programa, dosis, unidad_dosis, base_dosis, unidad_resultado, divisor_conversion, ...row }) => row))
       });
       showToast("Receta guardada con compatibilidad. Ejecuta la migración del Programa Fitosanitario para conservar la dosis oficial completa");
     }
@@ -22576,11 +22576,11 @@ async function refreshNewOrderNumber(form) {
 function openOrderDialog(orderId, presetProgramId = "") {
   const dialog = document.getElementById("orderDialog");
   const order = orderId ? state.orders.find((item) => item.id === orderId) : null;
-  const initialSeasonId = order?.seasonId || state.settings.currentSeasonId || state.seasons[0]?.id || "";
+  const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
+  const initialSeasonId = order?.seasonId || selectedOfficialProgram?.seasonId || state.settings.currentSeasonId || state.seasons[0]?.id || "";
   const nextNumber = localNextApplicationOrderNumber();
   const selectedRecipe = order?.recipe || [];
   const potreros = uniquePotreros();
-  const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
   const selectedPrograms = order?.programNumbers?.length
     ? order.programNumbers
     : selectedOfficialProgram ? [selectedOfficialProgram.number] : [order?.programNumber].filter(Boolean);
@@ -22606,7 +22606,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
             <label>Programa Fitosanitario
               <select id="officialProgramSelect">
                 <option value="">Seleccionar aplicación oficial</option>
-                ${officialProgramOrderOptions(selectedOfficialProgram?.id || "")}
+                ${officialProgramOrderOptions(selectedOfficialProgram?.id || "", initialSeasonId)}
               </select>
             </label>
             <button type="button" class="secondary-button" id="applyOfficialProgram">Añadir programa</button>
@@ -22683,6 +22683,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
   renderOrderProgramPicker(selectedPrograms);
   renderOrderBlockPicker(order?.blocks || []);
   renderOrderNozzlePicker();
+  refreshOfficialProgramSelect(formElement, selectedOfficialProgram?.id || "");
   document.querySelector('[name="classification"]').addEventListener("change", () => {
     const form = document.getElementById("orderForm");
     renderOrderBlockPicker(form.classification.value === "P" ? normalizeBlocksForPulverization(selectedOrderBlocks(), form.potrero.value) : []);
@@ -22705,6 +22706,18 @@ function openOrderDialog(orderId, presetProgramId = "") {
   document.querySelector('[name="plannedDate"]').addEventListener("change", (event) => {
     const endInput = document.querySelector('[name="endDate"]');
     if (endInput.value < event.target.value) endInput.value = event.target.value;
+  });
+  formElement.elements.seasonId.addEventListener("change", () => {
+    const programRecipeRows = [...formElement.querySelectorAll(".recipe-line:not(.recipe-line-head)")]
+      .filter((row) => row.querySelector('[name="programProductId"]')?.value);
+    const hadProgramData = selectedOrderPrograms().length > 0 || programRecipeRows.length > 0;
+    formElement.elements.programId.value = "";
+    formElement.elements.programNumbers.value = "";
+    programRecipeRows.forEach((row) => row.remove());
+    renderOrderProgramPicker([]);
+    refreshOfficialProgramSelect(formElement, "", true);
+    updateOrderRecipeCalculations();
+    if (hadProgramData) showToast("Se limpiaron los programas anteriores para usar la temporada seleccionada");
   });
   document.getElementById("addBlockToOrder").addEventListener("click", addSelectedBlockToOrder);
   document.getElementById("applyOfficialProgram").addEventListener("click", applyOfficialProgramToOrder);
@@ -22730,6 +22743,10 @@ function openOrderDialog(orderId, presetProgramId = "") {
       syncRecipeProductPicker(event.target.closest(".recipe-line"));
       updateOrderRecipeCalculations();
     }
+    if (event.target.matches('[name="lineProgramNumber"]')) {
+      syncRecipeLineProgram(event.target.closest(".recipe-line"), true);
+      updateOrderRecipeCalculations();
+    }
   });
   document.getElementById("recipeLines").addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-open-recipe-product]");
@@ -22744,15 +22761,27 @@ function openOrderDialog(orderId, presetProgramId = "") {
   updateOrderRecipeCalculations();
 }
 
-function officialProgramOrderOptions(selectedId = "") {
-  const programs = officialPrograms().filter((program) => program.cloudReady).sort((a, b) => officialProgramSeasonLabel(b).localeCompare(officialProgramSeasonLabel(a)) || a.crop.localeCompare(b.crop) || a.number - b.number);
+function officialProgramOrderOptions(selectedId = "", seasonId = "") {
+  const programs = officialPrograms()
+    .filter((program) => program.cloudReady)
+    .filter((program) => !seasonId || String(program.seasonId) === String(seasonId))
+    .sort((a, b) => a.crop.localeCompare(b.crop) || a.number - b.number || String(a.code).localeCompare(String(b.code), "es", { numeric: true }));
   const grouped = programs.reduce((acc, program) => {
-    const label = `${officialProgramSeasonLabel(program)} · ${program.crop}`;
+    const label = program.crop;
     acc[label] ||= [];
     acc[label].push(program);
     return acc;
   }, {});
   return Object.entries(grouped).map(([label, items]) => `<optgroup label="${htmlAttr(label)}">${items.map((program) => `<option value="${htmlAttr(program.id)}" ${String(program.id) === String(selectedId) ? "selected" : ""}>N° ${escapeHtml(program.code || program.number)} · ${escapeHtml(program.stage || program.epoch || program.objective)}</option>`).join("")}</optgroup>`).join("");
+}
+
+function refreshOfficialProgramSelect(form, selectedId = "", focusSelect = false) {
+  const select = form?.querySelector("#officialProgramSelect");
+  if (!select) return;
+  const options = officialProgramOrderOptions(selectedId, form.elements.seasonId.value);
+  select.innerHTML = `<option value="">${options ? "Seleccionar aplicación oficial" : "Sin programas para esta temporada"}</option>${options}`;
+  select.disabled = !options;
+  if (options && focusSelect) select.focus({ preventScroll: true });
 }
 
 function applyOfficialProgramToOrder(programId = "") {
@@ -22999,7 +23028,59 @@ function removeOrderProgram(event) {
 
 function programOptions(programs, selected) {
   const values = programs.length ? programs : [selected].filter(Boolean);
-  return values.map((program) => `<option value="${program}" ${String(program) === String(selected) ? "selected" : ""}>Programa ${program}</option>`).join("");
+  return values.map((program) => {
+    const form = document.getElementById("orderForm");
+    const preferred = state.programs.find((item) => String(item.id) === String(form?.elements.programId?.value || ""));
+    const definition = Number(preferred?.number) === Number(program)
+      ? preferred
+      : officialPrograms().find((item) => String(item.seasonId) === String(form?.elements.seasonId?.value || "") && Number(item.number) === Number(program));
+    const label = definition?.code || program;
+    return `<option value="${program}" ${String(program) === String(selected) ? "selected" : ""}>Programa ${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
+function selectedOfficialProgramForRecipe(programNumber) {
+  const form = document.getElementById("orderForm");
+  if (!form) return null;
+  const preferred = state.programs.find((program) => String(program.id) === String(form.elements.programId?.value || ""));
+  if (preferred?.official && Number(preferred.number) === Number(programNumber)) return preferred;
+  const cropValues = normalizeCatalogText(form.elements.crop?.value || "").split(",").map((value) => value.trim()).filter(Boolean);
+  return officialPrograms().find((program) => program.cloudReady
+    && String(program.seasonId) === String(form.elements.seasonId?.value || "")
+    && Number(program.number) === Number(programNumber)
+    && (!cropValues.length || cropValues.includes(normalizeCatalogText(program.crop)))) || null;
+}
+
+function syncRecipeLineProgram(line, applyOfficialDose = false) {
+  if (!line) return null;
+  const programNumber = Number(line.querySelector('[name="lineProgramNumber"]')?.value);
+  const productId = line.querySelector('[name="productId"]')?.value || "";
+  const program = selectedOfficialProgramForRecipe(programNumber);
+  const officialLine = programProductsFor(program?.id).find((item) => String(item.productId) === String(productId)) || null;
+  const programProductInput = line.querySelector('[name="programProductId"]');
+  if (programProductInput) programProductInput.value = officialLine?.id || "";
+  if (!officialLine || !applyOfficialDose || officialLine.incomplete || !(Number(officialLine.dose) > 0)) return officialLine;
+
+  const values = {
+    doseBasis: officialLine.basis || "per_100l",
+    doseUnit: officialLine.unit || "",
+    outputUnit: officialLine.outputUnit || "",
+    doseDivisor: Number(officialLine.divisor) || 1,
+    dose100: Number(officialLine.dose) || 0
+  };
+  Object.entries(values).forEach(([name, value]) => {
+    const input = line.querySelector(`[name="${name}"]`);
+    if (input) input.value = value;
+  });
+  const doseLabel = line.querySelector(".recipe-dose-control small");
+  const resultLabel = line.querySelector(".recipe-result-control small");
+  if (doseLabel) doseLabel.textContent = officialLine.unit || "Unidad pendiente";
+  if (resultLabel) resultLabel.textContent = `${officialLine.outputUnit || getProduct(productId)?.unit || "kg/L"}/ha`;
+  return officialLine;
+}
+
+function syncAllRecipeLinePrograms() {
+  document.querySelectorAll(".recipe-line:not(.recipe-line-head)").forEach((line) => syncRecipeLineProgram(line));
 }
 
 function resolveRecipeProductByText(value = "") {
@@ -23121,6 +23202,7 @@ function selectRecipeProduct(productId) {
   const resultLabel = line.querySelector(".recipe-result-control small");
   if (doseLabel) doseLabel.textContent = `${product.unit || "kg/L"} por 100 L`;
   if (resultLabel) resultLabel.textContent = `${product.unit || "kg/L"}/ha`;
+  syncRecipeLineProgram(line, true);
   document.getElementById("recipeProductDialog")?.close();
   updateOrderRecipeCalculations();
 }
@@ -23237,6 +23319,7 @@ async function saveOrder(orderId) {
   const form = document.getElementById("orderForm");
   if (!form.reportValidity()) return;
   syncAllRecipeProductPickers();
+  syncAllRecipeLinePrograms();
   const data = Object.fromEntries(new FormData(form));
   if (!orderId) {
     const verifiedNumber = await nextApplicationOrderNumber();
@@ -27270,7 +27353,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=413-order-sequence-671", { updateViaCache: "none" })
+    .register("./sw.js?v=415-program-product-link", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
