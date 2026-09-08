@@ -570,6 +570,8 @@ let fertilizerTanks = [];
 let fertilizerFields = [];
 let fertilizerPreparationHistory = [];
 let fertilizerApplicationHistory = [];
+let fertilizerRevertedPreparationHistory = [];
+let fertilizerRevertedApplicationHistory = [];
 let fertilizerApplicationConsumptions = [];
 let fertilizerConsumptionTraceAvailable = false;
 let fertilizerUserNames = new Map();
@@ -11484,7 +11486,7 @@ async function loadFertilizerApplicationConsumptionsForModule() {
 }
 
 async function loadFertilizerUserNamesForHistory(rows = []) {
-  const ids = [...new Set(rows.flatMap((row) => [row.responsable_id, row.creado_por, row.modificado_por]).filter(Boolean))];
+  const ids = [...new Set(rows.flatMap((row) => [row.responsable_id, row.creado_por, row.modificado_por, row.revertida_por]).filter(Boolean))];
   const names = new Map();
   if (currentProfile?.id && currentProfile?.full_name) names.set(currentProfile.id, currentProfile.full_name);
   if (supabaseSession?.user?.id) names.set(
@@ -11561,14 +11563,17 @@ async function loadFertilizerRowsFromSupabase() {
     hectares: Number(field.hectareas) || 0
   })).sort((a, b) => comparePotrero(a.potrero, b.potrero) || String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
   fertilizerStockLots = lotsRaw;
-  fertilizerPreparationHistory = preparationsRaw;
-  fertilizerApplicationHistory = applicationsRaw;
-  fertilizerApplicationConsumptions = consumptionsRaw;
+  fertilizerPreparationHistory = preparationsRaw.filter((row) => !row.revertida);
+  fertilizerApplicationHistory = applicationsRaw.filter((row) => !row.revertida);
+  fertilizerRevertedPreparationHistory = preparationsRaw.filter((row) => row.revertida);
+  fertilizerRevertedApplicationHistory = applicationsRaw.filter((row) => row.revertida);
+  const activeApplicationIds = new Set(fertilizerApplicationHistory.map((row) => row.id));
+  fertilizerApplicationConsumptions = consumptionsRaw.filter((row) => activeApplicationIds.has(row.aplicacion_id));
   fertilizerHistoryLoadError = historyErrors.join(" | ");
   fertilizerUserNames = await loadFertilizerUserNamesForHistory([...preparationsRaw, ...applicationsRaw, ...lotsRaw]);
   fertilizerStockRows = computeFertilizerStockRows({
     lots: lotsRaw,
-    preparations: preparationsRaw,
+    preparations: fertilizerPreparationHistory,
     products: fertilizerProducts,
     casetas: fertilizerCasetas,
     tanks: tanksRaw
@@ -11589,6 +11594,8 @@ async function loadFertilizerRowsFromLocalBackup() {
   fertilizerFields = [];
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
+  fertilizerRevertedPreparationHistory = [];
+  fertilizerRevertedApplicationHistory = [];
   fertilizerApplicationConsumptions = [];
   fertilizerConsumptionTraceAvailable = false;
   fertilizerUserNames = new Map();
@@ -11737,7 +11744,7 @@ async function loadFertilizerReportRows() {
   const visibleTankKeys = new Set(visibleRows.map((row) =>
     `${fertilizerReportKey(row.caseta)}|${fertilizerReportKey(row.numeroEstanque)}|${fertilizerReportKey(row.fip)}|${Number(row.volumenMaximoLitros) || 0}`
   ));
-  const [applications, preparations, consumptions, products, tanks, casetas, campos, lots] = await Promise.all([
+  const [applicationsRaw, preparationsRaw, consumptionsRaw, products, tanks, casetas, campos, lots] = await Promise.all([
     sbSelectAll("fertilizante_aplicaciones", "select=*&order=fecha.desc", 5000),
     sbSelectAll("fertilizante_preparaciones", "select=*&order=fecha.asc", 5000),
     sbSelectAll("fertilizante_aplicacion_consumos", "select=*&order=creado_en.asc", 10000).catch(() => []),
@@ -11747,6 +11754,10 @@ async function loadFertilizerReportRows() {
     sbSelectAll("campos", "select=id,potrero,bloque,hectareas", 5000),
     sbSelectAll("fertilizante_lotes", "select=*&activo=eq.true", 5000).catch(() => [])
   ]);
+  const applications = applicationsRaw.filter((row) => !row.revertida);
+  const preparations = preparationsRaw.filter((row) => !row.revertida);
+  const activeApplicationIds = new Set(applications.map((row) => row.id));
+  const consumptions = consumptionsRaw.filter((row) => activeApplicationIds.has(row.aplicacion_id));
 
   const tanksById = new Map(tanks.map((tank) => [tank.id, tank]));
   const casetasById = new Map(casetas.map((caseta) => [caseta.id, caseta]));
@@ -12199,6 +12210,8 @@ function resetFertilizerLoadedState() {
   fertilizerStockLots = [];
   fertilizerPreparationHistory = [];
   fertilizerApplicationHistory = [];
+  fertilizerRevertedPreparationHistory = [];
+  fertilizerRevertedApplicationHistory = [];
   fertilizerApplicationConsumptions = [];
   fertilizerConsumptionTraceAvailable = false;
   fertilizerUserNames = new Map();
@@ -12231,6 +12244,49 @@ function fertilizerHistoryUser(row) {
   const cleaned = String(rawName).trim();
   if (!cleaned.includes("@")) return cleaned;
   return cleaned.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function fertilizerReversalUser(row) {
+  const rawName = fertilizerUserNames.get(row?.revertida_por) || row?.revertida_por_nombre || "";
+  if (!rawName) return "Usuario no identificado";
+  const cleaned = String(rawName).trim();
+  if (!cleaned.includes("@")) return cleaned;
+  return cleaned.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function fertilizerCanRevertOperations() {
+  return hasRole("admin", "supervisor", "bodeguero");
+}
+
+function fertilizerPreparationHasActiveConsumption(preparationId) {
+  return (fertilizerApplicationConsumptions || []).some((row) => row.preparacion_id === preparationId);
+}
+
+function renderFertilizerReversalState(row) {
+  if (!row?.revertida) return `<span class="fertilizer-history-state is-active">Activa</span>`;
+  return `
+    <div class="fertilizer-history-reversal-detail">
+      <span class="fertilizer-history-state is-reverted">Revertida</span>
+      <small>${escapeHtml(fertilizerReportDateTime(row.revertida_en))} · ${escapeHtml(fertilizerReversalUser(row))}</small>
+      <small title="${htmlAttr(row.motivo_reversion || "Sin motivo registrado")}">${escapeHtml(row.motivo_reversion || "Sin motivo registrado")}</small>
+    </div>
+  `;
+}
+
+function renderFertilizerReversalAction(type, row) {
+  if (row?.revertida || !fertilizerCanRevertOperations()) return `<span class="fertilizer-history-no-action">-</span>`;
+  const isPreparation = type === "preparation";
+  const blocked = isPreparation && fertilizerPreparationHasActiveConsumption(row.id);
+  const title = blocked
+    ? "Revierte primero las aplicaciones que consumen esta preparacion"
+    : `Revertir ${isPreparation ? "preparacion" : "aplicacion"}`;
+  return `
+    <button class="danger-button fertilizer-history-revert-button" type="button"
+      data-action="open-fertilizer-reversal" data-operation-type="${type}" data-id="${htmlAttr(row.id)}"
+      data-return-mode="${isPreparation ? "preparations" : "applications"}" title="${htmlAttr(title)}" ${blocked ? "disabled" : ""}>
+      Revertir
+    </button>
+  `;
 }
 
 function fertilizerDateMs(value) {
@@ -12330,12 +12386,12 @@ function renderFertilizerPreparationHistoryTable(rows) {
   return `
     <div class="fertilizer-table-wrap fertilizer-history-table-wrap">
       <table class="fertilizer-table fertilizer-history-table">
-        <thead><tr><th>Fecha</th><th>Caseta</th><th>Estanque</th><th>Producto</th><th>Agua</th><th>Cantidad</th><th>Usuario</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Caseta</th><th>Estanque</th><th>Producto</th><th>Agua</th><th>Cantidad</th><th>Usuario</th><th>Estado</th><th>Accion</th></tr></thead>
         <tbody>
           ${recent.map((row) => {
             const tank = fertilizerTankMetaForHistory(row);
             return `
-              <tr>
+              <tr class="${row.revertida ? "is-reverted" : ""}">
                 <td>${escapeHtml(fertilizerReportDateTime(row.fecha))}</td>
                 <td>${escapeHtml(tank.caseta)}</td>
                 <td>${escapeHtml(tank.estanque)}<br><small>${escapeHtml(tank.fip)}</small></td>
@@ -12343,6 +12399,8 @@ function renderFertilizerPreparationHistoryTable(rows) {
                 <td>${number(row.cantidad_litros, 0)} L</td>
                 <td>${number(row.producto_cantidad)} ${escapeHtml(row.producto_unidad || fertilizerProductById(row.producto_id)?.unit || "")}</td>
                 <td>${escapeHtml(fertilizerHistoryUser(row))}</td>
+                <td>${renderFertilizerReversalState(row)}</td>
+                <td>${renderFertilizerReversalAction("preparation", row)}</td>
               </tr>
             `;
           }).join("")}
@@ -12358,12 +12416,12 @@ function renderFertilizerApplicationHistoryTable(rows) {
   return `
     <div class="fertilizer-table-wrap fertilizer-history-table-wrap">
       <table class="fertilizer-table fertilizer-history-table">
-        <thead><tr><th>Fecha</th><th>Caseta</th><th>Estanque</th><th>Potrero</th><th>Bloque</th><th>Litros</th><th>Usuario</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Caseta</th><th>Estanque</th><th>Potrero</th><th>Bloque</th><th>Litros</th><th>Usuario</th><th>Estado</th><th>Accion</th></tr></thead>
         <tbody>
           ${recent.map((row) => {
             const tank = fertilizerTankMetaForHistory(row);
             return `
-              <tr>
+              <tr class="${row.revertida ? "is-reverted" : ""}">
                 <td>${escapeHtml(fertilizerReportDateTime(row.fecha))}</td>
                 <td>${escapeHtml(tank.caseta)}</td>
                 <td>${escapeHtml(tank.estanque)}<br><small>${escapeHtml(tank.fip)}</small></td>
@@ -12371,6 +12429,8 @@ function renderFertilizerApplicationHistoryTable(rows) {
                 <td>${escapeHtml(row.bloque || "-")}</td>
                 <td><strong>${number(row.cantidad_litros, 0)} L</strong></td>
                 <td>${escapeHtml(fertilizerHistoryUser(row))}</td>
+                <td>${renderFertilizerReversalState(row)}</td>
+                <td>${renderFertilizerReversalAction("application", row)}</td>
               </tr>
             `;
           }).join("")}
@@ -12432,8 +12492,8 @@ function fertilizerHistoryRowsForMode(mode = "applications") {
   const sourceRows = mode === "lots"
     ? fertilizerFolioRows()
     : mode === "preparations"
-      ? fertilizerPreparationHistory
-      : fertilizerApplicationHistory;
+      ? [...fertilizerPreparationHistory, ...fertilizerRevertedPreparationHistory]
+      : [...fertilizerApplicationHistory, ...fertilizerRevertedApplicationHistory];
   const hasActiveFilter = fertilizerCasetaFilter !== "Todas" || fertilizerPotreroFilter !== "Todos" || fertilizerStatusFilter !== "Todos";
   if (!hasActiveFilter) return sourceRows || [];
   const visibleTanks = fertilizerFilteredRows();
@@ -12467,11 +12527,8 @@ function renderFertilizerHistoryDialogContent(mode = "applications") {
   `;
 }
 
-function openFertilizerHistoryDialog(initialMode = "applications") {
-  const dialog = document.getElementById("purchaseDialog");
+function mountFertilizerHistoryDialog(dialog, initialMode = "applications") {
   const activeMode = ["applications", "preparations", "lots"].includes(initialMode) ? initialMode : "applications";
-  dialog.classList.add("fertilizer-history-modal");
-  dialog.addEventListener("close", () => dialog.classList.remove("fertilizer-history-modal"), { once: true });
   dialog.innerHTML = `
     <form method="dialog" class="modal-body fertilizer-history-dialog" id="fertilizerHistoryDialog">
       <div class="modal-head">
@@ -12489,12 +12546,124 @@ function openFertilizerHistoryDialog(initialMode = "applications") {
       </div>
     </form>
   `;
-  dialog.showModal();
   const content = document.getElementById("fertilizerHistoryDialogContent");
   content?.addEventListener("click", (event) => {
-    const button = event.target.closest?.("[data-action='set-fertilizer-history-mode']");
+    const button = event.target.closest?.("[data-action]");
     if (!button) return;
-    content.innerHTML = renderFertilizerHistoryDialogContent(button.dataset.mode);
+    if (button.dataset.action === "set-fertilizer-history-mode") {
+      content.innerHTML = renderFertilizerHistoryDialogContent(button.dataset.mode);
+      return;
+    }
+    if (button.dataset.action === "open-fertilizer-reversal") {
+      openFertilizerReversalDialog(button.dataset.operationType, button.dataset.id, button.dataset.returnMode);
+    }
+  });
+}
+
+function openFertilizerHistoryDialog(initialMode = "applications") {
+  const dialog = document.getElementById("purchaseDialog");
+  dialog.classList.add("fertilizer-history-modal");
+  dialog.addEventListener("close", () => dialog.classList.remove("fertilizer-history-modal"), { once: true });
+  mountFertilizerHistoryDialog(dialog, initialMode);
+  dialog.showModal();
+}
+
+function fertilizerOperationForReversal(type, id) {
+  const rows = type === "preparation"
+    ? [...fertilizerPreparationHistory, ...fertilizerRevertedPreparationHistory]
+    : [...fertilizerApplicationHistory, ...fertilizerRevertedApplicationHistory];
+  return rows.find((row) => row.id === id) || null;
+}
+
+function openFertilizerReversalDialog(type, id, returnMode = "applications") {
+  const operationType = type === "preparation" ? "preparation" : "application";
+  const row = fertilizerOperationForReversal(operationType, id);
+  if (!row || row.revertida) {
+    showToast("La operacion ya no esta disponible para revertir");
+    return;
+  }
+  if (!fertilizerCanRevertOperations()) {
+    showToast("Tu perfil no tiene permisos para revertir operaciones");
+    return;
+  }
+  if (operationType === "preparation" && fertilizerPreparationHasActiveConsumption(row.id)) {
+    showToast("Revierte primero las aplicaciones que consumen esta preparacion");
+    return;
+  }
+  const dialog = document.getElementById("purchaseDialog");
+  const tank = fertilizerTankMetaForHistory(row);
+  const isPreparation = operationType === "preparation";
+  const operationLabel = isPreparation ? "preparacion" : "aplicacion";
+  const amountLabel = isPreparation
+    ? `${number(row.cantidad_litros, 0)} L de agua · ${number(row.producto_cantidad)} ${escapeHtml(row.producto_unidad || "producto")}`
+    : `${number(row.cantidad_litros, 0)} L · ${escapeHtml(potreroLabel(row.potrero || ""))} / bloque ${escapeHtml(row.bloque || "-")}`;
+  dialog.innerHTML = `
+    <form class="modal-body fertilizer-reversal-dialog" id="fertilizerReversalForm">
+      <div class="modal-head">
+        <div>
+          <h2>Revertir ${operationLabel}</h2>
+          <p>El registro se conservara en el historial y dejara de afectar saldos y calculos.</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
+      </div>
+      <div class="fertilizer-reversal-summary">
+        <span><small>Fecha</small><strong>${escapeHtml(fertilizerReportDateTime(row.fecha || row.creado_en))}</strong></span>
+        <span><small>Ubicacion</small><strong>${escapeHtml(tank.caseta)} · Estanque ${escapeHtml(tank.estanque)}</strong></span>
+        <span><small>${isPreparation ? "Producto" : "Aplicacion"}</small><strong>${isPreparation ? escapeHtml(fertilizerProductNameForHistory(row)) : amountLabel}</strong></span>
+        ${isPreparation ? `<span><small>Cantidad</small><strong>${amountLabel}</strong></span>` : ""}
+      </div>
+      <label class="fertilizer-reversal-reason">Motivo de la reversa
+        <textarea name="reason" rows="3" maxlength="500" required placeholder="Describe el error que obliga a revertir este registro"></textarea>
+      </label>
+      <div class="fertilizer-reversal-warning">
+        <strong>Esta accion modifica existencias.</strong>
+        <span>${isPreparation ? "Se devolvera el producto al folio y se descontaran los litros preparados del estanque." : "Se devolveran los litros al estanque y a la preparacion consumida."}</span>
+      </div>
+      <div class="fertilizer-reversal-error" id="fertilizerReversalError" hidden></div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" id="backFertilizerHistory">Volver</button>
+        <button class="danger-button" type="submit" id="confirmFertilizerReversal">Confirmar reversa</button>
+      </div>
+    </form>
+  `;
+  document.getElementById("backFertilizerHistory")?.addEventListener("click", () => mountFertilizerHistoryDialog(dialog, returnMode));
+  document.getElementById("fertilizerReversalForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const reason = String(new FormData(form).get("reason") || "").trim();
+    if (reason.length < 3) {
+      form.elements.reason.setCustomValidity("Ingresa un motivo de al menos 3 caracteres");
+      form.reportValidity();
+      form.elements.reason.setCustomValidity("");
+      return;
+    }
+    const button = document.getElementById("confirmFertilizerReversal");
+    const errorBox = document.getElementById("fertilizerReversalError");
+    button.disabled = true;
+    button.classList.add("is-loading");
+    button.textContent = "Revirtiendo...";
+    errorBox.hidden = true;
+    try {
+      await sbFetch("/rest/v1/rpc/revertir_fertilizante_operacion", {
+        method: "POST",
+        body: JSON.stringify({ p_tipo: operationType, p_id: id, p_motivo: reason })
+      });
+      resetFertilizerLoadedState();
+      await loadFertilizerRows();
+      if (currentView === "fertilizers") renderFertilizers();
+      mountFertilizerHistoryDialog(dialog, returnMode);
+      showToast(`${isPreparation ? "Preparacion" : "Aplicacion"} revertida correctamente`);
+    } catch (error) {
+      const message = String(error?.message || "No se pudo completar la reversa");
+      errorBox.textContent = /revertir_fertilizante_operacion|schema cache/i.test(message)
+        ? `${message}. Ejecuta supabase_fertilizacion_reversiones.sql en Supabase.`
+        : message;
+      errorBox.hidden = false;
+      button.disabled = false;
+      button.classList.remove("is-loading");
+      button.textContent = "Confirmar reversa";
+    }
   });
 }
 

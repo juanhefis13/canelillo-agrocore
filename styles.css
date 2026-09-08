@@ -4356,13 +4356,71 @@ td span,
 }
 
 .fertilizer-history-table {
-  min-width: 780px;
+  min-width: 980px;
 }
 
 .fertilizer-history-table td small {
   color: #61776e;
   font-size: 0.68rem;
   font-weight: 800;
+}
+
+.fertilizer-history-table tr.is-reverted td {
+  background: #f7f8f7;
+  color: #6b7770;
+}
+
+.fertilizer-history-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.fertilizer-history-state.is-active {
+  border-color: #b9dfca;
+  background: #e9f7ef;
+  color: #12633e;
+}
+
+.fertilizer-history-state.is-reverted {
+  border-color: #efc0b7;
+  background: #fff0ed;
+  color: #a53025;
+}
+
+.fertilizer-history-reversal-detail {
+  display: grid;
+  min-width: 170px;
+  gap: 3px;
+}
+
+.fertilizer-history-reversal-detail small:last-child {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fertilizer-history-revert-button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.fertilizer-history-revert-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.fertilizer-history-no-action {
+  color: #8a9991;
 }
 
 .fertilizer-history-modal {
@@ -4409,6 +4467,76 @@ td span,
 
 .fertilizer-history-dialog-table .fertilizer-history-table-wrap {
   max-height: min(62vh, 560px);
+}
+
+.fertilizer-reversal-dialog {
+  width: min(680px, calc(100vw - 28px));
+  gap: 14px;
+  padding: 18px;
+}
+
+.fertilizer-reversal-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fertilizer-reversal-summary span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.fertilizer-reversal-summary small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.fertilizer-reversal-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.fertilizer-reversal-reason {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.fertilizer-reversal-reason textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.fertilizer-reversal-warning,
+.fertilizer-reversal-error {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #f1c5a3;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #7c3715;
+  font-size: 0.78rem;
+}
+
+.fertilizer-reversal-error {
+  border-color: #efb5ad;
+  background: #fff0ed;
+  color: #9f2d22;
+  font-weight: 800;
+}
+
+@media (max-width: 640px) {
+  .fertilizer-reversal-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 .fertilizer-dose-dialog,
