@@ -22522,20 +22522,41 @@ function renderMasters() {
   `;
 }
 
-const APPLICATION_ORDER_SEQUENCE_FLOOR = 670;
+const APPLICATION_ORDER_SEQUENCE_START = 671;
+const APPLICATION_ORDER_SEQUENCE_WINDOW = 1000;
+
+function firstAvailableApplicationOrderNumber(numbers = [], start = APPLICATION_ORDER_SEQUENCE_START) {
+  const usedNumbers = new Set(numbers
+    .map(Number)
+    .filter((value) => Number.isInteger(value) && value >= APPLICATION_ORDER_SEQUENCE_START));
+  let candidate = Math.max(APPLICATION_ORDER_SEQUENCE_START, Math.floor(Number(start) || APPLICATION_ORDER_SEQUENCE_START));
+  while (usedNumbers.has(candidate)) candidate += 1;
+  return candidate;
+}
 
 function localNextApplicationOrderNumber() {
-  const highest = state.orders.reduce((maximum, order) => Math.max(maximum, Number(order.number) || 0), 0);
-  return Math.floor(Math.max(APPLICATION_ORDER_SEQUENCE_FLOOR, highest)) + 1;
+  return firstAvailableApplicationOrderNumber(state.orders.map((order) => order.number));
 }
 
 async function nextApplicationOrderNumber() {
   const localNext = localNextApplicationOrderNumber();
   if (!supabaseSession) return localNext;
   try {
-    const rows = await sbFetch("/rest/v1/ordenes_aplicacion?select=numero_orden&order=numero_orden.desc.nullslast&limit=1");
-    const cloudHighest = Number(rows?.[0]?.numero_orden) || 0;
-    return Math.floor(Math.max(APPLICATION_ORDER_SEQUENCE_FLOOR, localNext - 1, cloudHighest)) + 1;
+    let windowStart = APPLICATION_ORDER_SEQUENCE_START;
+    while (windowStart < Number.MAX_SAFE_INTEGER - APPLICATION_ORDER_SEQUENCE_WINDOW) {
+      const windowEnd = windowStart + APPLICATION_ORDER_SEQUENCE_WINDOW - 1;
+      const rows = await sbFetch(`/rest/v1/ordenes_aplicacion?select=numero_orden&numero_orden=gte.${windowStart}&numero_orden=lte.${windowEnd}&order=numero_orden.asc&limit=${APPLICATION_ORDER_SEQUENCE_WINDOW}`);
+      const localNumbers = state.orders
+        .map((order) => Number(order.number))
+        .filter((value) => value >= windowStart && value <= windowEnd);
+      const available = firstAvailableApplicationOrderNumber([
+        ...localNumbers,
+        ...(rows || []).map((row) => row.numero_orden)
+      ], windowStart);
+      if (available <= windowEnd) return available;
+      windowStart = windowEnd + 1;
+    }
+    return localNext;
   } catch (error) {
     console.warn("No se pudo verificar el siguiente numero correlativo de orden", error);
     return localNext;
@@ -27249,7 +27270,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=412-global-order-counter", { updateViaCache: "none" })
+    .register("./sw.js?v=413-order-sequence-671", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
