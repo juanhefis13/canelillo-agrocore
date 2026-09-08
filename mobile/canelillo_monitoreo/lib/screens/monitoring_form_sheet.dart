@@ -105,6 +105,8 @@ class _MonitoringFormSheetState extends State<MonitoringFormSheet> {
         found: _found,
         stages: {for (final key in _stageLabels.keys) key: visible[key] ?? 0},
         foundAt: _found ? _foundAt.text.trim() : 'Sin presencia',
+        locationSource: widget.tree.locationSource,
+        accuracyMeters: widget.tree.accuracyMeters,
       ),
     );
   }

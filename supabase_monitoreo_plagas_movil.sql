@@ -239,6 +239,34 @@ create policy monitoreo_plagas_catalogo_admin
 grant select on public.monitoreo_plagas_catalogo to authenticated;
 grant usage, select on sequence public.monitoreo_plagas_correlativo_seq to authenticated;
 
+create index if not exists monitoreo_plagas_fecha_campo_plaga_idx
+  on public.monitoreo_plagas (fecha desc, campo_id, tipo_plaga);
+create index if not exists monitoreo_arboles_campo_activo_idx
+  on public.monitoreo_arboles (campo_id, activo, numero_arbol);
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'monitoreo_arboles'
+    ) then
+      alter publication supabase_realtime add table public.monitoreo_arboles;
+    end if;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'monitoreo_plagas'
+    ) then
+      alter publication supabase_realtime add table public.monitoreo_plagas;
+    end if;
+  end if;
+end;
+$$;
+
 notify pgrst, 'reload schema';
 
 commit;

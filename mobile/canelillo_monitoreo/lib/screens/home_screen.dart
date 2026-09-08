@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
+import 'package:supabase_flutter/supabase_flutter.dart'
+    show PostgresChangeEvent, PostgresChangePayload, RealtimeChannel, Supabase;
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../core/app_theme.dart';
@@ -13,8 +15,14 @@ import '../services/geo_service.dart';
 import '../services/map_marker_service.dart';
 import '../services/monitoring_repository.dart';
 import '../services/pest_icon_service.dart';
+import '../services/protocol_admin_repository.dart';
+import '../services/protocol_monitoring_repository.dart';
 import '../widgets/loading_overlay.dart';
+import 'monitoring_dashboard_screen.dart';
+import 'monitoring_history_screen.dart';
 import 'monitoring_form_sheet.dart';
+import 'protocol_session_screen.dart';
+import 'protocol_admin_screen.dart';
 import 'tree_editor_screen.dart';
 import 'tree_picker_screen.dart';
 
@@ -27,12 +35,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final MonitoringRepository _repository;
+  late final ProtocolMonitoringRepository _protocolRepository;
+  late final ProtocolAdminRepository _adminRepository;
   DashboardData? _data;
   GeoData? _geoData;
   GoogleMapController? _mapController;
   BitmapDescriptor? _treeIcon;
   Map<String, BitmapDescriptor> _treeNumberIcons = const {};
   Map<String, BitmapDescriptor> _fieldLabelIcons = const {};
+  Map<String, BitmapDescriptor> _geoBlockLabelIcons = const {};
+  Map<String, BitmapDescriptor> _potreroLabelIcons = const {};
+  Map<String, BitmapDescriptor> _casetaLabelIcons = const {};
   Map<String, LatLng> _fieldCenters = const {};
   Map<String, PestIconSet> _pestIcons = const {};
   MonitoringMapMode _mode = MonitoringMapMode.heat;
@@ -40,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showTreeNumbers = true;
   bool _showPestIcons = true;
   bool _showFieldLabels = true;
+  bool _showCasetas = true;
+  bool _showTranques = true;
   bool _filtersExpanded = true;
   bool _locationGranted = false;
   String _species = 'Todas';
@@ -55,13 +70,123 @@ class _HomeScreenState extends State<HomeScreen> {
   String _operationMessage = 'Procesando...';
   String? _error;
   int _pendingCount = 0;
+  bool _isAdmin = false;
+  bool _backgroundSyncing = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  RealtimeChannel? _realtimeChannel;
+  Timer? _realtimeDebounce;
+  final List<PostgresChangePayload> _realtimeChanges = [];
 
   @override
   void initState() {
     super.initState();
     _repository = MonitoringRepository(Supabase.instance.client);
+    _protocolRepository = ProtocolMonitoringRepository(
+      Supabase.instance.client,
+    );
+    _adminRepository = ProtocolAdminRepository(Supabase.instance.client);
+    _subscribeRealtime();
     _bootstrap();
+    unawaited(_loadAdminAccess());
     unawaited(_prepareLocation());
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      results,
+    ) {
+      if (results.any((result) => result != ConnectivityResult.none)) {
+        unawaited(_syncInBackground());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySubscription?.cancel();
+    _realtimeDebounce?.cancel();
+    final channel = _realtimeChannel;
+    if (channel != null) {
+      unawaited(Supabase.instance.client.removeChannel(channel));
+    }
+    _mapController?.dispose();
+    super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _realtimeChannel = Supabase.instance.client
+        .channel('monitoreo-movil-${DateTime.now().millisecondsSinceEpoch}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'monitoreo_arboles',
+          callback: _queueRealtimeChange,
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'monitoreo_plagas',
+          callback: _queueRealtimeChange,
+        )
+        .subscribe();
+  }
+
+  void _queueRealtimeChange(PostgresChangePayload payload) {
+    _realtimeChanges.add(payload);
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(
+      const Duration(milliseconds: 350),
+      _applyRealtimeChanges,
+    );
+  }
+
+  void _applyRealtimeChanges() {
+    if (!mounted || _data == null || _realtimeChanges.isEmpty) return;
+    final changes = List<PostgresChangePayload>.from(_realtimeChanges);
+    _realtimeChanges.clear();
+    final current = _data!;
+    final trees = [...current.trees];
+    final monitorings = [...current.monitorings];
+    for (final change in changes) {
+      final source = change.eventType == PostgresChangeEvent.delete
+          ? change.oldRecord
+          : change.newRecord;
+      final id = source['id']?.toString() ?? '';
+      final operationId = source['id_operacion_cliente']?.toString() ?? '';
+      if (change.table == 'monitoreo_arboles') {
+        trees.removeWhere(
+          (item) =>
+              (id.isNotEmpty && item.id == id) ||
+              (operationId.isNotEmpty && item.clientOperationId == operationId),
+        );
+        if (change.eventType != PostgresChangeEvent.delete &&
+            change.newRecord.isNotEmpty) {
+          trees.add(TreeRecord.fromJson(change.newRecord));
+        }
+      } else if (change.table == 'monitoreo_plagas') {
+        monitorings.removeWhere(
+          (item) =>
+              (id.isNotEmpty && item.id == id) ||
+              (operationId.isNotEmpty && item.clientOperationId == operationId),
+        );
+        if (change.eventType != PostgresChangeEvent.delete &&
+            change.newRecord.isNotEmpty) {
+          monitorings.add(MonitoringRecord.fromJson(change.newRecord));
+        }
+      }
+    }
+    setState(() {
+      _data = DashboardData(
+        fields: current.fields,
+        trees: trees,
+        pests: current.pests,
+        monitorings: monitorings,
+        fromCache: false,
+      );
+    });
+    unawaited(_refreshPendingCount());
+  }
+
+  Future<void> _loadAdminAccess() async {
+    final isAdmin = await _adminRepository.isCurrentUserAdmin();
+    if (mounted) setState(() => _isAdmin = isAdmin);
   }
 
   Future<void> _bootstrap({bool force = false}) async {
@@ -99,12 +224,38 @@ class _HomeScreenState extends State<HomeScreen> {
       final fieldLabelIcons = <String, BitmapDescriptor>{};
       await Future.wait(
         data.fields.map((field) async {
-          fieldLabelIcons[field.id] = await MapMarkerService.fieldLabel(
-            field.label,
+          fieldLabelIcons[field.id] = await MapMarkerService.blockLabel(
+            'B${field.block}',
           );
         }),
       );
       final geoData = results[1] as GeoData;
+      final geoBlockLabelIcons = <String, BitmapDescriptor>{};
+      await Future.wait(
+        geoData.blockLabels.map((label) async {
+          geoBlockLabelIcons[label.text] = await MapMarkerService.blockLabel(
+            label.text,
+          );
+        }),
+      );
+      final potreroLabelIcons = <String, BitmapDescriptor>{};
+      await Future.wait(
+        geoData.potreroLabels.map((label) async {
+          final key = normalizeFieldName(label.potrero);
+          if (potreroLabelIcons.containsKey(key)) return;
+          potreroLabelIcons[key] = await MapMarkerService.potreroLabel(
+            label.text,
+          );
+        }),
+      );
+      final casetaLabelIcons = <String, BitmapDescriptor>{};
+      await Future.wait(
+        geoData.casetas.map((shape) async {
+          casetaLabelIcons[shape.name] = await MapMarkerService.casetaLabel(
+            shape.name,
+          );
+        }),
+      );
       if (!mounted) return;
       setState(() {
         _data = data;
@@ -115,9 +266,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _pestIcons = pestIcons;
         _treeNumberIcons = treeNumberIcons;
         _fieldLabelIcons = fieldLabelIcons;
+        _geoBlockLabelIcons = geoBlockLabelIcons;
+        _potreroLabelIcons = potreroLabelIcons;
+        _casetaLabelIcons = casetaLabelIcons;
         _fieldCenters = geoData.fieldCenters(data.fields);
       });
-      _pendingCount = await _repository.pendingCount();
+      await _refreshPendingCount();
+      unawaited(_syncInBackground());
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
     } finally {
@@ -131,7 +286,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final fields = {for (final field in data.fields) field.id: field};
     return data.monitorings.where((record) {
       if (_pest != null && record.pest != _pest) return false;
-      if (!_matchesField(fields[record.fieldId])) return false;
+      final field =
+          fields[record.fieldId] ??
+          _geoData?.fieldAt(record.position, data.fields);
+      if (!_matchesField(field)) return false;
       final day = DateTime(
         record.date.year,
         record.date.month,
@@ -164,7 +322,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (data == null) return [];
     final fields = {for (final field in data.fields) field.id: field};
     return data.trees
-        .where((tree) => _matchesField(fields[tree.fieldId]))
+        .where(
+          (tree) => _matchesField(
+            fields[tree.fieldId] ??
+                _geoData?.fieldAt(tree.position, data.fields),
+          ),
+        )
         .toList();
   }
 
@@ -174,9 +337,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_mode != MonitoringMapMode.heat) return const {};
     final scale = _riskScale;
     final grouped = <String, List<double>>{};
+    final data = _data;
+    if (data == null) return const {};
+    final fields = {for (final field in data.fields) field.id: field};
     for (final record in _filteredMonitorings) {
-      if (record.fieldId.isEmpty) continue;
-      grouped.putIfAbsent(record.fieldId, () => []).add(record.total);
+      final field =
+          fields[record.fieldId] ??
+          _geoData?.fieldAt(record.position, data.fields);
+      if (field == null) continue;
+      grouped.putIfAbsent(field.id, () => []).add(record.total);
     }
     return grouped.map((fieldId, values) {
       final average =
@@ -222,10 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Set<Marker> get _pestMarkers {
     if (_mode != MonitoringMapMode.points || !_showPestIcons) return {};
-    final catalog = _data?.pests.cast<PestCatalog?>().firstWhere(
-      (item) => item?.name == _pest,
-      orElse: () => null,
-    );
+    final scale = _riskScale;
     return _filteredMonitorings.asMap().entries.map((entry) {
       final record = entry.value;
       final iconSet = _pestIcons[record.pest];
@@ -235,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         position: record.position,
         icon:
-            iconSet?.forTotal(record.total, catalog?.maximum ?? 10) ??
+            iconSet?.forTotal(record.total, scale.maximum) ??
             BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
         anchor: const Offset(.5, .5),
         zIndexInt: 60,
@@ -250,28 +416,76 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Set<Marker> get _fieldLabelMarkers {
     final data = _data;
-    if (!_showFieldLabels || _mapZoom < 14.6 || data == null) return {};
-    return data.fields
-        .where(_matchesField)
-        .map((field) {
-          final position = _fieldCenters[field.id];
-          final icon = _fieldLabelIcons[field.id];
-          if (position == null || icon == null) return null;
-          return Marker(
-            markerId: MarkerId('field_label_${field.id}'),
-            position: position,
+    final geo = _geoData;
+    if (!_showFieldLabels || _mapZoom < 13 || data == null || geo == null) {
+      return {};
+    }
+    final markers = <Marker>{};
+    final visibleFields = data.fields.where(_matchesField).toList();
+    final visibleFieldIds = visibleFields.map((field) => field.id).toSet();
+    final visiblePotreros = visibleFields
+        .map((field) => normalizeFieldName(field.potrero))
+        .toSet();
+    if (_mapZoom >= 15) {
+      for (final label in geo.blockLabels) {
+        final visible = label.fieldIds.isNotEmpty
+            ? label.fieldIds.any(visibleFieldIds.contains)
+            : visiblePotreros.contains(normalizeFieldName(label.potrero));
+        final icon = _geoBlockLabelIcons[label.text];
+        if (!visible || icon == null) continue;
+        markers.add(
+          Marker(
+            markerId: MarkerId('field_label_${label.id}'),
+            position: label.position,
+            icon: icon,
+            anchor: const Offset(.5, .5),
+            flat: true,
+            zIndexInt: 13,
+          ),
+        );
+      }
+    }
+    if (_mapZoom <= 16) {
+      for (final label in geo.potreroLabels) {
+        final key = normalizeFieldName(label.potrero);
+        final icon = _potreroLabelIcons[key];
+        if (!visiblePotreros.contains(key) || icon == null) continue;
+        markers.add(
+          Marker(
+            markerId: MarkerId('potrero_label_${label.id}'),
+            position: label.position,
             icon: icon,
             anchor: const Offset(.5, .5),
             flat: true,
             zIndexInt: 12,
-          );
-        })
-        .whereType<Marker>()
-        .toSet();
+          ),
+        );
+      }
+    }
+    return markers;
+  }
+
+  Set<Marker> get _casetaMarkers {
+    final geo = _geoData;
+    if (!_showCasetas || geo == null || _mapZoom < 13.8) return {};
+    return geo.casetaCenters.entries.map((entry) {
+      final icon = _casetaLabelIcons[entry.key];
+      return Marker(
+        markerId: MarkerId('caseta_${normalizeFieldName(entry.key)}'),
+        position: entry.value,
+        icon:
+            icon ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
+        anchor: const Offset(.5, .5),
+        zIndexInt: 45,
+        infoWindow: InfoWindow(title: entry.key),
+      );
+    }).toSet();
   }
 
   Set<Marker> get _mapMarkers => {
     ..._fieldLabelMarkers,
+    ..._casetaMarkers,
     ..._treeMarkers,
     ..._pestMarkers,
   };
@@ -401,7 +615,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _mode = MonitoringMapMode.points;
       _showTrees = true;
     });
-    _pendingCount = await _repository.pendingCount();
+    await _refreshPendingCount();
     if (mounted) {
       _showSavedMessage(
         saved.pending ? 'Árbol guardado en el equipo' : 'Árbol sincronizado',
@@ -439,6 +653,147 @@ class _HomeScreenState extends State<HomeScreen> {
     if (tree != null && mounted) await _addMonitoring(tree);
   }
 
+  Future<void> _createProtocolVisit() async {
+    final data = _data;
+    final geo = _geoData;
+    if (data == null || geo == null) return;
+    final catalog = await _run(
+      'Cargando protocolos...',
+      _protocolRepository.loadCatalog,
+    );
+    if (catalog == null || !mounted) return;
+    if (catalog.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay protocolos activos disponibles.')),
+      );
+      return;
+    }
+
+    VisitDraft? initialDraft;
+    TreeRecord? tree;
+    FieldBlock? field;
+    final drafts = await _protocolRepository.listDrafts();
+    if (!mounted) return;
+    if (drafts.isNotEmpty && mounted) {
+      final draft = drafts.first;
+      final action = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Monitoreo pendiente'),
+          content: const Text(
+            'Hay una visita sin finalizar guardada en este equipo.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'discard'),
+              child: const Text('Descartar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'continue'),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      );
+      if (action == null || !mounted) return;
+      if (action == 'discard') {
+        await _protocolRepository.discardDraft(draft.id);
+        if (!mounted) return;
+      } else {
+        initialDraft = draft;
+        final draftTreeId = draft.treeMonitorings.isNotEmpty
+            ? draft.treeMonitorings.first.treeId
+            : draft.treeId;
+        tree = data.trees.cast<TreeRecord?>().firstWhere(
+          (item) =>
+              item?.id == draftTreeId || item?.clientOperationId == draftTreeId,
+          orElse: () => null,
+        );
+        field = data.fields.cast<FieldBlock?>().firstWhere(
+          (item) => item?.id == draft.fieldId,
+          orElse: () => null,
+        );
+        if (tree == null || field == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'El árbol o bloque del borrador ya no está disponible.',
+              ),
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    if (tree == null) {
+      final trees = _filteredTrees;
+      if (trees.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No hay árboles disponibles con los filtros actuales.',
+            ),
+          ),
+        );
+        return;
+      }
+      tree = await Navigator.push<TreeRecord>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TreePickerScreen(
+            fields: data.fields.where(_matchesField).toList(),
+            trees: trees,
+            geoData: geo,
+            treeIcons: _treeNumberIcons,
+            fieldIcons: _fieldLabelIcons,
+            fieldCenters: _fieldCenters,
+            locationGranted: _locationGranted,
+          ),
+        ),
+      );
+      if (tree == null || !mounted) return;
+      field = data.fields.cast<FieldBlock?>().firstWhere(
+        (item) => item?.id == tree!.fieldId,
+        orElse: () => null,
+      );
+      if (field == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('El árbol no tiene un bloque asociado.'),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    final completed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProtocolSessionScreen(
+          field: field!,
+          availableTrees: data.trees
+              .where((item) => item.fieldId == field!.id)
+              .toList(),
+          geoData: geo,
+          treeIcons: _treeNumberIcons,
+          fieldIcons: _fieldLabelIcons,
+          fieldCenters: _fieldCenters,
+          locationGranted: _locationGranted,
+          catalog: catalog,
+          repository: _protocolRepository,
+          initialTree: tree,
+          initialDraft: initialDraft,
+          createdBy: Supabase.instance.client.auth.currentUser?.id,
+        ),
+      ),
+    );
+    await _refreshPendingCount();
+    if (completed == true && mounted) await _bootstrap(force: true);
+  }
+
   Future<void> _showAddOptions() async {
     final choice = await showModalBottomSheet<String>(
       context: context,
@@ -468,11 +823,21 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 8),
             _AddOption(
               icon: const Icon(
+                Icons.fact_check_outlined,
+                color: AppColors.forest,
+              ),
+              title: 'Visita de monitoreo',
+              description: 'Aplica el protocolo y registra unidades por árbol.',
+              onTap: () => Navigator.pop(context, 'visit'),
+            ),
+            const SizedBox(height: 8),
+            _AddOption(
+              icon: const Icon(
                 Icons.bug_report_outlined,
                 color: AppColors.danger,
               ),
-              title: 'Monitoreo de plaga',
-              description: 'Selecciona el árbol y registra sus etapas.',
+              title: 'Registro simple',
+              description: 'Mantiene disponible el conteo anterior por etapas.',
               onTap: () => Navigator.pop(context, 'pest'),
             ),
           ],
@@ -481,6 +846,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (!mounted) return;
     if (choice == 'tree') await _createTree();
+    if (choice == 'visit') await _createProtocolVisit();
     if (choice == 'pest') await _createMonitoringPoint();
   }
 
@@ -520,7 +886,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fromCache: data.fromCache,
       );
     });
-    _pendingCount = await _repository.pendingCount();
+    await _refreshPendingCount();
     if (mounted) {
       _showSavedMessage(
         saved.pending ? 'Cambio guardado en el equipo' : 'Árbol actualizado',
@@ -565,7 +931,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _mode = MonitoringMapMode.points;
       _showPestIcons = true;
     });
-    _pendingCount = await _repository.pendingCount();
+    await _refreshPendingCount();
     if (mounted) {
       _showSavedMessage(
         saved.pending
@@ -591,8 +957,90 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _sync() async {
     await _run('Sincronizando...', () async {
       await _repository.syncPending();
+      await _protocolRepository.syncPending();
       await _bootstrap(force: true);
     });
+  }
+
+  Future<void> _openHistory() async {
+    final data = _data;
+    if (data == null) return;
+    final catalog = await _run(
+      'Cargando historial...',
+      _protocolRepository.loadCatalog,
+    );
+    if (catalog == null || !mounted) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MonitoringHistoryScreen(
+          fields: data.fields,
+          catalog: catalog,
+          repository: _protocolRepository,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openProtocolDashboard() async {
+    final data = _data;
+    final geo = _geoData;
+    if (data == null || geo == null) return;
+    final catalog = await _run(
+      'Cargando resumen...',
+      _protocolRepository.loadCatalog,
+    );
+    if (catalog == null || !mounted) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MonitoringDashboardScreen(
+          fields: data.fields,
+          geoData: geo,
+          catalog: catalog,
+          repository: _protocolRepository,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openProtocolAdmin() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProtocolAdminScreen(repository: _adminRepository),
+      ),
+    );
+    await _run(
+      'Actualizando protocolos...',
+      _protocolRepository.refreshCatalog,
+    );
+  }
+
+  Future<void> _syncInBackground() async {
+    if (_backgroundSyncing) return;
+    _backgroundSyncing = true;
+    try {
+      final counts = await Future.wait([
+        _repository.pendingCount(),
+        _protocolRepository.pendingCount(),
+      ]);
+      if (counts[0] > 0) await _repository.syncPending();
+      if (counts[1] > 0) await _protocolRepository.syncPending();
+      await _refreshPendingCount();
+    } catch (_) {
+      // La cola conserva el error y reintentara al recuperar conectividad.
+    } finally {
+      _backgroundSyncing = false;
+    }
+  }
+
+  Future<void> _refreshPendingCount() async {
+    final counts = await Future.wait([
+      _repository.pendingCount(),
+      _protocolRepository.pendingCount(),
+    ]);
+    if (mounted) setState(() => _pendingCount = counts[0] + counts[1]);
   }
 
   Future<void> _logout() async {
@@ -609,6 +1057,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int get _activeLayerCount => [
     _showFieldLabels,
+    _showCasetas,
+    _showTranques,
     _showTrees,
     _showTreeNumbers,
     _showPestIcons,
@@ -799,6 +1249,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   title: const Text('Árboles'),
                   onChanged: (value) => update(() => _showTrees = value),
+                ),
+                SwitchListTile(
+                  value: _showCasetas,
+                  secondary: const Icon(Icons.home_work_outlined),
+                  title: const Text('Casetas'),
+                  onChanged: (value) => update(() => _showCasetas = value),
+                ),
+                SwitchListTile(
+                  value: _showTranques,
+                  secondary: const Icon(Icons.water_outlined),
+                  title: const Text('Tranques'),
+                  onChanged: (value) => update(() => _showTranques = value),
                 ),
                 SwitchListTile(
                   value: _showTreeNumbers,
@@ -1114,11 +1576,35 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         if (from) {
           _from = picked;
+          if (_to != null && picked.isAfter(_to!)) _to = picked;
         } else {
           _to = picked;
+          if (_from != null && picked.isBefore(_from!)) _from = picked;
         }
       });
+      await _loadMonitoringRange();
     }
+  }
+
+  Future<void> _loadMonitoringRange() async {
+    final data = _data;
+    final from = _from;
+    final to = _to;
+    if (data == null || from == null || to == null) return;
+    final records = await _run(
+      'Actualizando período...',
+      () => _repository.loadMonitoringsRange(from, to),
+    );
+    if (records == null || !mounted) return;
+    setState(() {
+      _data = DashboardData(
+        fields: data.fields,
+        trees: data.trees,
+        pests: data.pests,
+        monitorings: records,
+        fromCache: data.fromCache,
+      );
+    });
   }
 
   @override
@@ -1201,10 +1687,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             PopupMenuButton<String>(
               onSelected: (value) {
+                if (value == 'history') _openHistory();
+                if (value == 'dashboard') _openProtocolDashboard();
+                if (value == 'admin') _openProtocolAdmin();
                 if (value == 'logout') _logout();
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'dashboard',
+                  child: ListTile(
+                    leading: Icon(Icons.analytics_outlined),
+                    title: Text('Resumen'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'history',
+                  child: ListTile(
+                    leading: Icon(Icons.history),
+                    title: Text('Historial'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                if (_isAdmin)
+                  const PopupMenuItem(
+                    value: 'admin',
+                    child: ListTile(
+                      leading: Icon(Icons.admin_panel_settings_outlined),
+                      title: Text('Configuración'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                const PopupMenuItem(
                   value: 'logout',
                   child: ListTile(
                     leading: Icon(Icons.logout),
@@ -1266,6 +1780,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         polygons: geo.polygons(
                           data.fields,
                           fillColors: _blockHeatColors,
+                          showTranques: _showTranques,
                         ),
                         markers: _mapMarkers,
                         onMapCreated: (controller) =>
@@ -1513,7 +2028,7 @@ class _FilterBar extends StatelessWidget {
                               ButtonSegment(
                                 value: MonitoringMapMode.heat,
                                 icon: Icon(Icons.gradient, size: 18),
-                                label: Text('Calor'),
+                                label: Text('Calor por conteo'),
                               ),
                               ButtonSegment(
                                 value: MonitoringMapMode.points,
@@ -1596,7 +2111,7 @@ class _FilterBar extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            '${mode == MonitoringMapMode.heat ? 'Calor' : 'Puntos'} · ${pest ?? 'Plaga'}',
+                            '${mode == MonitoringMapMode.heat ? 'Calor histórico por conteo' : 'Puntos'} · ${pest ?? 'Plaga'}',
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
@@ -1844,25 +2359,21 @@ class _RiskScale {
     if (values.isEmpty) {
       return const _RiskScale(bounds: [], minimum: 0, maximum: 0, positives: 0);
     }
-    final bounds = <double>[];
-    for (final ratio in const [.2, .4, .6, .8, 1.0]) {
-      final index = (values.length * ratio).ceil().clamp(1, values.length) - 1;
-      final value = values[index];
-      if (bounds.isEmpty || value > bounds.last) bounds.add(value);
-    }
+    final maximum = values.last;
+    final bounds = [
+      for (final ratio in const [.2, .4, .6, .8, 1.0]) maximum * ratio,
+    ];
     return _RiskScale(
       bounds: bounds,
       minimum: values.first,
-      maximum: values.last,
+      maximum: maximum,
       positives: values.length,
     );
   }
 
   int level(double value) {
     if (value <= 0) return 0;
-    if (bounds.isEmpty || bounds.length == 1) return 1;
-    final matching = bounds.indexWhere((bound) => value <= bound);
-    final index = matching >= 0 ? matching : bounds.length - 1;
-    return 1 + (index * 4 / (bounds.length - 1)).round();
+    if (maximum <= 0) return 1;
+    return (value / maximum * 5).ceil().clamp(1, 5);
   }
 }

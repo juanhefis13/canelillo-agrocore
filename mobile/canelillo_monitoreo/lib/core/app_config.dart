@@ -5,6 +5,8 @@ class AppConfig {
 
   static const networkTimeout = Duration(seconds: 18);
   static const writeTimeout = Duration(seconds: 28);
+  static const passwordRecoveryRedirectUrl =
+      'com.canelillo.monitoreo://login-callback/';
   static const fieldCenterLatitude = -32.812;
   static const fieldCenterLongitude = -71.262;
 }

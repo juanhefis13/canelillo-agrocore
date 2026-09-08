@@ -1,5 +1,9 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+export 'protocol_models.dart';
+export 'monitoring_history_models.dart';
+export 'protocol_admin_models.dart';
+
 double _number(dynamic value) => double.tryParse('$value') ?? 0;
 String _text(dynamic value) => value?.toString().trim() ?? '';
 
@@ -11,6 +15,7 @@ class FieldBlock {
     required this.species,
     required this.variety,
     required this.hectares,
+    this.plants = 0,
   });
 
   final String id;
@@ -19,6 +24,7 @@ class FieldBlock {
   final String species;
   final String variety;
   final double hectares;
+  final double plants;
 
   String get label {
     final potreroLabel = RegExp(r'^\d').hasMatch(potrero)
@@ -34,6 +40,7 @@ class FieldBlock {
     species: _text(json['especie']),
     variety: _text(json['variedad']),
     hectares: _number(json['hectareas']),
+    plants: _number(json['plantas']),
   );
 
   Map<String, dynamic> toJson() => {
@@ -43,6 +50,7 @@ class FieldBlock {
     'especie': species,
     'variedad': variety,
     'hectareas': hectares,
+    'plantas': plants,
   };
 }
 
@@ -57,6 +65,8 @@ class TreeRecord {
     required this.position,
     required this.active,
     this.referenceDate,
+    this.locationSource = 'importado',
+    this.accuracyMeters,
     this.pending = false,
   });
 
@@ -69,6 +79,8 @@ class TreeRecord {
   final LatLng position;
   final bool active;
   final DateTime? referenceDate;
+  final String locationSource;
+  final double? accuracyMeters;
   final bool pending;
 
   TreeRecord copyWith({
@@ -81,6 +93,9 @@ class TreeRecord {
     LatLng? position,
     bool? active,
     DateTime? referenceDate,
+    String? locationSource,
+    double? accuracyMeters,
+    bool clearAccuracy = false,
     bool? pending,
   }) => TreeRecord(
     id: id ?? this.id,
@@ -92,6 +107,10 @@ class TreeRecord {
     position: position ?? this.position,
     active: active ?? this.active,
     referenceDate: referenceDate ?? this.referenceDate,
+    locationSource: locationSource ?? this.locationSource,
+    accuracyMeters: clearAccuracy
+        ? null
+        : accuracyMeters ?? this.accuracyMeters,
     pending: pending ?? this.pending,
   );
 
@@ -105,6 +124,12 @@ class TreeRecord {
     position: LatLng(_number(json['latitud']), _number(json['longitud'])),
     active: json['activo'] != false,
     referenceDate: DateTime.tryParse(_text(json['fecha_referencia'])),
+    locationSource: _text(json['ubicacion_fuente']).isEmpty
+        ? 'importado'
+        : _text(json['ubicacion_fuente']),
+    accuracyMeters: json['precision_metros'] == null
+        ? null
+        : _number(json['precision_metros']),
     pending: json['pending'] == true,
   );
 
@@ -119,6 +144,8 @@ class TreeRecord {
     'longitud': position.longitude,
     'activo': active,
     'fecha_referencia': referenceDate?.toIso8601String().split('T').first,
+    'ubicacion_fuente': locationSource,
+    'precision_metros': accuracyMeters,
     'pending': pending,
   };
 }
@@ -183,6 +210,8 @@ class MonitoringRecord {
     required this.found,
     required this.stages,
     required this.foundAt,
+    this.locationSource = 'importado',
+    this.accuracyMeters,
     this.pending = false,
   });
 
@@ -198,6 +227,8 @@ class MonitoringRecord {
   final bool found;
   final Map<String, double> stages;
   final String foundAt;
+  final String locationSource;
+  final double? accuracyMeters;
   final bool pending;
 
   double get total => stages.values.fold(0, (sum, value) => sum + value);
@@ -225,6 +256,12 @@ class MonitoringRecord {
       found: json['encontrada'] != false,
       stages: {for (final key in stageKeys) key: _number(json[key])},
       foundAt: _text(json['encontrado_en']),
+      locationSource: _text(json['ubicacion_fuente']).isEmpty
+          ? 'importado'
+          : _text(json['ubicacion_fuente']),
+      accuracyMeters: json['precision_metros'] == null
+          ? null
+          : _number(json['precision_metros']),
       pending: json['pending'] == true,
     );
   }
@@ -242,6 +279,8 @@ class MonitoringRecord {
     'longitud': position.longitude,
     'encontrada': found,
     'encontrado_en': foundAt,
+    'ubicacion_fuente': locationSource,
+    'precision_metros': accuracyMeters,
     ...stages,
     'pending': pending,
   };

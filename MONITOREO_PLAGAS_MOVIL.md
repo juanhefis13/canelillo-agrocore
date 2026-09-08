@@ -48,7 +48,7 @@ validacion solo se activa en filas nuevas con `id_operacion_cliente`.
 
 ## Estrategia offline
 
-- Base local: Drift sobre SQLite.
+- Base local: `sqflite` sobre SQLite.
 - Cada arbol y monitoreo nuevo recibe un UUID en `id_operacion_cliente`.
 - Estados de cola: `pendiente`, `sincronizando`, `sincronizado`, `error`.
 - Reintento exponencial con un maximo de 15 minutos entre intentos.

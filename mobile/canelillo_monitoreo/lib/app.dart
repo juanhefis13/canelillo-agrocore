@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/password_recovery_screen.dart';
 
 class CanelilloMonitoreoApp extends StatelessWidget {
   const CanelilloMonitoreoApp({super.key});
@@ -30,15 +31,21 @@ class AppGate extends StatefulWidget {
 class _AppGateState extends State<AppGate> {
   late Future<bool> _restore;
   StreamSubscription<AuthState>? _authSubscription;
+  bool _recoveringPassword = false;
 
   @override
   void initState() {
     super.initState();
     _restore = _restoreSession();
     _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
-      _,
+      authState,
     ) {
-      if (mounted) setState(() => _restore = _restoreSession());
+      if (!mounted) return;
+      if (authState.event == AuthChangeEvent.passwordRecovery) {
+        setState(() => _recoveringPassword = true);
+        return;
+      }
+      setState(() => _restore = _restoreSession());
     });
   }
 
@@ -64,15 +71,28 @@ class _AppGateState extends State<AppGate> {
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<bool>(
-    future: _restore,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const SplashScreen();
-      }
-      return snapshot.data == true ? const HomeScreen() : const LoginScreen();
-    },
-  );
+  Widget build(BuildContext context) {
+    if (_recoveringPassword) {
+      return PasswordRecoveryScreen(
+        onComplete: () {
+          if (!mounted) return;
+          setState(() {
+            _recoveringPassword = false;
+            _restore = Future.value(true);
+          });
+        },
+      );
+    }
+    return FutureBuilder<bool>(
+      future: _restore,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SplashScreen();
+        }
+        return snapshot.data == true ? const HomeScreen() : const LoginScreen();
+      },
+    );
+  }
 }
 
 class SplashScreen extends StatelessWidget {

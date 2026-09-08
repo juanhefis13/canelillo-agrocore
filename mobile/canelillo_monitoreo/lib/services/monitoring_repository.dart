@@ -13,6 +13,14 @@ class MonitoringRepository {
   final SupabaseClient client;
   final _local = LocalDatabase.instance;
   final _uuid = const Uuid();
+  Future<void>? _activeSimpleSync;
+
+  static const _simpleOperationTypes = {'tree_upsert', 'monitoring_upsert'};
+  static const _monitoringSelect =
+      'id,id_operacion_cliente,correlativo,arbol_id,campo_id,numero_arbol,'
+      'tipo_plaga,fecha,latitud,longitud,encontrada,encontrado_en,'
+      'huevos,ninfas_1,ninfas_2,ninfas_3,adultos,larvas,pupas,'
+      'precision_metros,ubicacion_fuente';
 
   Future<DashboardData> loadDashboard({bool force = false}) async {
     if (!force) {
@@ -42,7 +50,10 @@ class MonitoringRepository {
     final pests = results[2] as List<PestCatalog>;
     final monitorings = results[3] as List<MonitoringRecord>;
     await Future.wait([
-      _local.writeCache('fields', fields.map((row) => row.toJson()).toList()),
+      _local.writeCache(
+        'fields_v2',
+        fields.map((row) => row.toJson()).toList(),
+      ),
       _local.writeCache('trees', trees.map((row) => row.toJson()).toList()),
       _local.writeCache('pests', pests.map((row) => row.toJson()).toList()),
       _local.writeCache(
@@ -61,7 +72,7 @@ class MonitoringRepository {
 
   Future<DashboardData> _loadCached() async {
     final results = await Future.wait([
-      _local.readCache('fields'),
+      _local.readCache('fields_v2'),
       _local.readCache('trees'),
       _local.readCache('pests'),
       _local.readCache('monitorings'),
@@ -79,7 +90,7 @@ class MonitoringRepository {
   Future<List<FieldBlock>> _fetchFields() async {
     final rows = await client
         .from('campos')
-        .select('id,potrero,bloque,especie,variedad,hectareas')
+        .select('id,potrero,bloque,especie,variedad,hectareas,plantas')
         .eq('activo', true)
         .order('potrero')
         .order('bloque');
@@ -91,7 +102,8 @@ class MonitoringRepository {
         .from('monitoreo_arboles')
         .select(
           'id,id_operacion_cliente,campo_id,fecha_referencia,numero_arbol,'
-          'hilera,sector_monitoreo,longitud,latitud,activo',
+          'hilera,sector_monitoreo,longitud,latitud,activo,'
+          'precision_metros,ubicacion_fuente',
         )
         .eq('activo', true)
         .order('numero_arbol')
@@ -118,16 +130,62 @@ class MonitoringRepository {
   Future<List<MonitoringRecord>> _fetchMonitorings() async {
     final rows = await client
         .from('monitoreo_plagas')
-        .select(
-          'id,id_operacion_cliente,correlativo,arbol_id,campo_id,numero_arbol,'
-          'tipo_plaga,fecha,latitud,longitud,encontrada,encontrado_en,'
-          'huevos,ninfas_1,ninfas_2,ninfas_3,adultos,larvas,pupas',
-        )
+        .select(_monitoringSelect)
         .order('fecha', ascending: false)
         .limit(5000);
     return rows
         .map<MonitoringRecord>((row) => MonitoringRecord.fromJson(row))
         .toList();
+  }
+
+  Future<List<MonitoringRecord>> loadMonitoringsRange(
+    DateTime from,
+    DateTime to,
+  ) async {
+    final start = DateTime(from.year, from.month, from.day);
+    final end = DateTime(to.year, to.month, to.day);
+    const pageSize = 1000;
+    final remote = <MonitoringRecord>[];
+    try {
+      for (var offset = 0; ; offset += pageSize) {
+        final rows = await client
+            .from('monitoreo_plagas')
+            .select(_monitoringSelect)
+            .gte('fecha', start.toIso8601String().split('T').first)
+            .lte('fecha', end.toIso8601String().split('T').first)
+            .order('fecha', ascending: false)
+            .range(offset, offset + pageSize - 1)
+            .timeout(AppConfig.networkTimeout);
+        remote.addAll(rows.map<MonitoringRecord>(MonitoringRecord.fromJson));
+        if (rows.length < pageSize) break;
+      }
+    } catch (_) {
+      final cached = await _local.readCache('monitorings');
+      return cached
+          .map(MonitoringRecord.fromJson)
+          .where((record) => _insideRange(record.date, start, end))
+          .toList();
+    }
+    final cachedPending = (await _local.readCache('monitorings'))
+        .map(MonitoringRecord.fromJson)
+        .where(
+          (record) => record.pending && _insideRange(record.date, start, end),
+        );
+    for (final pending in cachedPending) {
+      remote.removeWhere(
+        (record) =>
+            record.id == pending.id ||
+            (pending.clientOperationId.isNotEmpty &&
+                record.clientOperationId == pending.clientOperationId),
+      );
+      remote.add(pending);
+    }
+    return remote;
+  }
+
+  bool _insideRange(DateTime value, DateTime from, DateTime to) {
+    final day = DateTime(value.year, value.month, value.day);
+    return !day.isBefore(from) && !day.isAfter(to);
   }
 
   Future<TreeRecord> saveTree(TreeRecord tree) async {
@@ -137,23 +195,21 @@ class MonitoringRepository {
     final localTree = tree.copyWith(
       id: tree.id.isEmpty ? clientId : tree.id,
       clientOperationId: clientId,
-      pending: false,
+      pending: true,
     );
     final payload = _treePayload(localTree);
-    try {
-      final row = await _sendTree(
-        payload,
-        tree.id,
-      ).timeout(AppConfig.writeTimeout);
-      final saved = TreeRecord.fromJson(row);
-      await _mergeTreeCache(saved);
-      return saved;
-    } catch (_) {
-      final pending = localTree.copyWith(pending: true);
-      await _local.enqueue(id: clientId, type: 'tree_upsert', payload: payload);
-      await _mergeTreeCache(pending);
-      return pending;
-    }
+    final queuedPayload = {
+      ...payload,
+      if (tree.id.isNotEmpty) '_current_id': tree.id,
+    };
+    await _local.enqueue(
+      id: clientId,
+      type: 'tree_upsert',
+      payload: queuedPayload,
+    );
+    await _mergeTreeCache(localTree);
+    unawaited(syncPending());
+    return localTree;
   }
 
   Future<MonitoringRecord> saveMonitoring(MonitoringRecord record) async {
@@ -173,32 +229,22 @@ class MonitoringRepository {
       found: record.found,
       stages: record.stages,
       foundAt: record.foundAt,
-      pending: false,
+      locationSource: record.locationSource,
+      accuracyMeters: record.accuracyMeters,
+      pending: true,
     );
     final payload = localRecord.toJson()
       ..remove('id')
       ..remove('correlativo')
       ..remove('pending');
-    try {
-      final row = await _sendMonitoring(
-        payload,
-      ).timeout(AppConfig.writeTimeout);
-      final saved = MonitoringRecord.fromJson(row);
-      await _mergeMonitoringCache(saved);
-      return saved;
-    } catch (_) {
-      final pending = MonitoringRecord.fromJson({
-        ...localRecord.toJson(),
-        'pending': true,
-      });
-      await _local.enqueue(
-        id: clientId,
-        type: 'monitoring_upsert',
-        payload: payload,
-      );
-      await _mergeMonitoringCache(pending);
-      return pending;
-    }
+    await _local.enqueue(
+      id: clientId,
+      type: 'monitoring_upsert',
+      payload: payload,
+    );
+    await _mergeMonitoringCache(localRecord);
+    unawaited(syncPending());
+    return localRecord;
   }
 
   Map<String, dynamic> _treePayload(TreeRecord tree) => {
@@ -215,7 +261,8 @@ class MonitoringRepository {
         : tree.monitoringSector,
     'longitud': tree.position.longitude,
     'latitud': tree.position.latitude,
-    'ubicacion_fuente': 'manual',
+    'ubicacion_fuente': tree.locationSource,
+    'precision_metros': tree.accuracyMeters,
     'activo': tree.active,
   };
 
@@ -223,17 +270,20 @@ class MonitoringRepository {
     Map<String, dynamic> payload,
     String currentId,
   ) async {
-    if (currentId.isNotEmpty && currentId != payload['id_operacion_cliente']) {
+    final request = {...payload};
+    final queuedCurrentId = request.remove('_current_id')?.toString() ?? '';
+    final targetId = currentId.isNotEmpty ? currentId : queuedCurrentId;
+    if (targetId.isNotEmpty && targetId != request['id_operacion_cliente']) {
       return await client
           .from('monitoreo_arboles')
-          .update(payload)
-          .eq('id', currentId)
+          .update(request)
+          .eq('id', targetId)
           .select()
           .single();
     }
     return await client
         .from('monitoreo_arboles')
-        .upsert(payload, onConflict: 'id_operacion_cliente')
+        .upsert(request, onConflict: 'id_operacion_cliente')
         .select()
         .single();
   }
@@ -261,29 +311,44 @@ class MonitoringRepository {
         .single();
   }
 
-  Future<void> syncPending() async {
-    final operations = await _local.pending();
-    operations.sort((a, b) {
-      if (a.type == b.type) return 0;
-      return a.type == 'tree_upsert' ? -1 : 1;
-    });
-    for (final operation in operations) {
-      try {
-        if (operation.type == 'tree_upsert') {
-          final row = await _sendTree(operation.payload, '');
-          await _mergeTreeCache(TreeRecord.fromJson(row));
-        } else if (operation.type == 'monitoring_upsert') {
-          final row = await _sendMonitoring({...operation.payload});
-          await _mergeMonitoringCache(MonitoringRecord.fromJson(row));
+  Future<void> syncPending() {
+    final active = _activeSimpleSync;
+    if (active != null) return active;
+    final sync = _syncSimplePending();
+    _activeSimpleSync = sync;
+    return sync.whenComplete(() => _activeSimpleSync = null);
+  }
+
+  Future<void> _syncSimplePending() async {
+    while (true) {
+      final operations = await _local.pending(types: _simpleOperationTypes);
+      if (operations.isEmpty) return;
+      operations.sort((a, b) {
+        if (a.type == b.type) return 0;
+        return a.type == 'tree_upsert' ? -1 : 1;
+      });
+      for (final operation in operations) {
+        try {
+          await _local.markSyncing(operation.id);
+          if (operation.type == 'tree_upsert') {
+            final row = await _sendTree(operation.payload, '');
+            await _mergeTreeCache(TreeRecord.fromJson(row));
+          } else if (operation.type == 'monitoring_upsert') {
+            final row = await _sendMonitoring({...operation.payload});
+            await _mergeMonitoringCache(MonitoringRecord.fromJson(row));
+          } else {
+            continue;
+          }
+          await _local.markSynced(operation.id);
+        } catch (error) {
+          await _local.markFailed(operation.id, error);
         }
-        await _local.markSynced(operation.id);
-      } catch (error) {
-        await _local.markFailed(operation.id, error);
       }
     }
   }
 
-  Future<int> pendingCount() => _local.pendingCount();
+  Future<int> pendingCount() =>
+      _local.pendingCount(types: _simpleOperationTypes);
 
   Future<void> _mergeTreeCache(TreeRecord record) async {
     final rows = await _local.readCache('trees');

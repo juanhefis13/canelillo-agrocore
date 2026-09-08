@@ -1,0 +1,4 @@
+storePassword=REEMPLAZAR
+keyPassword=REEMPLAZAR
+keyAlias=canelillo-upload
+storeFile=canelillo-upload-key.jks

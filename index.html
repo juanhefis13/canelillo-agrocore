@@ -7,7 +7,7 @@
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="canelilloIcon.png">
-  <link rel="stylesheet" href="styles.css?v=393-informaticos-detail-status">
+  <link rel="stylesheet" href="styles.css?v=408-cache-refresh">
   </head>
   <body>
     <section id="authGate" class="auth-gate">
@@ -78,6 +78,7 @@
             <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="gantt" title="Carta Gantt"><span class="nav-label">Carta Gantt</span></button>
             <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="bandejas" title="Bandeja"><span class="nav-label">Bandeja</span></button>
             <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="balance" title="Balance hidrico"><span class="nav-label">Balance hidrico</span></button>
+            <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="events" title="Eventos de riego"><span class="nav-label">Eventos</span></button>
             <button class="nav-item" data-view="irrigation" data-irrigation-menu-tab="satellite" title="NDVI e indices satelitales"><span class="nav-label">NDVI</span></button>
             <button class="nav-item" data-view="calicatas" title="Calicatas"><span class="nav-label">Calicatas</span></button>
           </div>
@@ -171,6 +172,8 @@
     <dialog id="purchaseDialog" class="modal"></dialog>
     <dialog id="harvestProductivityDialog" class="modal"></dialog>
     <dialog id="harvestCrewScheduleDialog" class="modal harvest-crew-schedule-modal"></dialog>
+    <dialog id="harvestReportDialog" class="modal harvest-report-modal"></dialog>
+    <dialog id="harvestDataAdminDialog" class="modal harvest-data-admin-modal"></dialog>
     <dialog id="informaticsTaskDialog" class="modal informatics-task-dialog"></dialog>
     <dialog id="informaticsStaffDialog" class="modal informatics-staff-dialog"></dialog>
     <dialog id="authDialog" class="modal"></dialog>
@@ -178,6 +181,7 @@
     <dialog id="irrigationBaseHoursDialog" class="modal"></dialog>
     <dialog id="irrigationBandejaDialog" class="modal"></dialog>
     <dialog id="irrigationObservationDialog" class="modal"></dialog>
+    <dialog id="irrigationEventDialog" class="modal irrigation-event-modal"></dialog>
     <dialog id="weatherStationImportDialog" class="modal weather-import-dialog"></dialog>
     <div id="printArea" class="print-area"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -187,6 +191,6 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="agricultural-map.js?v=358-calicata-shared-map"></script>
     <script src="index-color-scales.js?v=334-shared-agricultural-map"></script>
-  <script src="app.js?v=393-informaticos-detail-status"></script>
+  <script src="app.js?v=408-cache-refresh"></script>
   </body>
 </html>

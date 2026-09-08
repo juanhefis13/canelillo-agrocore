@@ -75,7 +75,12 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      await Supabase.instance.client.auth
+          .resetPasswordForEmail(
+            email,
+            redirectTo: AppConfig.passwordRecoveryRedirectUrl,
+          )
+          .timeout(AppConfig.networkTimeout);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

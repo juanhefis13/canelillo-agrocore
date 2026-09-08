@@ -8,49 +8,73 @@ import '../core/app_theme.dart';
 
 class MapMarkerService {
   static final Map<String, Future<BitmapDescriptor>> _fieldCache = {};
+  static final Map<String, Future<BitmapDescriptor>> _potreroCache = {};
+  static final Map<String, Future<BitmapDescriptor>> _casetaCache = {};
   static final Map<String, Future<BitmapDescriptor>> _treeCache = {};
   static Future<ui.Image>? _treeImage;
 
   static Future<BitmapDescriptor> fieldLabel(String label) =>
-      _fieldCache.putIfAbsent(label, () => _buildFieldLabel(label));
+      blockLabel(label.replaceFirst(RegExp(r'^.*·\s*'), ''));
+
+  static Future<BitmapDescriptor> blockLabel(String label) =>
+      _fieldCache.putIfAbsent(label, () => _buildMapLabel(label, false));
+
+  static Future<BitmapDescriptor> potreroLabel(String label) =>
+      _potreroCache.putIfAbsent(label, () => _buildMapLabel(label, true));
+
+  static Future<BitmapDescriptor> casetaLabel(String label) =>
+      _casetaCache.putIfAbsent(label, () => _buildCasetaLabel(label));
 
   static Future<BitmapDescriptor> treeWithNumber(String number) =>
       _treeCache.putIfAbsent(number, () => _buildTreeMarker(number));
 
-  static Future<BitmapDescriptor> _buildFieldLabel(String label) async {
-    final text = TextPainter(
+  static Future<BitmapDescriptor> _buildMapLabel(
+    String label,
+    bool potrero,
+  ) async {
+    final fontSize = potrero ? 20.0 : 13.0;
+    final measure = TextPainter(
       text: TextSpan(
         text: label,
-        style: const TextStyle(
-          color: AppColors.navy,
-          fontSize: 14,
+        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final width = (measure.width + 12).ceilToDouble();
+    final height = (measure.height + 10).ceilToDouble();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final offset = Offset((width - measure.width) / 2, 3);
+    final outline = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.w900,
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = potrero ? 5 : 4
+            ..color = Colors.black,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final fill = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: potrero ? Colors.white : const Color(0xFFFFD21F),
+          fontSize: fontSize,
           fontWeight: FontWeight.w900,
         ),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
     )..layout();
-    final width = (text.width + 20).ceilToDouble();
-    const height = 31.0;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final rect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(1, 1, width - 2, height - 4),
-      const Radius.circular(6),
-    );
-    canvas.drawShadow(Path()..addRRect(rect), Colors.black, 3, true);
-    canvas.drawRRect(
-      rect,
-      Paint()..color = Colors.white.withValues(alpha: .94),
-    );
-    canvas.drawRRect(
-      rect,
-      Paint()
-        ..color = AppColors.forest
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-    text.paint(canvas, Offset(10, (height - 4 - text.height) / 2));
+    outline.paint(canvas, offset);
+    fill.paint(canvas, offset);
     return _descriptor(recorder, width.ceil(), height.ceil(), width, height);
   }
 
@@ -95,6 +119,54 @@ class MapMarkerService {
     )..layout(maxWidth: 44);
     text.paint(canvas, Offset((width - text.width) / 2, 46));
     return _descriptor(recorder, width.toInt(), height.toInt(), 44, 50);
+  }
+
+  static Future<BitmapDescriptor> _buildCasetaLabel(String label) async {
+    final caption = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(
+          color: AppColors.navy,
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: 104);
+    final width = (caption.width + 48).clamp(92, 150).toDouble();
+    const height = 38.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final background = RRect.fromRectAndRadius(
+      Rect.fromLTWH(1, 1, width - 2, height - 3),
+      const Radius.circular(7),
+    );
+    canvas.drawShadow(Path()..addRRect(background), Colors.black, 3, true);
+    canvas.drawRRect(background, Paint()..color = Colors.white);
+    canvas.drawRRect(
+      background,
+      Paint()
+        ..color = const Color(0xFF0A8C78)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    final home = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.home_rounded.codePoint),
+        style: TextStyle(
+          color: const Color(0xFF087A58),
+          fontSize: 24,
+          fontFamily: Icons.home_rounded.fontFamily,
+          package: Icons.home_rounded.fontPackage,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    home.paint(canvas, const Offset(9, 6));
+    caption.paint(canvas, Offset(39, (height - caption.height) / 2 - 1));
+    return _descriptor(recorder, width.ceil(), height.ceil(), width, height);
   }
 
   static Future<ui.Image> _loadTreeImage() async {
