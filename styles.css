@@ -13604,6 +13604,150 @@ th {
   display: block;
 }
 
+/* El detalle de Aplicaciones vive en document.body para no ser recortado por el scroll de la Gantt. */
+#manager .gantt-track i[data-tooltip]::before,
+#manager .gantt-day-track i[data-tooltip]::before {
+  content: none;
+  display: none !important;
+}
+
+.manager-gantt-tooltip {
+  position: fixed;
+  z-index: 12000;
+  width: min(520px, calc(100vw - 24px));
+  max-height: min(680px, calc(100vh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #9bc5b6;
+  border-radius: 8px;
+  padding: 0 14px 14px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 18px 48px rgba(9, 50, 39, 0.24);
+  scrollbar-color: #39866f #e6f1ed;
+}
+
+.manager-gantt-tooltip[hidden] {
+  display: none;
+}
+
+.manager-gantt-tooltip-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -14px 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #cfe0d9;
+  background: #edf8f4;
+}
+
+.manager-gantt-tooltip-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manager-gantt-tooltip-head small,
+.manager-gantt-tooltip-section > small,
+.manager-gantt-tooltip-facts small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.manager-gantt-tooltip-head strong {
+  color: #0d513e;
+  font-size: 1.12rem;
+}
+
+.manager-gantt-tooltip-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #d7e5e0;
+  border-radius: 6px;
+  background: #d7e5e0;
+}
+
+.manager-gantt-tooltip-facts > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: #f8fbfa;
+}
+
+.manager-gantt-tooltip-facts > .full {
+  grid-column: 1 / -1;
+}
+
+.manager-gantt-tooltip-facts strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.manager-gantt-tooltip-section {
+  display: grid;
+  gap: 4px;
+  padding-top: 11px;
+}
+
+.manager-gantt-tooltip-section + .manager-gantt-tooltip-section {
+  margin-top: 10px;
+  border-top: 1px solid #dce8e3;
+}
+
+.manager-gantt-tooltip-section p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #203d34;
+  font-size: 0.79rem;
+  font-weight: 650;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.manager-gantt-tooltip-section ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manager-gantt-tooltip-section li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid #e1ebe7;
+}
+
+.manager-gantt-tooltip-section li:last-child {
+  border-bottom: 0;
+}
+
+.manager-gantt-tooltip-section li strong,
+.manager-gantt-tooltip-section li span {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+
+.manager-gantt-tooltip-section li span {
+  color: var(--muted);
+  font-weight: 700;
+  text-align: right;
+}
+
 .gantt-day-track i.active {
   border: 2px solid var(--program-color, var(--brand));
   background: color-mix(in srgb, var(--program-color, var(--brand)) 42%, white);
@@ -25919,9 +26063,116 @@ dialog.informatics-staff-dialog {
   color: var(--ink);
 }
 
+.stock-entry-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-entry-mode {
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f4f7f6;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.stock-entry-mode legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 6px);
+  gap: 10px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.stock-entry-mode.is-active {
+  border-color: var(--brand-2);
+  background: #f0fdf7;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12);
+}
+
+.stock-entry-mode.is-active legend {
+  color: var(--brand);
+}
+
+.stock-entry-mode.is-locked {
+  border-color: #ccd5d1;
+  background: #edf1ef;
+}
+
+.stock-entry-mode-state {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  color: #6b7974;
+  font-size: 0.69rem;
+}
+
+.stock-entry-mode.is-active .stock-entry-mode-state {
+  color: var(--ok);
+}
+
+.stock-mode-lock {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 10px;
+  margin-top: 3px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+}
+
+.stock-mode-lock::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: -8px;
+  width: 6px;
+  height: 7px;
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+}
+
+.stock-entry-mode.is-active .stock-mode-lock::before {
+  transform: translateX(4px) rotate(24deg);
+  transform-origin: left bottom;
+}
+
+.stock-entry-mode-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stock-entry-mode-fields-sacks {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stock-entry-mode.is-locked label {
+  color: #788681;
+}
+
+.stock-entry-mode.is-locked input:disabled {
+  border-color: #d3dcd8;
+  background: #e2e8e5;
+  color: #7c8984;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 @media (max-width: 760px) {
   .inventory-toolbar,
-  .stock-ingress-product-summary {
+  .stock-ingress-product-summary,
+  .stock-entry-modes {
     grid-template-columns: 1fr;
   }
 
@@ -25932,10 +26183,44 @@ dialog.informatics-staff-dialog {
   .stock-product-catalog-label select {
     min-height: 170px;
   }
+
+  .stock-entry-mode-fields-sacks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 480px) {
   .inventory-panel-header .top-actions {
     grid-template-columns: 1fr;
+  }
+
+  .stock-entry-mode-fields,
+  .stock-entry-mode-fields-sacks {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-gantt-tooltip {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .manager-gantt-tooltip-head {
+    margin-right: -10px;
+    margin-left: -10px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .manager-gantt-tooltip-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-gantt-tooltip-section li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .manager-gantt-tooltip-section li span {
+    text-align: left;
   }
 }

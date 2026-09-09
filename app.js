@@ -406,6 +406,9 @@ let irrigationObservationContext = null;
 let irrigationObservationTouch = null;
 let irrigationSelectedInput = null;
 let selectedGanttOrderId = "";
+let managerGanttTooltipAnchor = null;
+let managerGanttTooltipHideTimer = null;
+let managerGanttTooltipPositionFrame = null;
 let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
 let managerSpeciesFilters = new Set(["Todas"]);
@@ -8865,6 +8868,7 @@ function switchView(view) {
     inventoryStockFilter = "with_stock";
   }
   const openingHarvestAnalysis = view === "harvestAnalysis";
+  if (view !== "manager") hideManagerGanttTooltip();
   currentView = view;
   if (openingHarvestAnalysis) {
     resetHarvestAnalysisFoldState();
@@ -18914,6 +18918,7 @@ function renderProgram() {
 }
 
 function renderManager() {
+  hideManagerGanttTooltip();
   const availableYears = [...new Set(state.orders.flatMap((order) => [String(orderStartDate(order).slice(0, 4)), String(orderEndDate(order).slice(0, 4))]).filter(Boolean))].sort();
   if (!availableYears.includes(managerYear)) availableYears.push(managerYear);
   const orderPotreros = state.orders.flatMap((order) => String(order.potrero || "").split(",").map((item) => item.trim()).filter(Boolean));
@@ -19077,6 +19082,144 @@ function renderManager() {
     });
   });
   wireManagerGanttHorizontalScroll();
+  wireManagerGanttTooltip();
+}
+
+function managerGanttTooltipHtml(order) {
+  const stateInfo = ganttState(order);
+  const total = plannedLiters(order);
+  const dispatched = dispatchedLiters(order);
+  const progress = total ? Math.min(100, dispatched / total * 100) : 0;
+  const products = (order.recipe || []).map((line) => {
+    const product = getProduct(line.productId);
+    const unit = product?.unit || "";
+    return `
+      <li>
+        <strong>${escapeHtml(product?.name || "Producto sin identificar")}</strong>
+        <span>${number(productHaFromDose(order, line))} ${escapeHtml(unit)}/ha · ${number(plannedProduct(order, line))} ${escapeHtml(unit)} total</span>
+      </li>
+    `;
+  }).join("");
+  return `
+    <div class="manager-gantt-tooltip-head">
+      <div><small>Detalle de la orden</small><strong>#${escapeHtml(order.number)}</strong></div>
+      <span class="badge ${statusClass(effectiveOrderStatus(order))}">${escapeHtml(stateInfo.label)}</span>
+    </div>
+    <div class="manager-gantt-tooltip-facts">
+      <span><small>Avance</small><strong>${number(progress, 0)}% · ${number(dispatched, 0)} de ${number(total, 0)} L</strong></span>
+      <span><small>Fechas</small><strong>${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")}</strong></span>
+      <span><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero) || "-")}</strong></span>
+      <span><small>Bloques</small><strong>${escapeHtml(orderBlocksGroupedLabel(order) || "-")}</strong></span>
+      <span class="full"><small>Programa</small><strong>${escapeHtml(programLabel(order) || "-")}</strong></span>
+    </div>
+    <div class="manager-gantt-tooltip-section">
+      <small>Objetivo / descripcion</small>
+      <p>${escapeHtml(order.objective || "Sin objetivo informado")}</p>
+    </div>
+    ${order.notes ? `<div class="manager-gantt-tooltip-section"><small>Nota</small><p>${escapeHtml(order.notes)}</p></div>` : ""}
+    <div class="manager-gantt-tooltip-section">
+      <small>Productos</small>
+      ${products ? `<ul>${products}</ul>` : `<p>Sin productos registrados.</p>`}
+    </div>
+  `;
+}
+
+function ensureManagerGanttTooltip() {
+  let tooltip = document.getElementById("managerGanttTooltip");
+  if (tooltip) return tooltip;
+  tooltip = document.createElement("div");
+  tooltip.id = "managerGanttTooltip";
+  tooltip.className = "manager-gantt-tooltip";
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.setAttribute("aria-hidden", "true");
+  tooltip.hidden = true;
+  tooltip.addEventListener("pointerenter", () => clearTimeout(managerGanttTooltipHideTimer));
+  tooltip.addEventListener("pointerleave", () => scheduleManagerGanttTooltipHide());
+  document.body.appendChild(tooltip);
+  window.addEventListener("resize", queueManagerGanttTooltipPosition, { passive: true });
+  window.addEventListener("scroll", queueManagerGanttTooltipPosition, { passive: true, capture: true });
+  return tooltip;
+}
+
+function positionManagerGanttTooltip() {
+  managerGanttTooltipPositionFrame = null;
+  const tooltip = document.getElementById("managerGanttTooltip");
+  const anchor = managerGanttTooltipAnchor;
+  if (!tooltip || !anchor || !anchor.isConnected) {
+    hideManagerGanttTooltip();
+    return;
+  }
+  const padding = 12;
+  const gap = 10;
+  const anchorRect = anchor.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  let left = anchorRect.left + anchorRect.width / 2 - tooltipRect.width / 2;
+  left = Math.max(padding, Math.min(left, window.innerWidth - tooltipRect.width - padding));
+  let top = anchorRect.bottom + gap;
+  let above = false;
+  if (top + tooltipRect.height > window.innerHeight - padding) {
+    top = anchorRect.top - tooltipRect.height - gap;
+    above = true;
+  }
+  top = Math.max(padding, Math.min(top, window.innerHeight - tooltipRect.height - padding));
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+  tooltip.classList.toggle("is-above", above);
+}
+
+function queueManagerGanttTooltipPosition() {
+  if (!managerGanttTooltipAnchor || managerGanttTooltipPositionFrame) return;
+  managerGanttTooltipPositionFrame = requestAnimationFrame(positionManagerGanttTooltip);
+}
+
+function showManagerGanttTooltip(anchor) {
+  const order = state.orders.find((item) => String(item.id) === String(anchor?.dataset?.id));
+  if (!order) return;
+  clearTimeout(managerGanttTooltipHideTimer);
+  if (managerGanttTooltipAnchor && managerGanttTooltipAnchor !== anchor) {
+    managerGanttTooltipAnchor.removeAttribute("aria-describedby");
+  }
+  managerGanttTooltipAnchor = anchor;
+  const tooltip = ensureManagerGanttTooltip();
+  tooltip.innerHTML = managerGanttTooltipHtml(order);
+  tooltip.hidden = false;
+  tooltip.setAttribute("aria-hidden", "false");
+  anchor.setAttribute("aria-describedby", tooltip.id);
+  positionManagerGanttTooltip();
+}
+
+function scheduleManagerGanttTooltipHide() {
+  clearTimeout(managerGanttTooltipHideTimer);
+  managerGanttTooltipHideTimer = setTimeout(hideManagerGanttTooltip, 140);
+}
+
+function hideManagerGanttTooltip() {
+  clearTimeout(managerGanttTooltipHideTimer);
+  if (managerGanttTooltipPositionFrame) cancelAnimationFrame(managerGanttTooltipPositionFrame);
+  managerGanttTooltipPositionFrame = null;
+  managerGanttTooltipAnchor?.removeAttribute("aria-describedby");
+  managerGanttTooltipAnchor = null;
+  const tooltip = document.getElementById("managerGanttTooltip");
+  if (!tooltip) return;
+  tooltip.hidden = true;
+  tooltip.setAttribute("aria-hidden", "true");
+}
+
+function wireManagerGanttTooltip() {
+  const markers = views.manager.querySelectorAll(".gantt-track i.active[data-id], .gantt-day-track i.active[data-id]");
+  if (!markers.length) return;
+  ensureManagerGanttTooltip();
+  markers.forEach((marker) => {
+    marker.addEventListener("pointerenter", () => showManagerGanttTooltip(marker));
+    marker.addEventListener("pointerleave", scheduleManagerGanttTooltipHide);
+    marker.addEventListener("focus", () => showManagerGanttTooltip(marker));
+    marker.addEventListener("blur", scheduleManagerGanttTooltipHide);
+    marker.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      marker.click();
+    });
+  });
 }
 
 function wireManagerGanttHorizontalScroll() {
@@ -19340,7 +19483,7 @@ function ganttMarker(order, extraStyle = "") {
     "Productos:",
     productLines.length ? productLines.join("\n") : "-"
   ].join("\n");
-  return `<i class="active ${stateInfo.key} ${selectedGanttOrderId === order.id ? "is-selected" : ""}" data-action="select-gantt-order" data-id="${order.id}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span></i>`;
+  return `<i class="active ${stateInfo.key} ${selectedGanttOrderId === order.id ? "is-selected" : ""}" data-action="select-gantt-order" data-id="${order.id}" tabindex="0" role="button" aria-label="Ver detalle de la orden ${htmlAttr(order.number)}" style="--progress:${progress}%;--program-color:${programColor(order)};--gantt-state-color:${ganttStateColor(stateInfo.key)};${extraStyle}" data-tooltip="${htmlAttr(tooltip)}"><span>#${order.number}</span></i>`;
 }
 
 function programColor(order) {
@@ -25182,11 +25325,29 @@ function openPurchaseDialog() {
             <option value="totals">Por cantidad y precio total</option>
           </select>
         </label>
-        <label data-purchase-mode="sacks">Cantidad de sacos/envases<input name="sacks" type="number" min="1" step="1" value="1" required></label>
-        <label data-purchase-mode="sacks">Cantidad por saco/envase<input name="kgPerSack" type="number" min="0.001" step="0.001" value="25" required></label>
-        <label data-purchase-mode="sacks">Costo por saco/envase<input name="sackPrice" type="number" min="0" step="1" value="0" required></label>
-        <label data-purchase-mode="totals" hidden>Cantidad total<input name="totalQuantity" type="number" min="0.001" step="0.001" value="0" disabled required></label>
-        <label data-purchase-mode="totals" hidden>Precio total<input name="totalPrice" type="number" min="0" step="1" value="0" disabled required></label>
+        <div class="full stock-entry-modes" aria-label="Campos disponibles segun forma de ingreso">
+          <fieldset class="stock-entry-mode" data-purchase-mode="sacks">
+            <legend>
+              <span>Por sacos o envases</span>
+              <span class="stock-entry-mode-state"><i class="stock-mode-lock" aria-hidden="true"></i><b data-purchase-mode-state>Disponible</b></span>
+            </legend>
+            <div class="stock-entry-mode-fields stock-entry-mode-fields-sacks">
+              <label>Cantidad de sacos/envases<input name="sacks" type="number" min="1" step="1" value="1" required></label>
+              <label>Cantidad por saco/envase<input name="kgPerSack" type="number" min="0.001" step="0.001" value="25" required></label>
+              <label>Costo por saco/envase<input name="sackPrice" type="number" min="0" step="1" value="0" required></label>
+            </div>
+          </fieldset>
+          <fieldset class="stock-entry-mode" data-purchase-mode="totals" aria-disabled="true">
+            <legend>
+              <span>Por cantidad y precio total</span>
+              <span class="stock-entry-mode-state"><i class="stock-mode-lock" aria-hidden="true"></i><b data-purchase-mode-state>Bloqueado</b></span>
+            </legend>
+            <div class="stock-entry-mode-fields">
+              <label>Cantidad total<input name="totalQuantity" type="number" min="0.001" step="0.001" value="0" disabled required></label>
+              <label>Precio total<input name="totalPrice" type="number" min="0" step="1" value="0" disabled required></label>
+            </div>
+          </fieldset>
+        </div>
       </div>
       <div class="calc-preview" id="purchasePreview"></div>
       <div class="modal-actions">
@@ -25209,10 +25370,16 @@ function openPurchaseDialog() {
   };
   const update = () => {
     const mode = form.entryMode.value;
-    form.querySelectorAll("[data-purchase-mode]").forEach((field) => {
-      const active = field.dataset.purchaseMode === mode;
-      field.hidden = !active;
-      field.querySelector("input").disabled = !active;
+    form.querySelectorAll("[data-purchase-mode]").forEach((group) => {
+      const active = group.dataset.purchaseMode === mode;
+      group.classList.toggle("is-active", active);
+      group.classList.toggle("is-locked", !active);
+      group.setAttribute("aria-disabled", String(!active));
+      group.querySelectorAll("input").forEach((input) => {
+        input.disabled = !active;
+      });
+      const modeState = group.querySelector("[data-purchase-mode-state]");
+      if (modeState) modeState.textContent = active ? "Disponible" : "Bloqueado";
     });
     const product = getProduct(productSelect.value);
     const values = purchaseStockValues(form);
