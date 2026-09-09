@@ -1751,7 +1751,10 @@ function getOperator(id) {
 
 function dispatchOperatorName(dispatch) {
   if (!dispatch) return "-";
-  if (dispatch.operatorId) return getOperator(dispatch.operatorId);
+  if (dispatch.operatorId) {
+    const operator = state.operators.find((item) => String(item.id) === String(dispatch.operatorId));
+    return operator?.name || dispatch.operatorNameOrigin || String(dispatch.operatorId);
+  }
   return dispatch.operatorNameOrigin || "-";
 }
 
@@ -1791,8 +1794,8 @@ function getProgramDefinitionByNumber(seasonId, numberValue) {
 
 function programLabel(order) {
   const definition = getProgramDefinition(order);
-  if (definition?.official) return `${definition.name} ${definition.code || definition.number} · ${definition.crop || order.crop || ""}`.trim();
   const numbers = order.programNumbers?.length ? order.programNumbers : [order.programNumber].filter(Boolean);
+  if (definition?.official) return `${definition.name} ${numbers.length ? numbers.join(", ") : definition.code || definition.number} · ${definition.crop || order.crop || ""}`.trim();
   return numbers.length ? `Programa ${numbers.join(", ")}` : "Programa s/n";
 }
 
@@ -18904,7 +18907,7 @@ function renderManager() {
           <div class="manager-order-identity">
             <span class="manager-order-number"><small>Orden</small><strong>#${escapeHtml(order.number)}</strong></span>
             <div>
-              <h3>${escapeHtml(potreroListLabel(order.potrero))} <span>Bloques ${escapeHtml(order.blocks?.join(", ") || "-")}</span></h3>
+              <h3>${escapeHtml(potreroListLabel(order.potrero))} <span>Bloques ${escapeHtml(orderBlocksLabel(order) || "-")}</span></h3>
               <p>${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")} · Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</p>
             </div>
           </div>
@@ -19713,10 +19716,10 @@ async function loadCloudData(options = {}) {
       return null;
     }) : Promise.resolve(null),
     loadApplications ? sbSelect("productos", "select=*&activo=eq.true&order=nombre.asc") : Promise.resolve(null),
-    loadApplications ? sbSelect("ordenes_aplicacion", "select=*&order=creado_en.desc,fecha_planificada.desc,numero_orden.desc") : Promise.resolve(null),
-    loadApplications ? sbSelect("orden_productos", "select=*") : Promise.resolve(null),
-    loadApplications ? sbSelect("despachos", "select=*&order=fecha.asc") : Promise.resolve(null),
-    loadApplications ? sbSelect("despacho_productos", "select=*") : Promise.resolve(null),
+    loadApplications ? sbSelectAll("ordenes_aplicacion", "select=*&order=creado_en.desc,fecha_planificada.desc,numero_orden.desc", 1000) : Promise.resolve(null),
+    loadApplications ? sbSelectAll("orden_productos", "select=*&order=id.asc", 1000) : Promise.resolve(null),
+    loadApplications ? sbSelectAll("despachos", "select=*&order=fecha.asc,id.asc", 1000) : Promise.resolve(null),
+    loadApplications ? sbSelectAll("despacho_productos", "select=*&order=id.asc", 1000) : Promise.resolve(null),
     loadApplications ? sbSelect("movimientos_stock", "select=*&order=fecha.asc") : Promise.resolve(null),
     loadApplications ? sbSelect("vehiculos", "select=*&order=codigo.asc").catch((error) => {
       console.warn("Tabla vehiculos no disponible. Ejecuta supabase_vehiculos.sql", error);
@@ -20124,7 +20127,8 @@ async function loadCloudData(options = {}) {
       sagNumber: product.numero_sag || "",
       sagType: product.tipo_producto_sag || "",
       sagConcentration: product.concentracion_sag || "",
-      sagLabelColor: product.color_etiqueta_sag || ""
+      sagLabelColor: product.color_etiqueta_sag || "",
+      objectiveOperational: product.objetivo_operacional || ""
     }));
   }
   if (loadPlanning && (Array.isArray(programs) || Array.isArray(programProductRows) || Array.isArray(products)) && (!officialPrograms().length || !state.programProducts.length)) {
@@ -20232,7 +20236,7 @@ async function loadCloudData(options = {}) {
     finishedByManager: Boolean(order.finalizada_por_jefe),
     dbFinishedByManager: Boolean(order.finalizada_por_jefe),
     createdAt: order.creado_en || order.created_at || order.fecha_creacion || "",
-    notes: "",
+    notes: order.observaciones || order.notas || "",
     operatorId: "",
     sprayerId: "",
     tractorId: "",
@@ -20261,7 +20265,7 @@ async function loadCloudData(options = {}) {
       tractorCode: dispatch.codigo_tractor || dispatch.tractor || dispatch.tractor_code || "",
       machineCode: dispatch.codigo_maquina || dispatch.maquina || dispatch.machine_code || "",
       operatorId: dispatch.aplicador_id || dispatch.aplicador || dispatch.operator_id || "",
-      operatorNameOrigin: dispatch.aplicador_nombre_origen || "",
+      operatorNameOrigin: dispatch.aplicador_nombre_origen || dispatch.aplicador_nombre || "",
       note: dispatch.nota,
       products: Object.fromEntries((dispatchProductsByDispatch[dispatch.id] || []).map((item) => [item.producto_id, Number(item.cantidad) || 0]))
     })),
@@ -20562,29 +20566,33 @@ async function cloudSaveOrder(order) {
     velocidad: order.speed || null,
     codigo_tractor: order.tractorCode || null,
     codigo_maquina: order.machineCode || null,
-    dosificador: order.dosifier || null,
+    dosificador: null,
     estado: toDbOrderStatus(effectiveOrderStatus(order)),
     finalizada_por_jefe: Boolean(order.finishedByManager),
+    observaciones: order.notes || null,
     creado_por: supabaseSession.user?.id
   };
+  const optionalColumns = ["numeros_programa", "fecha_fin_planificada", "finalizada_por_jefe", "clasificacion", "observaciones"];
+  const fallbackBody = { ...body };
   let saved;
-  try {
-    saved = await sbFetch("/rest/v1/ordenes_aplicacion?select=*", {
-      method: "POST",
-      prefer: "resolution=merge-duplicates,return=representation",
-      body: JSON.stringify([body])
-    });
-  } catch (error) {
-    const optionalColumns = ["numeros_programa", "fecha_fin_planificada", "finalizada_por_jefe", "clasificacion"];
-    if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
-    const fallbackBody = { ...body };
-    optionalColumns.forEach((column) => delete fallbackBody[column]);
-    saved = await sbFetch("/rest/v1/ordenes_aplicacion?select=*", {
-      method: "POST",
-      prefer: "resolution=merge-duplicates,return=representation",
-      body: JSON.stringify([fallbackBody])
-    });
-    showToast("Orden guardada, pero faltan columnas nuevas en Supabase");
+  const omittedColumns = [];
+  while (!saved) {
+    try {
+      saved = await sbFetch("/rest/v1/ordenes_aplicacion?select=*", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=representation",
+        body: JSON.stringify([fallbackBody])
+      });
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      const missingColumn = optionalColumns.find((column) => Object.hasOwn(fallbackBody, column) && message.includes(column));
+      if (!missingColumn) throw error;
+      delete fallbackBody[missingColumn];
+      omittedColumns.push(missingColumn);
+    }
+  }
+  if (omittedColumns.length) {
+    showToast(`Orden guardada con compatibilidad. Faltan columnas en Supabase: ${omittedColumns.join(", ")}`);
   }
   const cloudOrder = saved[0];
   if (!cloudOrder?.id) throw new Error("Supabase no devolvio la orden guardada");
@@ -20641,7 +20649,8 @@ async function cloudSaveDispatch(order, dispatch) {
     hora_termino: dispatch.endTime || null,
     codigo_tractor: dispatch.tractorCode || null,
     codigo_maquina: dispatch.machineCode || null,
-    aplicador_id: dispatch.operatorId || null
+    aplicador_id: dispatch.operatorId || null,
+    aplicador_nombre_origen: dispatch.operatorNameOrigin || dispatchOperatorName(dispatch) || null
   };
 
   const traceFriendly = {
@@ -20670,7 +20679,7 @@ async function cloudSaveDispatch(order, dispatch) {
       });
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
@@ -20680,6 +20689,8 @@ async function cloudSaveDispatch(order, dispatch) {
   const cloudDispatch = saved[0];
   if (!cloudDispatch?.id) throw new Error("Supabase no devolvio el ID del despacho");
   dispatch.id = cloudDispatch.id;
+  dispatch.createdAt = cloudDispatch.creado_en || cloudDispatch.created_at || dispatch.createdAt || new Date().toISOString();
+  dispatch.operatorNameOrigin = cloudDispatch.aplicador_nombre_origen || dispatch.operatorNameOrigin || dispatchOperatorName(dispatch);
   const products = Object.entries(dispatch.products || {}).map(([productId, quantity]) => {
     const product = getProduct(productId);
     return {
@@ -20793,7 +20804,8 @@ async function cloudUpdateDispatch(order, dispatch) {
     hora_termino: dispatch.endTime || null,
     codigo_tractor: dispatch.tractorCode || null,
     codigo_maquina: dispatch.machineCode || null,
-    aplicador_id: dispatch.operatorId || null
+    aplicador_id: dispatch.operatorId || null,
+    aplicador_nombre_origen: dispatch.operatorNameOrigin || dispatchOperatorName(dispatch) || null
   };
 
   const traceFriendly = {
@@ -20823,7 +20835,7 @@ async function cloudUpdateDispatch(order, dispatch) {
       updated = true;
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
@@ -21008,6 +21020,7 @@ function warehouseCard(order) {
       <div class="progress"><i style="width:${pct}%"></i></div>
       <div class="warehouse-order-context">
         <div><strong>N programa</strong><span>${programNumbersLabel(order)}</span></div>
+        <div><strong>Potreros / bloques</strong><span>${escapeHtml(`${potreroListLabel(order.potrero)} · ${orderBlocksLabel(order) || "-"}`)}</span></div>
         <div><strong>Objetivo</strong><span>${order.objective || "-"}</span></div>
       </div>
       <div class="warehouse-detail-grid">
@@ -21166,7 +21179,7 @@ function applicationAlertRow(alert) {
     <div class="alert-row">
       <div>
         <strong>${alert.label} - Orden #${alert.order.number}</strong>
-        <span>${escapeHtml(potreroListLabel(alert.order.potrero))} / bloques ${escapeHtml(alert.order.blocks?.join(", ") || "-")} - ${escapeHtml(alert.detail)}</span>
+        <span>${escapeHtml(potreroListLabel(alert.order.potrero))} / bloques ${escapeHtml(orderBlocksLabel(alert.order) || "-")} - ${escapeHtml(alert.detail)}</span>
       </div>
       <span class="badge danger">Revisar</span>
     </div>
@@ -22027,7 +22040,7 @@ function executionCard(order) {
       <div>
         <span class="overline">Orden #${order.number} - ${getOperator(order.operatorId)}</span>
         ${newOrderMark(order)}
-        <h3>${escapeHtml(potreroListLabel(order.potrero))} ${order.blocks?.length ? `bloques ${escapeHtml(order.blocks.join(", "))}` : ""}</h3>
+        <h3>${escapeHtml(potreroListLabel(order.potrero))} ${order.blocks?.length ? `bloques ${escapeHtml(orderBlocksLabel(order))}` : ""}</h3>
         <p>${order.objective || "Aplicacion programada"} - ${number(order.hectares)} ha</p>
         <div class="tech-strip compact">
           <span>${order.machineCode || getEquipment(order.sprayerId)}</span>
@@ -22425,7 +22438,7 @@ function reportProgramPerformanceRows(orders, selectedProgramNumber = "Todos") {
       row.dispatchedWater += realWater;
       row.cost += orderCostValue;
 
-      const fieldKey = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
+      const fieldKey = `${potreroListLabel(order.potrero)} / ${orderBlocksLabel(order) || "-"}`;
       row.children[fieldKey] ||= { label: fieldKey, hectares: 0, plannedWater: 0, dispatchedWater: 0 };
       row.children[fieldKey].hectares += hectares;
       row.children[fieldKey].plannedWater += theoreticalWater;
@@ -22498,7 +22511,7 @@ function reportProgramPerformanceRows(orders, selectedProgramNumber = "Todos") {
 
 function reportByField(orders) {
   return Object.values(orders.reduce((acc, order) => {
-    const key = `${potreroListLabel(order.potrero)} / ${order.blocks?.join(", ") || "-"}`;
+    const key = `${potreroListLabel(order.potrero)} / ${orderBlocksLabel(order) || "-"}`;
     acc[key] ||= { label: key, hectares: 0, plannedWater: 0, dispatchedWater: 0, cost: 0 };
     acc[key].hectares += Number(order.hectares) || 0;
     acc[key].plannedWater += plannedLiters(order);
@@ -22742,7 +22755,17 @@ async function refreshNewOrderNumber(form) {
   numberInput.value = verifiedNumber;
 }
 
-function openOrderDialog(orderId, presetProgramId = "") {
+async function openOrderDialog(orderId, presetProgramId = "") {
+  if (supabaseSession && !uniquePotreros().length) {
+    showToast("Cargando potreros y bloques desde Supabase...");
+    try {
+      await loadCloudData({ modules: ["fields"], render: false, force: true });
+    } catch (error) {
+      console.error("No se pudieron cargar los campos para crear la orden", error);
+      showToast(`No se pudieron cargar los potreros: ${error.message}`);
+      return;
+    }
+  }
   const dialog = document.getElementById("orderDialog");
   const order = orderId ? state.orders.find((item) => item.id === orderId) : null;
   const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
@@ -22750,12 +22773,14 @@ function openOrderDialog(orderId, presetProgramId = "") {
   const nextNumber = localNextApplicationOrderNumber();
   const selectedRecipe = order?.recipe || [];
   const potreros = uniquePotreros();
+  if (!potreros.length) {
+    showToast("No hay potreros activos disponibles en la tabla campos");
+    return;
+  }
   const selectedPrograms = order?.programNumbers?.length
     ? order.programNumbers
     : selectedOfficialProgram ? [selectedOfficialProgram.number] : [order?.programNumber].filter(Boolean);
-  const initialPotrero = order?.classification === "P"
-    ? firstPotreroFromSelection(order?.blocks, order?.potrero) || order?.potrero || ""
-    : order?.potrero || "";
+  const initialPotrero = firstPotreroFromSelection(order?.blocks, order?.potrero);
 
   dialog.innerHTML = `
     <form method="dialog" class="modal-body" id="orderForm">
@@ -22783,7 +22808,10 @@ function openOrderDialog(orderId, presetProgramId = "") {
           <div id="selectedPrograms" class="selected-blocks"></div>
           <p class="field-hint">Puedes añadir más de una aplicación oficial a la misma orden.</p>
         </div>
-        <label class="full">Objetivo<input name="objective" value="${order?.objective || ""}" placeholder="Control plaga, calibre, stress, foliar"></label>
+        <label class="full">Objetivo
+          <textarea name="objective" rows="2" readonly placeholder="Se completa al añadir productos vinculados al programa">${escapeHtml(order?.objective || "")}</textarea>
+          <small>Se obtiene del programa correspondiente a cada producto seleccionado.</small>
+        </label>
         <label>Clasificacion
           <select name="classification">
             ${classificationOptions(order?.classification || "")}
@@ -22806,7 +22834,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
             <button type="button" class="secondary-button" id="addBlockToOrder">Agregar bloque</button>
           </div>
           <div id="selectedBlocks" class="selected-blocks"></div>
-          <p id="blockSummary" class="field-hint">Selecciona el potrero y agrega uno o mas bloques. En Pulverizacion puedes mezclar mas de un potrero.</p>
+          <p id="blockSummary" class="field-hint">Selecciona un potrero, agrega sus bloques y luego continúa con el siguiente potrero.</p>
         </div>
         <label class="autofill-locked-field">Especie<input name="crop" value="${order?.crop || ""}" placeholder="Se rellena automaticamente" readonly required><small>Autocompletado por potrero/bloque</small></label>
         <label class="autofill-locked-field">Variedad<input name="variety" value="${order?.variety || ""}" placeholder="Se rellena automaticamente" readonly><small>Autocompletado por potrero/bloque</small></label>
@@ -22820,7 +22848,6 @@ function openOrderDialog(orderId, presetProgramId = "") {
         <label>Especificacion
           <select name="nozzleSpec" id="nozzleSpecSelect"></select>
         </label>
-        <label>Dosificador<input name="dosifier" value="${order?.dosifier || ""}" placeholder="Si / No / codigo"></label>
       </div>
       <div class="recipe-editor">
         <div class="panel-header">
@@ -22848,6 +22875,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
   const formElement = document.getElementById("orderForm");
   formElement.dataset.orderId = order?.id || "";
   formElement.dataset.savedNozzle = order?.nozzle || "";
+  formElement.dataset.objectiveManaged = order ? "false" : "true";
   dialog.showModal();
   renderOrderProgramPicker(selectedPrograms);
   renderOrderBlockPicker(order?.blocks || []);
@@ -22855,7 +22883,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
   refreshOfficialProgramSelect(formElement, selectedOfficialProgram?.id || "");
   document.querySelector('[name="classification"]').addEventListener("change", () => {
     const form = document.getElementById("orderForm");
-    renderOrderBlockPicker(form.classification.value === "P" ? normalizeBlocksForPulverization(selectedOrderBlocks(), form.potrero.value) : []);
+    renderOrderBlockPicker(selectedOrderBlocks());
     form.dataset.savedNozzle = "";
     document.getElementById("nozzleModelSelect").value = "";
     document.getElementById("nozzleSpecSelect").value = "";
@@ -22868,8 +22896,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
     renderOrderNozzlePicker();
   });
   document.getElementById("potreroSelect").addEventListener("change", () => {
-    const form = document.getElementById("orderForm");
-    renderOrderBlockPicker(form.classification.value === "P" ? selectedOrderBlocks() : []);
+    renderOrderBlockPicker(selectedOrderBlocks());
     fillOrderFromSelectedBlocks();
   });
   document.querySelector('[name="plannedDate"]').addEventListener("change", (event) => {
@@ -22914,6 +22941,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
     }
     if (event.target.matches('[name="lineProgramNumber"]')) {
       syncRecipeLineProgram(event.target.closest(".recipe-line"), true);
+      updateOrderObjectiveFromRecipe(true);
       updateOrderRecipeCalculations();
     }
   });
@@ -22927,6 +22955,7 @@ function openOrderDialog(orderId, presetProgramId = "") {
   document.getElementById("saveOrder").addEventListener("click", () => saveOrder(order?.id));
   if (!order) refreshNewOrderNumber(formElement);
   if (presetProgramId && !order) applyOfficialProgramToOrder(presetProgramId);
+  updateOrderObjectiveFromRecipe(true);
   updateOrderRecipeCalculations();
 }
 
@@ -22962,11 +22991,8 @@ function applyOfficialProgramToOrder(programId = "") {
     showToast("Selecciona una aplicación oficial sincronizada con Supabase");
     return;
   }
-  const lines = programProductsFor(program.id);
-  const recipeContainer = document.getElementById("recipeLines");
-  const existingRecipeRows = [...recipeContainer.querySelectorAll(".recipe-line:not(.recipe-line-head)")];
   const currentPrograms = selectedOrderPrograms();
-  const isFirstProgram = existingRecipeRows.length === 0;
+  const isFirstProgram = currentPrograms.length === 0;
   if (!isFirstProgram && String(form.seasonId.value) !== String(program.seasonId)) {
     showToast("Los programas de una misma orden deben pertenecer a la misma temporada");
     return;
@@ -22984,45 +23010,13 @@ function applyOfficialProgramToOrder(programId = "") {
 
   if (!form.programId.value) form.programId.value = program.id;
   if (isFirstProgram) form.seasonId.value = program.seasonId;
-  const objectives = String(form.objective.value || "").split(" / ").map((item) => item.trim()).filter(Boolean);
-  if (program.objective && !objectives.includes(program.objective)) objectives.push(program.objective);
-  form.objective.value = objectives.join(" / ");
   if (isFirstProgram && program.waterHa) form.waterHa.value = program.waterHa;
   const nextPrograms = [...new Set([...currentPrograms, Number(program.number)].filter(Boolean))];
   renderOrderProgramPicker(nextPrograms);
-
-  const existingKeys = new Set(existingRecipeRows.map((row) => {
-    const productId = row.querySelector('[name="productId"]')?.value || "";
-    const programNumber = row.querySelector('[name="lineProgramNumber"]')?.value || "";
-    return `${programNumber}:${productId}`;
-  }));
-  const missingProducts = lines.filter((line) => !line.productId).length;
-  const recipeLines = [...new Map(lines
-    .filter((line) => line.productId && !line.incomplete && Number(line.dose) > 0)
-    .map((line) => [line.productId, line])).values()];
-  recipeLines.forEach((line) => {
-    if (!line.productId || existingKeys.has(`${program.number}:${line.productId}`)) return;
-    recipeContainer.insertAdjacentHTML("beforeend", recipeLineHtml({
-      productId: line.productId,
-      programProductId: line.id,
-      programNumber: program.number,
-      dose100: line.dose ?? 0,
-      dose: line.dose,
-      doseUnit: line.unit,
-      doseBasis: line.basis,
-      outputUnit: line.outputUnit,
-      divisor: line.divisor,
-      incomplete: line.incomplete
-    }, nextPrograms));
-  });
   const officialSelect = document.getElementById("officialProgramSelect");
   if (officialSelect) officialSelect.value = "";
   updateOrderRecipeCalculations();
-  const warnings = [];
-  if (missingProducts) warnings.push(`${missingProducts} producto(s) sin vínculo al maestro`);
-  if (lines.some((line) => line.incomplete)) warnings.push("las líneas incompletas quedaron fuera de la receta");
-  if (warnings.length) showToast(warnings.join("; "));
-  else showToast(`Programa ${program.number} añadido a la orden`);
+  showToast(`Programa ${program.number} añadido. Ahora agrega manualmente sus productos.`);
 }
 
 function firstPotreroFromSelection(blocks = [], potreroText = "") {
@@ -23038,8 +23032,8 @@ function normalizeBlocksForPulverization(blocks = [], fallbackPotrero = "") {
     .map((block) => block.includes(":") || !fallbackPotrero ? block : `${fallbackPotrero}:${block}`);
 }
 
-function orderBlockKey(block, isMultiPotrero) {
-  return isMultiPotrero ? `${block.potrero}:${block.block}` : String(block.block);
+function orderBlockKey(block) {
+  return `${block.potrero}:${block.block}`;
 }
 
 function parseOrderBlockKey(key, fallbackPotrero = "") {
@@ -23054,6 +23048,18 @@ function parseOrderBlockKey(key, fallbackPotrero = "") {
 function blockLabelFromKey(key, fallbackPotrero = "") {
   const parsed = parseOrderBlockKey(key, fallbackPotrero);
   return parsed.potrero ? `${potreroLabel(parsed.potrero)} / Bloque ${parsed.block}` : `Bloque ${parsed.block}`;
+}
+
+function orderBlocksLabel(order = {}) {
+  const fallbackPotrero = firstPotreroFromSelection(order.blocks, order.potrero);
+  const selected = (order.blocks || []).map((key) => parseOrderBlockKey(key, fallbackPotrero));
+  const potreros = new Set(selected.map((item) => item.potrero).filter(Boolean));
+  return selected.map((item) => {
+    if (!item.block) return "";
+    return potreros.size > 1 && item.potrero
+      ? `${potreroLabel(item.potrero)} / B${item.block}`
+      : `B${item.block}`;
+  }).filter(Boolean).join(", ");
 }
 
 function selectedBlocksByPotrero(selectedBlocks = [], fallbackPotrero = "") {
@@ -23084,19 +23090,19 @@ function renderOrderBlockPicker(selectedBlocks = []) {
   const form = document.getElementById("orderForm");
   if (!form) return;
   const potrero = form.potrero.value;
-  const isMultiPotrero = form.classification.value === "P";
-  document.getElementById("potreroSelectLabel").firstChild.textContent = isMultiPotrero ? "Potrero a agregar " : "Potrero base ";
-  const allAvailable = (isMultiPotrero ? state.blocks : blocksForPotrero(potrero)).sort(blockSort);
+  document.getElementById("potreroSelectLabel").firstChild.textContent = "Potrero a agregar ";
+  const allAvailable = [...state.blocks].sort(blockSort);
   const pickerAvailable = blocksForPotrero(potrero);
   const selected = selectedBlocks
     .map(String)
-    .filter((block) => allAvailable.some((item) => orderBlockKey(item, isMultiPotrero) === block));
+    .map((block) => block.includes(":") || !potrero ? block : `${potrero}:${block}`)
+    .filter((block) => allAvailable.some((item) => orderBlockKey(item) === block));
   form.blocks.value = selected.join(", ");
   const select = document.getElementById("blockSelect");
   select.innerHTML = pickerAvailable.length
     ? `<option value="__all__">Agregar todos los bloques de ${escapeHtml(potreroLabel(potrero))}</option><option value="">Seleccionar bloque</option>${pickerAvailable
-      .filter((block) => !selected.includes(orderBlockKey(block, isMultiPotrero)))
-      .map((block) => `<option value="${orderBlockKey(block, isMultiPotrero)}">Bloque ${block.block} - ${number(block.hectares)} ha</option>`)
+      .filter((block) => !selected.includes(orderBlockKey(block)))
+      .map((block) => `<option value="${orderBlockKey(block)}">Bloque ${block.block} - ${number(block.hectares)} ha</option>`)
       .join("")}`
     : `<option value="">${potrero ? "Sin bloques registrados" : "Selecciona un potrero"}</option>`;
   document.getElementById("selectedBlocks").innerHTML = selectedBlocksHtml(selected, potrero);
@@ -23113,9 +23119,8 @@ function addSelectedBlockToOrder() {
   const block = document.getElementById("blockSelect").value;
   if (block === "__all__") {
     const form = document.getElementById("orderForm");
-    const isMultiPotrero = form.classification.value === "P";
     const available = blocksForPotrero(form.potrero.value);
-    const newBlocks = available.map((item) => orderBlockKey(item, isMultiPotrero));
+    const newBlocks = available.map((item) => orderBlockKey(item));
     renderOrderBlockPicker([...new Set([...selected, ...newBlocks])]);
     return;
   }
@@ -23133,10 +23138,8 @@ function fillOrderFromSelectedBlocks() {
   const form = document.getElementById("orderForm");
   if (!form) return;
   const potrero = form.potrero.value;
-  const isMultiPotrero = form.classification.value === "P";
   const selected = selectedOrderBlocks();
-  const rows = (isMultiPotrero ? state.blocks : blocksForPotrero(potrero))
-    .filter((block) => selected.includes(orderBlockKey(block, isMultiPotrero)));
+  const rows = state.blocks.filter((block) => selected.includes(orderBlockKey(block)));
   const fallback = fieldSummary(potrero);
   const crops = [...new Set(rows.map((block) => block.crop).filter(Boolean))];
   const crop = crops.join(", ") || fallback?.crop || "";
@@ -23192,6 +23195,7 @@ function removeOrderProgram(event) {
   const form = document.getElementById("orderForm");
   const nextOfficial = state.programs.find((item) => String(item.seasonId) === String(form?.seasonId.value) && Number(item.number) === Number(remaining[0]));
   if (form) form.programId.value = nextOfficial?.id || "";
+  updateOrderObjectiveFromRecipe(true);
   updateOrderRecipeCalculations();
 }
 
@@ -23208,23 +23212,36 @@ function programOptions(programs, selected) {
   }).join("");
 }
 
-function selectedOfficialProgramForRecipe(programNumber) {
+function selectedOfficialProgramForRecipe(programNumber, productId = "") {
   const form = document.getElementById("orderForm");
   if (!form) return null;
   const preferred = state.programs.find((program) => String(program.id) === String(form.elements.programId?.value || ""));
-  if (preferred?.official && Number(preferred.number) === Number(programNumber)) return preferred;
+  const includesProduct = (program) => !productId || programProductsFor(program?.id)
+    .some((item) => String(item.productId) === String(productId));
+  if (preferred?.official && Number(preferred.number) === Number(programNumber) && includesProduct(preferred)) return preferred;
   const cropValues = normalizeCatalogText(form.elements.crop?.value || "").split(",").map((value) => value.trim()).filter(Boolean);
-  return officialPrograms().find((program) => program.cloudReady
+  const candidates = officialPrograms().filter((program) => program.cloudReady
     && String(program.seasonId) === String(form.elements.seasonId?.value || "")
     && Number(program.number) === Number(programNumber)
-    && (!cropValues.length || cropValues.includes(normalizeCatalogText(program.crop)))) || null;
+    && (!cropValues.length || cropValues.includes(normalizeCatalogText(program.crop))));
+  return candidates.find(includesProduct) || candidates[0] || null;
+}
+
+function programForRecipeLineElement(line) {
+  const programProductId = line?.querySelector('[name="programProductId"]')?.value || "";
+  const linkedLine = state.programProducts.find((item) => String(item.id) === String(programProductId));
+  const linkedProgram = state.programs.find((program) => String(program.id) === String(linkedLine?.programId || ""));
+  if (linkedProgram) return linkedProgram;
+  const programNumber = Number(line?.querySelector('[name="lineProgramNumber"]')?.value);
+  const productId = line?.querySelector('[name="productId"]')?.value || "";
+  return selectedOfficialProgramForRecipe(programNumber, productId);
 }
 
 function syncRecipeLineProgram(line, applyOfficialDose = false) {
   if (!line) return null;
   const programNumber = Number(line.querySelector('[name="lineProgramNumber"]')?.value);
   const productId = line.querySelector('[name="productId"]')?.value || "";
-  const program = selectedOfficialProgramForRecipe(programNumber);
+  const program = selectedOfficialProgramForRecipe(programNumber, productId);
   const officialLine = programProductsFor(program?.id).find((item) => String(item.productId) === String(productId)) || null;
   const programProductInput = line.querySelector('[name="programProductId"]');
   if (programProductInput) programProductInput.value = officialLine?.id || "";
@@ -23250,6 +23267,43 @@ function syncRecipeLineProgram(line, applyOfficialDose = false) {
 
 function syncAllRecipeLinePrograms() {
   document.querySelectorAll(".recipe-line:not(.recipe-line-head)").forEach((line) => syncRecipeLineProgram(line));
+}
+
+function updateOrderObjectiveFromRecipe(clearWhenEmpty = false) {
+  const form = document.getElementById("orderForm");
+  if (!form?.elements.objective) return;
+  const objectives = [...form.querySelectorAll(".recipe-line:not(.recipe-line-head)")]
+    .map((line) => {
+      const productId = line.querySelector('[name="productId"]')?.value || "";
+      const product = getProduct(productId);
+      const program = programForRecipeLineElement(line);
+      return String(product?.objectiveOperational || program?.objective || "").trim();
+    })
+    .filter(Boolean);
+  const uniqueObjectives = [...new Map(objectives.map((objective) => [normalizeCatalogText(objective), objective])).values()];
+  if (uniqueObjectives.length) {
+    form.elements.objective.value = uniqueObjectives.join(" / ");
+    form.dataset.objectiveManaged = "true";
+  } else if (clearWhenEmpty && form.dataset.objectiveManaged === "true") {
+    form.elements.objective.value = "";
+  }
+}
+
+function orderRecipeLineObjective(order = {}, line = {}) {
+  const productObjective = String(getProduct(line.productId)?.objectiveOperational || "").trim();
+  if (productObjective) return productObjective;
+  const linkedLine = state.programProducts.find((item) => String(item.id) === String(line.programProductId || ""));
+  const linkedProgram = state.programs.find((program) => String(program.id) === String(linkedLine?.programId || ""));
+  if (linkedProgram?.objective) return linkedProgram.objective;
+  const programNumber = Number(line.programNumber || order.programNumbers?.[0] || order.programNumber);
+  const cropValues = normalizeCatalogText(order.crop || "").split(",").map((value) => value.trim()).filter(Boolean);
+  const candidates = officialPrograms().filter((program) => String(program.seasonId) === String(order.seasonId || "")
+    && Number(program.number) === programNumber
+    && (!cropValues.length || cropValues.includes(normalizeCatalogText(program.crop))));
+  const program = candidates.find((candidate) => programProductsFor(candidate.id)
+    .some((item) => String(item.productId) === String(line.productId)));
+  if (program?.objective) return program.objective;
+  return candidates.length ? "-" : order.objective || "-";
 }
 
 function resolveRecipeProductByText(value = "") {
@@ -23372,6 +23426,7 @@ function selectRecipeProduct(productId) {
   if (doseLabel) doseLabel.textContent = `${product.unit || "kg/L"} por 100 L`;
   if (resultLabel) resultLabel.textContent = `${product.unit || "kg/L"}/ha`;
   syncRecipeLineProgram(line, true);
+  updateOrderObjectiveFromRecipe(true);
   document.getElementById("recipeProductDialog")?.close();
   updateOrderRecipeCalculations();
 }
@@ -23481,6 +23536,7 @@ function updateOrderRecipeCalculations() {
 function removeRecipeLine(event) {
   if (event.target.dataset.action === "remove-recipe") {
     event.target.closest(".recipe-line").remove();
+    updateOrderObjectiveFromRecipe(true);
   }
 }
 
@@ -23489,6 +23545,7 @@ async function saveOrder(orderId) {
   if (!form.reportValidity()) return;
   syncAllRecipeProductPickers();
   syncAllRecipeLinePrograms();
+  updateOrderObjectiveFromRecipe(true);
   const data = Object.fromEntries(new FormData(form));
   if (!orderId) {
     const verifiedNumber = await nextApplicationOrderNumber();
@@ -23565,7 +23622,7 @@ async function saveOrder(orderId) {
     objective: data.objective,
     crop: data.crop,
     variety: data.variety,
-    potrero: data.classification === "P" && selectedBlocks.some((block) => block.includes(":"))
+    potrero: selectedBlocks.some((block) => block.includes(":"))
       ? [...new Set(selectedBlocks.map((block) => block.split(":")[0]))].join(", ")
       : data.potrero,
     blocks: selectedBlocks,
@@ -23574,7 +23631,7 @@ async function saveOrder(orderId) {
     pressure: data.pressure,
     speed: data.speed,
     nozzle: orderNozzleText(data.nozzle, data.nozzleSpec),
-    dosifier: data.dosifier,
+    dosifier: "",
     tractorCode: "",
     machineCode: "",
     operatorId: "",
@@ -23791,7 +23848,7 @@ function openDispatchInfoDialog(orderId) {
       <div class="modal-head">
         <div>
           <h2>Información de salida - Orden #${order.number}</h2>
-          <p>${escapeHtml(potreroListLabel(order.potrero))} · ${escapeHtml(programLabel(order))} · ${escapeHtml(order.objective || "Sin objetivo")}</p>
+          <p>${escapeHtml(potreroListLabel(order.potrero))} · ${escapeHtml(orderBlocksLabel(order) || "Sin bloques")} · ${escapeHtml(programLabel(order))} · ${escapeHtml(order.objective || "Sin objetivo")}</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
@@ -23919,12 +23976,12 @@ async function openEditDispatchDialog(orderId, dispatchId) {
         <label>Hora de termino<input name="endTime" type="time" value="${dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : ""}"></label>
         <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
+        <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor">${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine">${machineCodeOptions(dispatch.machineCode || "")}</select></label>
-        <label>Aplicador<select name="operatorId">
+        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
+        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${dispatch.type === "salida" ? "required" : ""}>${machineCodeOptions(dispatch.machineCode || "")}</select></label>
+        <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>
           ${operatorOptions(dispatch.operatorId || "")}
         </select></label>
       </div>
@@ -24006,6 +24063,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
     tractorCode: dispatch.tractorCode,
     machineCode: dispatch.machineCode,
     operatorId: dispatch.operatorId,
+    operatorNameOrigin: dispatch.operatorNameOrigin,
     note: dispatch.note,
     products: { ...(dispatch.products || {}) },
     status: order.status,
@@ -24033,6 +24091,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   dispatch.tractorCode = data.get("tractorCode");
   dispatch.machineCode = data.get("machineCode");
   dispatch.operatorId = data.get("operatorId");
+  dispatch.operatorNameOrigin = getOperator(data.get("operatorId"));
   dispatch.note = data.get("note");
   syncOrderStatus(order);
 
@@ -24139,12 +24198,12 @@ async function openDispatchDialog(orderId, type = "salida") {
         <label>Hora de termino<input name="endTime" type="time"></label>
         <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Bloques<input value="${order.blocks?.join(", ") || ""}" disabled><small>No editable por bodega</small></label>
+        <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor">${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine">${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
-        <label>Aplicador<select name="operatorId">
+        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
+        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${type === "salida" ? "required" : ""}>${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
+        <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>
           ${operatorOptions(lastDispatch.operatorId || "")}
         </select></label>
       </div>
@@ -24245,6 +24304,7 @@ async function saveDispatch(orderId, type, dialog) {
     tractorCode: data.get("tractorCode"),
     machineCode: data.get("machineCode"),
     operatorId: data.get("operatorId"),
+    operatorNameOrigin: getOperator(data.get("operatorId")),
     note: data.get("note"),
     products
   };
@@ -24396,12 +24456,12 @@ function exportExcel() {
     orderRows.push([
       exportedAt, seasonName, order.programNumber || "", programLabel(order), order.classification || "", order.number, status,
       orderStartDate(order) || "", orderStartDate(order) || "", order.endDate || "", order.crop || "", order.variety || "", order.potrero || "",
-      order.blocks?.join(", ") || "", order.hectares || 0, order.objective || "", order.waterHa || 0, plannedWater, dispatchedWater,
+      orderBlocksLabel(order), order.hectares || 0, order.objective || "", order.waterHa || 0, plannedWater, dispatchedWater,
       pendingWater, salidaCount, devolucionCount, dispatchCost(order), order.pressure || "", order.nozzle || "", order.speed || "", order.notes || ""
     ]);
 
     waterSummaryRows.push([
-      order.number, status, orderStartDate(order) || "", order.potrero || "", order.blocks?.join(", ") || "", order.crop || "",
+      order.number, status, orderStartDate(order) || "", order.potrero || "", orderBlocksLabel(order), order.crop || "",
       order.waterHa || 0, plannedWater, dispatchedWater, pendingWater, plannedWater ? dispatchedWater / plannedWater : 0,
       lastDispatch.date || "", dispatchDisplayTime(lastDispatch)
     ]);
@@ -24411,7 +24471,7 @@ function exportExcel() {
       const dispatched = dispatchedProduct(order, line.productId);
       const planned = plannedProduct(order, line);
       productRows.push([
-        order.number, status, orderStartDate(order) || "", order.potrero || "", order.blocks?.join(", ") || "", order.crop || "",
+        order.number, status, orderStartDate(order) || "", order.potrero || "", orderBlocksLabel(order), order.crop || "",
         programLabel(order), product.name || "", product.ingredient || "", product.unit || "", line.dose100 || 0, order.waterHa || 0,
         productHaFromDose(order, line), planned, dispatched, Math.max(planned - dispatched, 0), product.cost || 0, dispatched * (product.cost || 0)
       ]);
@@ -24758,7 +24818,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const program = getProgramDefinition(order);
     const latest = latestDispatch(order);
     const emittedBy = "Diego Ahumada";
-    const blocks = order.blocks?.join(", ") || "-";
+    const blocks = orderBlocksLabel(order) || "-";
     const method = String(order.classification || "").toUpperCase();
     const appliedTotal = applicationOrderAppliedLiters(order);
 
@@ -24792,7 +24852,7 @@ async function downloadApplicationOrderPdf(orderId) {
       ["Fecha", printDate(orderStartDate(order))], ["Potrero / Cuartel", potreroListLabel(order.potrero)], ["Bloque(s)", blocks],
       ["Especie / Variedad", [order.crop, order.variety].filter(Boolean).join(" / ") || "-"], ["Hectareas", `${number(order.hectares)} ha`],
       ["Litros aplicados / total", `${number(appliedTotal, 0)} / ${number(plannedLiters(order), 0)} L`],
-      ["Temp. promedio diaria", weatherValue], ["Programa N°", program?.code || programNumbersLabel(order)]
+      ["Temp. promedio diaria", weatherValue], ["Programa N°", programNumbersLabel(order)]
     ];
     let fx = margin;
     fieldValues.forEach(([label, value], index) => {
@@ -24812,7 +24872,7 @@ async function downloadApplicationOrderPdf(orderId) {
       return [
         { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
         String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
-        `${number(order.waterHa, 0)} L/ha`, order.objective || program?.objective || "-", `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
+        `${number(order.waterHa, 0)} L/ha`, orderRecipeLineObjective(order, line), `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
       ];
     });
     const recipeCount = Math.max(6, recipeRows.length);
@@ -24862,7 +24922,7 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawText("PARAMETROS DE APLICACION", { x: paramsX + 7, y: top - 11, size: 6.5, font: boldFont, color: colors.green });
     const params = [
       ["Tractor", order.tractorCode || latest.tractorCode || "-"], ["Maquinaria", order.machineCode || latest.machineCode || "-"], ["Boquilla", order.nozzle || "-"],
-      ["Presion", `${order.pressure || "-"} bar`], ["Velocidad", `${order.speed || "-"} km/h`], ["Dosificador", order.dosifier || "-"]
+      ["Presion", `${order.pressure || "-"} bar`], ["Velocidad", `${order.speed || "-"} km/h`]
     ];
     params.forEach(([label, value], index) => {
       const col = index % 3;
@@ -27522,7 +27582,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=415-program-product-link", { updateViaCache: "none" })
+    .register("./sw.js?v=418-order-field-picker", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
