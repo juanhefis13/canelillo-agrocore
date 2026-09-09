@@ -410,9 +410,12 @@ let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
 let managerSpeciesFilters = new Set(["Todas"]);
 let warehouseStatusFilter = "all";
-let warehouseDateFromFilter = "";
-let warehouseDateToFilter = "";
+const initialWarehouseMonthRange = currentWarehouseMonthRange();
+let warehouseDateFromFilter = initialWarehouseMonthRange.from;
+let warehouseDateToFilter = initialWarehouseMonthRange.to;
 let warehouseOrderSearch = "";
+let inventoryProductSearch = "";
+let inventoryStockFilter = "with_stock";
 let cloudSyncTimer = null; // respaldo antiguo: ya no se usa setInterval para evitar parpadeos
 let cloudSyncInProgress = false;
 let cloudRealtimeClient = null;
@@ -1024,7 +1027,7 @@ function normalizeState(rawState) {
   next.orders.forEach((order) => {
     order.seasonId ??= next.settings?.currentSeasonId || next.seasons[0]?.id || "";
     order.programNumber ??= inferProgramNumber(order);
-    order.programNumbers = [...new Set((order.programNumbers?.length ? order.programNumbers : [order.programNumber]).filter((value) => value !== "" && value !== null && value !== undefined).map(Number))];
+    order.programNumbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
     order.program ??= "";
     order.classification ??= "";
     order.plannedDate ??= order.date || new Date().toISOString().slice(0, 10);
@@ -1047,7 +1050,7 @@ function normalizeState(rawState) {
       line.dose ??= line.dose100;
       line.doseBasis ??= "per_100l";
       line.divisor ??= line.doseBasis === "per_100l" ? 1000 : 1;
-      line.programNumber ??= order.programNumbers?.[0] || order.programNumber || "";
+      line.programNumber ??= order.programNumbers?.[0] ?? order.programNumber ?? "";
       line.productHaProgram = productHaFromDose(order, line);
       line.totalProgram = plannedProduct(order, line);
     });
@@ -1778,6 +1781,14 @@ function applicationSeasonLabel(season = {}) {
   return rawName || "Temporada sin definir";
 }
 
+function isProgramNumberValue(value) {
+  return value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
+function normalizeProgramNumbers(values = []) {
+  return [...new Set(values.filter(isProgramNumberValue).map(Number))].sort((a, b) => a - b);
+}
+
 function getProgramDefinition(order) {
   if (order?.programId) {
     const direct = state.programs.find((program) => String(program.id) === String(order.programId));
@@ -1794,7 +1805,7 @@ function getProgramDefinitionByNumber(seasonId, numberValue) {
 
 function programLabel(order) {
   const definition = getProgramDefinition(order);
-  const numbers = order.programNumbers?.length ? order.programNumbers : [order.programNumber].filter(Boolean);
+  const numbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
   if (definition?.official) return `${definition.name} ${numbers.length ? numbers.join(", ") : definition.code || definition.number} · ${definition.crop || order.crop || ""}`.trim();
   return numbers.length ? `Programa ${numbers.join(", ")}` : "Programa s/n";
 }
@@ -1812,7 +1823,7 @@ function officialPrograms() {
 }
 
 function programNumbersLabel(order) {
-  const numbers = order.programNumbers?.length ? order.programNumbers : [order.programNumber].filter(Boolean);
+  const numbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
   return numbers.length ? numbers.join(", ") : "-";
 }
 
@@ -7821,6 +7832,16 @@ function applicationOrderCreatedLabel(order) {
   }).format(date);
 }
 
+function currentWarehouseMonthRange(referenceDate = new Date()) {
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+  const pad = (value) => String(value).padStart(2, "0");
+  return {
+    from: `${year}-${pad(month + 1)}-01`,
+    to: `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`
+  };
+}
+
 function matchesWarehouseDateFilter(order) {
   const date = orderDateForFilter(order);
   if (!date) return true;
@@ -8831,7 +8852,18 @@ function switchView(view) {
     showToast(`Tu rol ${roleLabel(role)} no tiene acceso a ese modulo`);
   }
   const enteringWarehouse = view === "warehouse" && currentView !== "warehouse";
-  if (enteringWarehouse) warehouseStatusFilter = "all";
+  if (enteringWarehouse) {
+    const monthRange = currentWarehouseMonthRange();
+    warehouseStatusFilter = "all";
+    warehouseDateFromFilter = monthRange.from;
+    warehouseDateToFilter = monthRange.to;
+    warehouseOrderSearch = "";
+  }
+  const enteringInventory = view === "inventory" && currentView !== "inventory";
+  if (enteringInventory) {
+    inventoryProductSearch = "";
+    inventoryStockFilter = "with_stock";
+  }
   const openingHarvestAnalysis = view === "harvestAnalysis";
   currentView = view;
   if (openingHarvestAnalysis) {
@@ -19276,7 +19308,7 @@ function ganttGroupsByPotrero(orders) {
 }
 
 function groupPrograms(group) {
-  return [...new Set(group.orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber]).filter(Boolean))].join(", ") || "-";
+  return normalizeProgramNumbers(group.orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber])).join(", ") || "-";
 }
 
 
@@ -19312,7 +19344,7 @@ function ganttMarker(order, extraStyle = "") {
 }
 
 function programColor(order) {
-  return programColorForNumber(order.programNumbers?.[0] || order.programNumber || 0);
+  return programColorForNumber(order.programNumbers?.[0] ?? order.programNumber ?? 0);
 }
 
 function programColorForNumber(numberValue) {
@@ -19329,7 +19361,7 @@ function programColorForNumber(numberValue) {
 }
 
 function programColorLegend(orders) {
-  const numbers = [...new Set(orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber]).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  const numbers = normalizeProgramNumbers(orders.flatMap((order) => order.programNumbers?.length ? order.programNumbers : [order.programNumber]));
   if (!numbers.length) return "";
   return `
     <div class="program-color-legend">
@@ -19875,7 +19907,7 @@ async function loadCloudData(options = {}) {
       sourceKey: program.clave_fuente || "",
       seasonId: program.temporada_id,
       number: program.numero_programa,
-      code: program.codigo_aplicacion || String(program.numero_programa || ""),
+      code: program.codigo_aplicacion || String(program.numero_programa ?? ""),
       name: program.nombre,
       crop: program.cultivo,
       sourceSpecies: program.especie_fuente || program.cultivo || "",
@@ -20210,8 +20242,8 @@ async function loadCloudData(options = {}) {
     number: order.numero_orden,
     seasonId: order.temporada_id,
     programId: order.programa_id || "",
-    programNumber: order.numero_programa || "",
-    programNumbers: order.numeros_programa?.length ? order.numeros_programa : [order.numero_programa].filter(Boolean),
+    programNumber: order.numero_programa ?? "",
+    programNumbers: normalizeProgramNumbers(order.numeros_programa?.length ? order.numeros_programa : [order.numero_programa]),
     program: order.nombre_programa || "",
     classification: order.clasificacion || "",
     date: order.fecha_inicio || order.fecha_planificada || order.fecha,
@@ -20244,7 +20276,7 @@ async function loadCloudData(options = {}) {
       id: line.id,
       productId: line.producto_id,
       programProductId: line.programa_producto_id || "",
-      programNumber: line.numero_programa || order.numero_programa || "",
+      programNumber: line.numero_programa ?? order.numero_programa ?? "",
       dose100: Number(line.dosis ?? line.dosis_por_100) || 0,
       dose: Number(line.dosis ?? line.dosis_por_100) || 0,
       doseUnit: line.unidad_dosis || "",
@@ -20547,7 +20579,7 @@ async function cloudSaveOrder(order) {
     temporada_id: order.seasonId,
     programa_id: isUuid(programDefinition?.id) ? programDefinition.id : null,
     numero_orden: order.number,
-    numero_programa: order.programNumber || null,
+    numero_programa: isProgramNumberValue(order.programNumber) ? Number(order.programNumber) : null,
     numeros_programa: order.programNumbers?.length ? order.programNumbers : null,
     nombre_programa: programDefinition?.name || order.program || null,
     clasificacion: order.classification || null,
@@ -20604,7 +20636,11 @@ async function cloudSaveOrder(order) {
         orden_id: cloudOrder.id,
         producto_id: line.productId,
         programa_producto_id: isUuid(line.programProductId) ? line.programProductId : null,
-        numero_programa: line.programNumber || order.programNumbers?.[0] || order.programNumber || null,
+        numero_programa: isProgramNumberValue(line.programNumber)
+          ? Number(line.programNumber)
+          : isProgramNumberValue(order.programNumbers?.[0])
+            ? Number(order.programNumbers[0])
+            : isProgramNumberValue(order.programNumber) ? Number(order.programNumber) : null,
         dosis_por_100: line.dose100 || 0,
         dosis: line.dose ?? line.dose100 ?? 0,
         unidad_dosis: line.doseUnit || null,
@@ -20742,7 +20778,20 @@ async function cloudSaveDispatch(order, dispatch) {
 }
 
 async function cloudSavePurchase(product, movement) {
-  await cloudSaveProduct(product);
+  if (!isUuid(product.id)) throw new Error("El producto seleccionado no esta sincronizado con Supabase");
+  const stockUpdate = {
+    stock_actual: Number(product.stock) || 0,
+    costo_unitario: Number(product.cost) || 0
+  };
+  if ((Number(movement.sacks) || 0) > 0) {
+    stockUpdate.precio_saco = Number(movement.sackPrice) || 0;
+    stockUpdate.kg_por_saco = Number(movement.kgPerSack) || 0;
+  }
+  await sbFetch(`/rest/v1/productos?id=eq.${encodeURIComponent(product.id)}`, {
+    method: "PATCH",
+    prefer: "return=minimal",
+    body: JSON.stringify(stockUpdate)
+  });
   const saved = await sbFetch("/rest/v1/movimientos_stock?select=*", {
     method: "POST",
     prefer: "return=representation",
@@ -22068,37 +22117,50 @@ function executionCard(order) {
 }
 
 function renderInventory() {
+  const products = [...state.products].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { numeric: true }));
+  const stockedCount = products.filter((product) => Number(product.stock) > 0).length;
   views.inventory.innerHTML = `
     <div class="layout two-columns inventory-layout">
       <section class="panel">
-        <div class="panel-header">
+        <div class="panel-header inventory-panel-header">
           <div>
             <h2>Inventario de productos</h2>
-            <p>Stock disponible, minimo, lote, vencimiento y costo.</p>
+            <p>${stockedCount} de ${products.length} productos tienen cantidad disponible.</p>
           </div>
           <div class="top-actions">
             <button class="secondary-button" data-action="open-stock-history">Historial</button>
-            <button class="secondary-button" data-action="new-product">Nuevo producto</button>
-            <button class="primary-button" data-action="new-purchase">Ingresar sacos/lote</button>
+            <button class="primary-button" data-action="new-purchase">Actualizar stock</button>
             <button class="primary-button" data-action="new-movement">Nuevo movimiento</button>
           </div>
+        </div>
+        <div class="inventory-toolbar" aria-label="Filtros de inventario">
+          <label>Buscar producto
+            <input id="inventoryProductSearch" type="search" value="${htmlAttr(inventoryProductSearch)}" placeholder="Nombre comercial" autocomplete="off">
+          </label>
+          <label>Mostrar
+            <select id="inventoryStockFilter">
+              <option value="with_stock" ${inventoryStockFilter === "with_stock" ? "selected" : ""}>Productos con cantidad</option>
+              <option value="all" ${inventoryStockFilter === "all" ? "selected" : ""}>Todos los productos</option>
+            </select>
+          </label>
         </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Producto</th><th>Stock</th><th>Minimo</th><th>Lote</th><th>Vence</th><th>Precio saco</th><th>Costo kg/L</th><th>Valor stock</th></tr></thead>
             <tbody>
-              ${state.products.map((product) => `
-                <tr>
-                  <td data-label="Producto"><strong>${product.name}</strong><br><span>${product.ingredient}</span></td>
+              ${products.map((product) => `
+                <tr class="inventory-product-row" data-search="${htmlAttr(normalizeText([product.name, product.ingredient, product.unit].filter(Boolean).join(" ")))}" data-has-stock="${Number(product.stock) > 0 ? "true" : "false"}">
+                  <td data-label="Producto"><strong>${escapeHtml(product.name)}</strong><br><span>${escapeHtml(product.ingredient || "")}</span></td>
                   <td data-label="Stock">${number(product.stock)} ${product.unit}</td>
                   <td data-label="Mínimo">${number(product.minStock)} ${product.unit}</td>
-                  <td data-label="Lote">${product.lot || "-"}</td>
-                  <td data-label="Vence">${product.expires || "-"}</td>
+                  <td data-label="Lote">${escapeHtml(product.lot || "-")}</td>
+                  <td data-label="Vence">${escapeHtml(product.expires || "-")}</td>
                   <td data-label="Precio saco">${product.sackPrice ? money(product.sackPrice) : "-"}</td>
                   <td data-label="Costo kg/L">${money(product.cost)}</td>
                   <td data-label="Valor stock">${money((product.stock || 0) * (product.cost || 0))}</td>
                 </tr>
               `).join("")}
+              <tr id="inventoryProductsEmpty" hidden><td colspan="8"><div class="empty">No hay productos para los filtros seleccionados.</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -22120,6 +22182,29 @@ function renderInventory() {
       </section>
     </div>
   `;
+  document.getElementById("inventoryProductSearch")?.addEventListener("input", (event) => {
+    inventoryProductSearch = event.target.value;
+    applyInventoryProductFilters();
+  });
+  document.getElementById("inventoryStockFilter")?.addEventListener("change", (event) => {
+    inventoryStockFilter = event.target.value;
+    applyInventoryProductFilters();
+  });
+  applyInventoryProductFilters();
+}
+
+function applyInventoryProductFilters() {
+  const query = normalizeText(inventoryProductSearch).trim();
+  const rows = [...views.inventory.querySelectorAll(".inventory-product-row")];
+  let visible = 0;
+  rows.forEach((row) => {
+    const matchesSearch = !query || String(row.dataset.search || "").includes(query);
+    const matchesStock = inventoryStockFilter === "all" || row.dataset.hasStock === "true";
+    row.hidden = !(matchesSearch && matchesStock);
+    if (!row.hidden) visible += 1;
+  });
+  const empty = document.getElementById("inventoryProductsEmpty");
+  if (empty) empty.hidden = visible > 0;
 }
 
 function renderPrices() {
@@ -22401,7 +22486,7 @@ function reportProgramDefinition(order, programNumber) {
 function reportProgramPerformanceRows(orders, selectedProgramNumber = "Todos") {
   const grouped = {};
   const ensureProgram = (order, programNumber) => {
-    const key = String(programNumber || "SN");
+    const key = isProgramNumberValue(programNumber) ? String(Number(programNumber)) : "SN";
     const definition = reportProgramDefinition(order, key);
     grouped[key] ||= {
       programNumber: key,
@@ -22451,7 +22536,7 @@ function reportProgramPerformanceRows(orders, selectedProgramNumber = "Todos") {
       return acc;
     }, {});
     recipe.forEach((line) => {
-      const declaredProgram = String(line.programNumber || allAssignedPrograms[0]);
+      const declaredProgram = String(isProgramNumberValue(line.programNumber) ? Number(line.programNumber) : allAssignedPrograms[0]);
       if (selectedProgramNumber !== "Todos" && declaredProgram !== String(selectedProgramNumber)) return;
       const lineProgram = assignedPrograms.includes(String(line.programNumber)) ? String(line.programNumber) : assignedPrograms[0];
       const row = ensureProgram(order, lineProgram);
@@ -22779,7 +22864,7 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   }
   const selectedPrograms = order?.programNumbers?.length
     ? order.programNumbers
-    : selectedOfficialProgram ? [selectedOfficialProgram.number] : [order?.programNumber].filter(Boolean);
+    : selectedOfficialProgram ? [selectedOfficialProgram.number] : normalizeProgramNumbers([order?.programNumber]);
   const initialPotrero = firstPotreroFromSelection(order?.blocks, order?.potrero);
 
   dialog.innerHTML = `
@@ -22904,16 +22989,22 @@ async function openOrderDialog(orderId, presetProgramId = "") {
     if (endInput.value < event.target.value) endInput.value = event.target.value;
   });
   formElement.elements.seasonId.addEventListener("change", () => {
-    const programRecipeRows = [...formElement.querySelectorAll(".recipe-line:not(.recipe-line-head)")]
-      .filter((row) => row.querySelector('[name="programProductId"]')?.value);
-    const hadProgramData = selectedOrderPrograms().length > 0 || programRecipeRows.length > 0;
+    const recipeRows = [...formElement.querySelectorAll(".recipe-line:not(.recipe-line-head)")];
+    const hadProgramData = selectedOrderPrograms().length > 0
+      || recipeRows.some((row) => row.querySelector('[name="programProductId"]')?.value);
     formElement.elements.programId.value = "";
     formElement.elements.programNumbers.value = "";
-    programRecipeRows.forEach((row) => row.remove());
+    recipeRows.forEach((row) => {
+      const programProduct = row.querySelector('[name="programProductId"]');
+      const programNumber = row.querySelector('[name="lineProgramNumber"]');
+      if (programProduct) programProduct.value = "";
+      if (programNumber) programNumber.innerHTML = '<option value="">Sin programa asignado</option>';
+    });
     renderOrderProgramPicker([]);
     refreshOfficialProgramSelect(formElement, "", true);
+    updateOrderObjectiveFromRecipe(true);
     updateOrderRecipeCalculations();
-    if (hadProgramData) showToast("Se limpiaron los programas anteriores para usar la temporada seleccionada");
+    if (hadProgramData) showToast("Se cambiaron los programas de temporada; los productos y sus dosis se conservaron");
   });
   document.getElementById("addBlockToOrder").addEventListener("click", addSelectedBlockToOrder);
   document.getElementById("applyOfficialProgram").addEventListener("click", applyOfficialProgramToOrder);
@@ -23010,13 +23101,11 @@ function applyOfficialProgramToOrder(programId = "") {
 
   if (!form.programId.value) form.programId.value = program.id;
   if (isFirstProgram) form.seasonId.value = program.seasonId;
-  if (isFirstProgram && program.waterHa) form.waterHa.value = program.waterHa;
-  const nextPrograms = [...new Set([...currentPrograms, Number(program.number)].filter(Boolean))];
+  const nextPrograms = normalizeProgramNumbers([...currentPrograms, program.number]);
   renderOrderProgramPicker(nextPrograms);
   const officialSelect = document.getElementById("officialProgramSelect");
   if (officialSelect) officialSelect.value = "";
-  updateOrderRecipeCalculations();
-  showToast(`Programa ${program.number} añadido. Ahora agrega manualmente sus productos.`);
+  showToast(`Programa ${program.number} añadido sin modificar los productos de la orden.`);
 }
 
 function firstPotreroFromSelection(blocks = [], potreroText = "") {
@@ -23060,6 +23149,20 @@ function orderBlocksLabel(order = {}) {
       ? `${potreroLabel(item.potrero)} / B${item.block}`
       : `B${item.block}`;
   }).filter(Boolean).join(", ");
+}
+
+function orderBlocksGroupedLabel(order = {}) {
+  const fallbackPotrero = firstPotreroFromSelection(order.blocks, order.potrero);
+  const groups = selectedBlocksByPotrero(order.blocks || [], fallbackPotrero);
+  const entries = Object.entries(groups);
+  if (!entries.length) return "-";
+  return entries.map(([potrero, blocks]) => {
+    const labels = [...new Set(blocks.map((item) => String(item.block || "").trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }))
+      .map((block) => `B${block}`)
+      .join(", ");
+    return entries.length > 1 ? `${potreroLabel(potrero)}: ${labels}` : labels;
+  }).join(" | ");
 }
 
 function selectedBlocksByPotrero(selectedBlocks = [], fallbackPotrero = "") {
@@ -23159,27 +23262,29 @@ function fillOrderFromSelectedBlocks() {
 
 function selectedOrderPrograms() {
   const form = document.getElementById("orderForm");
-  return (form?.programNumbers.value || "").split(",").map((item) => Number(item.trim())).filter(Boolean);
+  return normalizeProgramNumbers((form?.programNumbers.value || "").split(",").map((item) => item.trim()));
 }
 
 function renderOrderProgramPicker(programs = []) {
   const form = document.getElementById("orderForm");
   if (!form) return;
-  const selected = [...new Set(programs.map(Number).filter(Boolean))].sort((a, b) => a - b);
+  const selected = normalizeProgramNumbers(programs);
   form.programNumbers.value = selected.join(", ");
   document.getElementById("selectedPrograms").innerHTML = selected.length
     ? selected.map((program) => `<button type="button" class="block-chip" data-action="remove-order-program" data-program="${program}">Programa ${program}<span>x</span></button>`).join("")
     : `<span class="muted-text">Agrega al menos un numero de programa.</span>`;
   document.querySelectorAll(".recipe-line select[name='lineProgramNumber']").forEach((select) => {
     const current = select.value;
-    select.innerHTML = programOptions(selected, current);
+    select.innerHTML = selected.length
+      ? programOptions(selected, current)
+      : '<option value="">Sin programa asignado</option>';
   });
 }
 
 function addProgramToOrder() {
   const input = document.getElementById("programNumberInput");
+  if (!isProgramNumberValue(input.value)) return;
   const program = Number(input.value);
-  if (!program) return;
   renderOrderProgramPicker([...selectedOrderPrograms(), program]);
   input.value = "";
 }
@@ -23189,18 +23294,22 @@ function removeOrderProgram(event) {
   const program = Number(event.target.closest("[data-action]").dataset.program);
   const remaining = selectedOrderPrograms().filter((item) => item !== program);
   document.querySelectorAll('.recipe-line:not(.recipe-line-head)').forEach((line) => {
-    if (Number(line.querySelector('[name="lineProgramNumber"]')?.value) === program) line.remove();
+    if (Number(line.querySelector('[name="lineProgramNumber"]')?.value) !== program) return;
+    const programProduct = line.querySelector('[name="programProductId"]');
+    if (programProduct) programProduct.value = "";
   });
   renderOrderProgramPicker(remaining);
   const form = document.getElementById("orderForm");
   const nextOfficial = state.programs.find((item) => String(item.seasonId) === String(form?.seasonId.value) && Number(item.number) === Number(remaining[0]));
   if (form) form.programId.value = nextOfficial?.id || "";
+  syncAllRecipeLinePrograms();
   updateOrderObjectiveFromRecipe(true);
   updateOrderRecipeCalculations();
+  showToast(`Programa ${program} quitado; los productos y sus dosis se conservaron`);
 }
 
 function programOptions(programs, selected) {
-  const values = programs.length ? programs : [selected].filter(Boolean);
+  const values = programs.length ? normalizeProgramNumbers(programs) : normalizeProgramNumbers([selected]);
   return values.map((program) => {
     const form = document.getElementById("orderForm");
     const preferred = state.programs.find((item) => String(item.id) === String(form?.elements.programId?.value || ""));
@@ -23232,14 +23341,22 @@ function programForRecipeLineElement(line) {
   const linkedLine = state.programProducts.find((item) => String(item.id) === String(programProductId));
   const linkedProgram = state.programs.find((program) => String(program.id) === String(linkedLine?.programId || ""));
   if (linkedProgram) return linkedProgram;
-  const programNumber = Number(line?.querySelector('[name="lineProgramNumber"]')?.value);
+  const programNumberValue = line?.querySelector('[name="lineProgramNumber"]')?.value;
+  if (!isProgramNumberValue(programNumberValue)) return null;
+  const programNumber = Number(programNumberValue);
   const productId = line?.querySelector('[name="productId"]')?.value || "";
   return selectedOfficialProgramForRecipe(programNumber, productId);
 }
 
 function syncRecipeLineProgram(line, applyOfficialDose = false) {
   if (!line) return null;
-  const programNumber = Number(line.querySelector('[name="lineProgramNumber"]')?.value);
+  const programNumberValue = line.querySelector('[name="lineProgramNumber"]')?.value;
+  if (!isProgramNumberValue(programNumberValue)) {
+    const programProductInput = line.querySelector('[name="programProductId"]');
+    if (programProductInput) programProductInput.value = "";
+    return null;
+  }
+  const programNumber = Number(programNumberValue);
   const productId = line.querySelector('[name="productId"]')?.value || "";
   const program = selectedOfficialProgramForRecipe(programNumber, productId);
   const officialLine = programProductsFor(program?.id).find((item) => String(item.productId) === String(productId)) || null;
@@ -23295,7 +23412,10 @@ function orderRecipeLineObjective(order = {}, line = {}) {
   const linkedLine = state.programProducts.find((item) => String(item.id) === String(line.programProductId || ""));
   const linkedProgram = state.programs.find((program) => String(program.id) === String(linkedLine?.programId || ""));
   if (linkedProgram?.objective) return linkedProgram.objective;
-  const programNumber = Number(line.programNumber || order.programNumbers?.[0] || order.programNumber);
+  const rawProgramNumber = isProgramNumberValue(line.programNumber)
+    ? line.programNumber
+    : order.programNumbers?.[0] ?? order.programNumber;
+  const programNumber = Number(rawProgramNumber);
   const cropValues = normalizeCatalogText(order.crop || "").split(",").map((value) => value.trim()).filter(Boolean);
   const candidates = officialPrograms().filter((program) => String(program.seasonId) === String(order.seasonId || "")
     && Number(program.number) === programNumber
@@ -23508,7 +23628,7 @@ function recipeLineHtml(line, programs = []) {
         <input type="hidden" name="productSearch" value="${htmlAttr(product?.name || line.name || "")}">
         <input type="hidden" name="productId" value="${htmlAttr(line.productId || "")}">
       </div>
-      <select name="lineProgramNumber">${programOptions(programs, line.programNumber || programs[0] || "")}</select>
+      <select name="lineProgramNumber">${programOptions(programs, line.programNumber ?? programs[0] ?? "")}</select>
       <label class="recipe-dose-control"><input name="dose100" type="number" step="0.01" value="${doseValue}" aria-label="Dosis oficial"><small>${escapeHtml(unit || "Unidad pendiente")}</small></label>
       <label class="recipe-result-control"><input name="productHaProgram" type="number" step="0.001" value="" aria-label="Gasto por producto y hectarea" title="Calculado desde la base de dosis oficial" readonly><small>${escapeHtml(line.outputUnit || getProduct(line.productId)?.unit || "kg/L")}/ha</small></label>
       <button type="button" class="icon-button" data-action="remove-recipe" title="Quitar">x</button>
@@ -23553,7 +23673,7 @@ async function saveOrder(orderId) {
     form.elements.number.value = verifiedNumber;
   }
   const selectedBlocks = data.blocks.split(",").map((item) => item.trim()).filter(Boolean);
-  const selectedPrograms = data.programNumbers.split(",").map((item) => Number(item.trim())).filter(Boolean);
+  const selectedPrograms = normalizeProgramNumbers(data.programNumbers.split(",").map((item) => item.trim()));
   if (!selectedBlocks.length) {
     showToast("Agrega al menos un bloque a la orden");
     return;
@@ -23575,19 +23695,22 @@ async function saveOrder(orderId) {
   }
   const recipeRows = [...document.querySelectorAll(".recipe-line")]
     .filter((line) => line.querySelector('[name="productId"]'))
-    .map((line) => ({
-    productId: line.querySelector('[name="productId"]').value,
-    productSearch: line.querySelector('[name="productSearch"]')?.value || "",
-    programProductId: line.querySelector('[name="programProductId"]')?.value || "",
-    programNumber: Number(line.querySelector('[name="lineProgramNumber"]').value) || selectedPrograms[0],
-    dose100: Number(line.querySelector('[name="dose100"]').value),
-    dose: Number(line.querySelector('[name="dose100"]').value),
-    doseUnit: line.querySelector('[name="doseUnit"]')?.value || "",
-    doseBasis: line.querySelector('[name="doseBasis"]')?.value || "per_100l",
-    outputUnit: line.querySelector('[name="outputUnit"]')?.value || "",
-    divisor: Number(line.querySelector('[name="doseDivisor"]')?.value) || 1,
-    productHaProgram: Number(line.querySelector('[name="productHaProgram"]').value) || 0
-  }));
+    .map((line) => {
+      const lineProgramNumber = line.querySelector('[name="lineProgramNumber"]')?.value;
+      return {
+        productId: line.querySelector('[name="productId"]').value,
+        productSearch: line.querySelector('[name="productSearch"]')?.value || "",
+        programProductId: line.querySelector('[name="programProductId"]')?.value || "",
+        programNumber: isProgramNumberValue(lineProgramNumber) ? Number(lineProgramNumber) : selectedPrograms[0],
+        dose100: Number(line.querySelector('[name="dose100"]').value),
+        dose: Number(line.querySelector('[name="dose100"]').value),
+        doseUnit: line.querySelector('[name="doseUnit"]')?.value || "",
+        doseBasis: line.querySelector('[name="doseBasis"]')?.value || "per_100l",
+        outputUnit: line.querySelector('[name="outputUnit"]')?.value || "",
+        divisor: Number(line.querySelector('[name="doseDivisor"]')?.value) || 1,
+        productHaProgram: Number(line.querySelector('[name="productHaProgram"]').value) || 0
+      };
+    });
   const unresolvedProduct = recipeRows.find((line) => line.productSearch && !line.productId);
   if (unresolvedProduct) {
     showToast(`Selecciona un producto valido para "${unresolvedProduct.productSearch}"`);
@@ -23609,7 +23732,7 @@ async function saveOrder(orderId) {
     number: Number(data.number),
     seasonId: data.seasonId,
     programId: data.programId || "",
-    programNumber: selectedPrograms[0] || "",
+    programNumber: selectedPrograms[0] ?? "",
     programNumbers: selectedPrograms,
     program: "",
     classification: data.classification,
@@ -24454,7 +24577,7 @@ function exportExcel() {
     const lastDispatch = latestDispatch(order);
 
     orderRows.push([
-      exportedAt, seasonName, order.programNumber || "", programLabel(order), order.classification || "", order.number, status,
+      exportedAt, seasonName, order.programNumber ?? "", programLabel(order), order.classification || "", order.number, status,
       orderStartDate(order) || "", orderStartDate(order) || "", order.endDate || "", order.crop || "", order.variety || "", order.potrero || "",
       orderBlocksLabel(order), order.hectares || 0, order.objective || "", order.waterHa || 0, plannedWater, dispatchedWater,
       pendingWater, salidaCount, devolucionCount, dispatchCost(order), order.pressure || "", order.nozzle || "", order.speed || "", order.notes || ""
@@ -24627,13 +24750,31 @@ function pdfDrawTable(page, top, widths, headers, rows, style) {
   });
   let rowTop = top - style.headerHeight;
   rows.forEach((row) => {
+    const rowHeight = style.dynamicRows
+      ? row.reduce((height, cell, index) => {
+        const cellInfo = typeof cell === "object" ? cell : { text: cell };
+        const size = cellInfo.size || style.rowSize || 6.5;
+        const padding = cellInfo.padding ?? style.cellPadding ?? 3;
+        const activeFont = cellInfo.bold ? style.boldFont : style.font;
+        const maxLines = cellInfo.maxLines ?? style.rowMaxLines ?? 2;
+        const lines = pdfTextLines(activeFont, cellInfo.text, size, Math.max(2, widths[index] - padding * 2), maxLines);
+        return Math.max(height, lines.length * (size + 1) + padding * 2);
+      }, Number(style.rowHeight) || 0)
+      : style.rowHeight;
+    const boundedRowHeight = Math.min(rowHeight, style.maxRowHeight || rowHeight);
     x = xStart;
     row.forEach((cell, index) => {
       const cellInfo = typeof cell === "object" ? cell : { text: cell };
-      pdfDrawCell(page, { x, top: rowTop, width: widths[index], height: style.rowHeight, text: cellInfo.text, font: style.font, boldFont: style.boldFont, size: cellInfo.size || style.rowSize || 6.5, fill: style.bodyFill, border: style.border, align: cellInfo.align || (index ? "center" : "left"), bold: Boolean(cellInfo.bold), maxLines: cellInfo.maxLines || 2 });
+      pdfDrawCell(page, {
+        x, top: rowTop, width: widths[index], height: boundedRowHeight, text: cellInfo.text,
+        font: style.font, boldFont: style.boldFont, size: cellInfo.size || style.rowSize || 6.5,
+        fill: style.bodyFill, border: style.border, align: cellInfo.align || (index ? "center" : "left"),
+        bold: Boolean(cellInfo.bold), maxLines: cellInfo.maxLines ?? style.rowMaxLines ?? 2,
+        padding: cellInfo.padding ?? style.cellPadding ?? 3
+      });
       x += widths[index];
     });
-    rowTop -= style.rowHeight;
+    rowTop -= boundedRowHeight;
   });
   return rowTop;
 }
@@ -24818,7 +24959,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const program = getProgramDefinition(order);
     const latest = latestDispatch(order);
     const emittedBy = "Diego Ahumada";
-    const blocks = orderBlocksLabel(order) || "-";
+    const blocks = orderBlocksGroupedLabel(order);
     const method = String(order.classification || "").toUpperCase();
     const appliedTotal = applicationOrderAppliedLiters(order);
 
@@ -24843,7 +24984,7 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawText(orderNumber, { x: margin + contentWidth - 8 - orderNumberWidth, y: top - 29, size: 19, font: boldFont, color: colors.darkGreen });
     top -= 46;
 
-    const fieldWidths = [70, 115, 85, 145, 60, 130, 125, 75];
+    const fieldWidths = [68, 100, 130, 120, 55, 120, 132, 80];
     const weatherAverage = weather ? (Number(weather.minimum) + Number(weather.maximum)) / 2 : null;
     const weatherValue = Number.isFinite(weatherAverage)
       ? `${number(weatherAverage, 1)} °C - ${printDate(weather.date)}`
@@ -24952,9 +25093,13 @@ async function downloadApplicationOrderPdf(orderId) {
       ];
     });
     const operationRowHeight = operationCount > 6 ? Math.max(8, Math.min(11, 65 / operationCount)) : 12;
+    const operationRowMaxLines = operationCount <= 6 ? 3 : operationCount <= 10 ? 2 : 1;
+    const operationMaxRowHeight = operationCount <= 6 ? 28 : operationCount <= 10 ? 21 : 13;
     top = pdfDrawOperationTable(page, top, [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100], ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"], operationRows, {
       x: margin, headerHeight: 24, rowHeight: operationRowHeight, headerSize: 5.5, rowSize: operationCount > 6 ? 5.2 : 5.8,
-      font, boldFont, warehouseColumns: 4, groupFill: colors.paleGreen, headerFill: colors.softGreen, bodyFill: colors.white, border: colors.border
+      font, boldFont, warehouseColumns: 4, groupFill: colors.paleGreen, headerFill: colors.softGreen,
+      bodyFill: colors.white, border: colors.border, dynamicRows: true,
+      rowMaxLines: operationRowMaxLines, maxRowHeight: operationMaxRowHeight
     });
     top -= 5;
     page.drawLine({ start: { x: margin, y: top }, end: { x: margin + contentWidth, y: top }, thickness: 2, color: colors.green });
@@ -25006,21 +25151,42 @@ function openMovementDialog() {
 }
 
 function openPurchaseDialog() {
+  const catalog = [...state.products].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { numeric: true }));
+  if (!catalog.length) {
+    showToast("No hay productos disponibles en el catalogo");
+    return;
+  }
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body" id="purchaseForm">
+    <form method="dialog" class="modal-body stock-ingress-form" id="purchaseForm">
       <div class="modal-head">
-        <h2>Ingreso de productos por saco</h2>
+        <div>
+          <h2>Actualizar stock</h2>
+          <p>Selecciona un producto existente. Sus datos tecnicos no se modificaran.</p>
+        </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
-        <label class="full">Producto<select name="productId">${state.products.map((product) => `<option value="${product.id}">${product.name}</option>`).join("")}</select></label>
-        <label>Fecha<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Cantidad de sacos/envases<input name="sacks" type="number" step="1" value="1" required></label>
-        <label>Kg/L por saco/envase<input name="kgPerSack" type="number" step="0.001" value="25" required></label>
-        <label>Precio por saco/envase<input name="sackPrice" type="number" step="1" required></label>
-        <label>Vencimiento<input name="expires" type="date"></label>
-        <label class="full">Observacion<input name="note" placeholder="Factura, proveedor, guia, compra temporada"></label>
+        <label class="full">Buscar producto
+          <input id="purchaseProductSearch" type="search" placeholder="Escribe el nombre comercial" autocomplete="off">
+        </label>
+        <label class="full stock-product-catalog-label">Producto del catalogo
+          <select name="productId" id="purchaseProductSelect" size="7" required></select>
+          <small id="purchaseProductCount"></small>
+        </label>
+        <div class="full stock-ingress-product-summary" id="purchaseProductSummary"></div>
+        <label>Fecha<input name="date" type="date" value="${currentDateTimeLocalValue().slice(0, 10)}" required></label>
+        <label>Forma de ingreso
+          <select name="entryMode" id="purchaseEntryMode">
+            <option value="sacks">Por sacos o envases</option>
+            <option value="totals">Por cantidad y precio total</option>
+          </select>
+        </label>
+        <label data-purchase-mode="sacks">Cantidad de sacos/envases<input name="sacks" type="number" min="1" step="1" value="1" required></label>
+        <label data-purchase-mode="sacks">Cantidad por saco/envase<input name="kgPerSack" type="number" min="0.001" step="0.001" value="25" required></label>
+        <label data-purchase-mode="sacks">Costo por saco/envase<input name="sackPrice" type="number" min="0" step="1" value="0" required></label>
+        <label data-purchase-mode="totals" hidden>Cantidad total<input name="totalQuantity" type="number" min="0.001" step="0.001" value="0" disabled required></label>
+        <label data-purchase-mode="totals" hidden>Precio total<input name="totalPrice" type="number" min="0" step="1" value="0" disabled required></label>
       </div>
       <div class="calc-preview" id="purchasePreview"></div>
       <div class="modal-actions">
@@ -25031,21 +25197,57 @@ function openPurchaseDialog() {
   `;
   dialog.showModal();
   const form = document.getElementById("purchaseForm");
+  const productSelect = document.getElementById("purchaseProductSelect");
+  const search = document.getElementById("purchaseProductSearch");
+  const renderCatalog = () => {
+    const previousId = productSelect.value;
+    const query = normalizeText(search.value).trim();
+    const filtered = catalog.filter((product) => !query || normalizeText([product.name, product.unit].join(" ")).includes(query));
+    productSelect.innerHTML = filtered.map((product) => `<option value="${htmlAttr(product.id)}">${escapeHtml(product.name)} · ${escapeHtml(product.unit || "kg/L")}</option>`).join("");
+    if (filtered.some((product) => String(product.id) === String(previousId))) productSelect.value = previousId;
+    document.getElementById("purchaseProductCount").textContent = `${filtered.length} producto${filtered.length === 1 ? "" : "s"} encontrado${filtered.length === 1 ? "" : "s"}`;
+  };
   const update = () => {
-    const sacks = Number(form.sacks.value) || 0;
-    const kgPerSack = Number(form.kgPerSack.value) || 0;
-    const sackPrice = Number(form.sackPrice.value) || 0;
-    const total = sacks * kgPerSack;
-    const unit = kgPerSack ? sackPrice / kgPerSack : 0;
+    const mode = form.entryMode.value;
+    form.querySelectorAll("[data-purchase-mode]").forEach((field) => {
+      const active = field.dataset.purchaseMode === mode;
+      field.hidden = !active;
+      field.querySelector("input").disabled = !active;
+    });
+    const product = getProduct(productSelect.value);
+    const values = purchaseStockValues(form);
+    document.getElementById("purchaseProductSummary").innerHTML = product
+      ? `<div><span>Producto seleccionado</span><strong>${escapeHtml(product.name)}</strong></div><div><span>Unidad</span><strong>${escapeHtml(product.unit || "kg/L")}</strong></div><div><span>Stock actual</span><strong>${number(product.stock)} ${escapeHtml(product.unit || "")}</strong></div>`
+      : `<span class="empty">Selecciona un producto del listado.</span>`;
     document.getElementById("purchasePreview").innerHTML = `
-      <span>Total ingresado: <strong>${number(total)} kg/L</strong></span>
-      <span>Costo calculado: <strong>${money(unit)} por kg/L</strong></span>
-      <span>Total compra: <strong>${money(sacks * sackPrice)}</strong></span>
+      <span>Total ingresado: <strong>${number(values.quantity)} ${escapeHtml(product?.unit || "kg/L")}</strong></span>
+      <span>Costo calculado: <strong>${money(values.unitCost)} por ${escapeHtml(product?.unit || "kg/L")}</strong></span>
+      <span>Precio total: <strong>${money(values.totalPrice)}</strong></span>
     `;
   };
+  search.addEventListener("input", () => {
+    renderCatalog();
+    update();
+  });
+  productSelect.addEventListener("change", update);
   form.addEventListener("input", update);
+  renderCatalog();
   update();
   document.getElementById("savePurchase").addEventListener("click", savePurchase);
+}
+
+function purchaseStockValues(form) {
+  const mode = form?.entryMode?.value || "sacks";
+  if (mode === "totals") {
+    const quantity = Number(form.totalQuantity.value) || 0;
+    const totalPrice = Number(form.totalPrice.value) || 0;
+    return { mode, quantity, totalPrice, unitCost: quantity ? totalPrice / quantity : 0, sacks: 0, kgPerSack: 0, sackPrice: 0 };
+  }
+  const sacks = Number(form?.sacks?.value) || 0;
+  const kgPerSack = Number(form?.kgPerSack?.value) || 0;
+  const sackPrice = Number(form?.sackPrice?.value) || 0;
+  const quantity = sacks * kgPerSack;
+  return { mode, quantity, totalPrice: sacks * sackPrice, unitCost: kgPerSack ? sackPrice / kgPerSack : 0, sacks, kgPerSack, sackPrice };
 }
 
 async function openFertilizerPreparationDialog() {
@@ -25620,18 +25822,22 @@ async function savePurchase() {
   if (!form.reportValidity()) return;
   const data = Object.fromEntries(new FormData(form));
   const product = getProduct(data.productId);
-  if (!product) return;
-  const sacks = Number(data.sacks) || 0;
-  const kgPerSack = Number(data.kgPerSack) || 0;
-  const sackPrice = Number(data.sackPrice) || 0;
-  const quantity = sacks * kgPerSack;
-  const unitCost = kgPerSack ? sackPrice / kgPerSack : 0;
+  if (!product) {
+    showToast("Selecciona un producto del catalogo");
+    return;
+  }
+  const { mode, quantity, totalPrice, unitCost, sacks, kgPerSack, sackPrice } = purchaseStockValues(form);
+  if (!(quantity > 0)) {
+    showToast("La cantidad ingresada debe ser mayor que cero");
+    return;
+  }
   product.stock = (Number(product.stock) || 0) + quantity;
   product.cost = unitCost;
-  product.sacks = (Number(product.sacks) || 0) + sacks;
-  product.kgPerSack = kgPerSack;
-  product.sackPrice = sackPrice;
-  product.expires = data.expires || product.expires;
+  if (mode === "sacks") {
+    product.sacks = (Number(product.sacks) || 0) + sacks;
+    product.kgPerSack = kgPerSack;
+    product.sackPrice = sackPrice;
+  }
   state.inventoryMovements.push({
     id: uid("m"),
     date: data.date,
@@ -25643,7 +25849,9 @@ async function savePurchase() {
     sackPrice,
     unitCost,
     lot: product.lot || "",
-    note: data.note || "Ingreso por saco/lote"
+    note: mode === "sacks"
+      ? `Ingreso de stock por ${number(sacks, 0)} saco(s)/envase(s) - total ${money(totalPrice)}`
+      : `Ingreso de stock por cantidad total - total ${money(totalPrice)}`
   });
   saveState();
   if (supabaseSession) {
@@ -27398,7 +27606,7 @@ document.addEventListener("click", async (event) => {
   if (action === "cancel-order") cancelOrder(id);
   if (action === "save-program-definition") saveProgramDefinition(id);
   if (action === "new-movement") openMovementDialog();
-  if (action === "new-product") openProductDialog();
+  if (action === "new-product") openPurchaseDialog();
   if (action === "new-purchase") openPurchaseDialog();
   if (action === "open-stock-history") openStockHistoryDialog();
   if (action === "undo-last-stock-ingress") undoLastStockIngress();

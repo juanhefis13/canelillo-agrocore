@@ -25845,3 +25845,97 @@ dialog.informatics-staff-dialog {
     grid-template-columns: 1fr;
   }
 }
+
+/* Inventario de aplicaciones: busqueda y actualización sobre el catálogo maestro. */
+.inventory-panel-header {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.inventory-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 260px);
+  gap: 10px;
+  align-items: end;
+  margin: 10px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.inventory-toolbar label,
+.stock-ingress-form label {
+  min-width: 0;
+}
+
+.inventory-toolbar input,
+.inventory-toolbar select {
+  width: 100%;
+}
+
+.stock-ingress-form {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.stock-product-catalog-label select {
+  min-height: 210px;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.stock-product-catalog-label option {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  white-space: normal;
+}
+
+.stock-ingress-product-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(90px, 0.5fr) minmax(130px, 0.7fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--line);
+}
+
+.stock-ingress-product-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--surface);
+}
+
+.stock-ingress-product-summary span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.stock-ingress-product-summary strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
+@media (max-width: 760px) {
+  .inventory-toolbar,
+  .stock-ingress-product-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-panel-header .top-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stock-product-catalog-label select {
+    min-height: 170px;
+  }
+}
+
+@media (max-width: 480px) {
+  .inventory-panel-header .top-actions {
+    grid-template-columns: 1fr;
+  }
+}
