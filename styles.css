@@ -21084,6 +21084,46 @@ body {
 }
 
 /* Calculador de productos para salidas de bodega */
+.dispatch-technical-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 4px 0 0;
+  border: 1px solid #b8d5c9;
+  border-radius: 7px;
+  padding: 12px;
+  background: #f4faf7;
+}
+
+.dispatch-technical-fields legend {
+  padding: 0 7px;
+  color: #135d48;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.dispatch-technical-fields label {
+  min-width: 0;
+}
+
+.dispatch-parameter-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+  line-height: 1.25;
+}
+
+.dispatch-parameter-summary b {
+  color: #173e32;
+  white-space: normal;
+}
+
+.dispatch-parameter-summary small {
+  color: #60746b;
+  font-size: 0.68rem;
+  white-space: normal;
+}
+
 .dispatch-product-calculator {
   gap: 8px;
   padding: 10px;
@@ -21314,6 +21354,10 @@ body {
 }
 
 @media (max-width: 900px) {
+  .dispatch-technical-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dispatch-product-calc-row {
     grid-template-columns: 1fr 1fr;
   }
@@ -21325,6 +21369,10 @@ body {
 }
 
 @media (max-width: 560px) {
+  .dispatch-technical-fields {
+    grid-template-columns: 1fr;
+  }
+
   .dispatch-product-calculator-head {
     align-items: stretch;
     flex-direction: column;

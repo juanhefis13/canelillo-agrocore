@@ -1045,7 +1045,14 @@ function normalizeState(rawState) {
     if (order.status === "closed") order.finishedByManager ||= false;
     if (order.status === "draft") order.status = "planned";
     order.dispatches ||= [];
-    order.dispatches.forEach((dispatch) => { dispatch.endTime ??= ""; });
+    order.dispatches.forEach((dispatch) => {
+      dispatch.endTime ??= "";
+      dispatch.folio ??= dispatch.folioOrigin || "";
+      dispatch.pressure ??= "";
+      dispatch.speed ??= "";
+      dispatch.nozzle ??= "";
+      dispatch.nozzleSpecification ??= "";
+    });
     order.tanks ||= [];
     order.recipe ||= [];
     order.recipe.forEach((line) => {
@@ -19848,6 +19855,81 @@ function renderOrderNozzlePicker() {
   ].join("");
 }
 
+function dispatchTechnicalValue(dispatch, key, fallback = "") {
+  const value = dispatch?.[key];
+  return value !== null && value !== undefined && value !== "" ? value : fallback;
+}
+
+function dispatchNozzleSelection(order, dispatch = {}) {
+  const parsed = parseNozzleValue(dispatch.nozzle || "");
+  return {
+    model: parsed.model,
+    spec: dispatch.nozzleSpecification || parsed.spec || ""
+  };
+}
+
+function dispatchNozzleModelOptions(order, selectedModel = "") {
+  const models = [...new Set(nozzlesForOrderClassification(order.classification)
+    .map((nozzle) => nozzle.model)
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+  const savedOption = selectedModel && !models.includes(selectedModel)
+    ? `<option value="${htmlAttr(selectedModel)}" selected>${escapeHtml(selectedModel)} - guardada actualmente</option>`
+    : "";
+  return [
+    `<option value="">${models.length ? "Seleccionar modelo" : "Sin boquillas cargadas"}</option>`,
+    savedOption,
+    ...models.map((model) => `<option value="${htmlAttr(model)}" ${model === selectedModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
+  ].join("");
+}
+
+function renderDispatchNozzleSpecifications(form, order, preferredSpec = "") {
+  const modelSelect = form?.querySelector("[data-dispatch-nozzle-model]");
+  const specSelect = form?.querySelector("[data-dispatch-nozzle-spec]");
+  if (!modelSelect || !specSelect) return;
+  const model = modelSelect.value;
+  const specs = nozzlesForOrderClassification(order.classification)
+    .filter((nozzle) => !model || nozzle.model === model)
+    .sort((a, b) => String(a.spec || "").localeCompare(String(b.spec || ""), "es", { numeric: true }));
+  const currentSpec = preferredSpec || specSelect.value;
+  const specKnown = currentSpec && specs.some((nozzle) => nozzle.spec === currentSpec);
+  specSelect.innerHTML = [
+    `<option value="">${specs.length ? "Seleccionar especificacion" : "Sin especificaciones"}</option>`,
+    currentSpec && !specKnown ? `<option value="${htmlAttr(currentSpec)}" selected>${escapeHtml(currentSpec)} - guardada actualmente</option>` : "",
+    ...specs.map((nozzle) => `<option value="${htmlAttr(nozzle.spec)}" ${nozzle.spec === currentSpec ? "selected" : ""}>${escapeHtml(nozzle.spec)}${nozzle.type ? ` - ${escapeHtml(nozzle.type)}` : ""}</option>`)
+  ].join("");
+}
+
+function bindDispatchNozzlePicker(form, order, selectedSpec = "") {
+  const modelSelect = form?.querySelector("[data-dispatch-nozzle-model]");
+  const specSelect = form?.querySelector("[data-dispatch-nozzle-spec]");
+  if (!modelSelect || !specSelect) return;
+  renderDispatchNozzleSpecifications(form, order, selectedSpec);
+  modelSelect.addEventListener("change", () => {
+    specSelect.value = "";
+    renderDispatchNozzleSpecifications(form, order, "");
+  });
+}
+
+function dispatchTechnicalFields(order, dispatch = {}) {
+  const nozzle = dispatchNozzleSelection(order, dispatch);
+  const pressure = dispatchTechnicalValue(dispatch, "pressure");
+  const speed = dispatchTechnicalValue(dispatch, "speed");
+  return `
+    <fieldset class="dispatch-technical-fields full">
+      <legend>Parametros usados en esta salida</legend>
+      <label>Presion (bar)<input name="pressure" type="number" min="0" step="0.1" value="${htmlAttr(pressure)}" placeholder="Ej. 18"></label>
+      <label>Velocidad (km/h)<input name="speed" type="number" min="0" step="0.1" value="${htmlAttr(speed)}" placeholder="Ej. 4,5"></label>
+      <label>Boquilla
+        <select name="nozzle" data-dispatch-nozzle-model>${dispatchNozzleModelOptions(order, nozzle.model)}</select>
+      </label>
+      <label>Especificacion
+        <select name="nozzleSpecification" data-dispatch-nozzle-spec data-selected-spec="${htmlAttr(nozzle.spec)}"></select>
+      </label>
+    </fieldset>
+  `;
+}
+
 async function loadCloudData(options = {}) {
   if (!supabaseSession) return;
   await loadCloudProfile();
@@ -20083,6 +20165,7 @@ async function loadCloudData(options = {}) {
       divisor: Number(line.divisor_conversion) || 1,
       order: Number(line.orden) || 1,
       excelRow: Number(line.fila_excel) || null,
+      agendaPesticida: line.carencia_agenda_pesticidas || line.agenda_pesticida || "",
       incomplete: Boolean(line.incompleto)
     }));
   }
@@ -20303,6 +20386,7 @@ async function loadCloudData(options = {}) {
       sagType: product.tipo_producto_sag || "",
       sagConcentration: product.concentracion_sag || "",
       sagLabelColor: product.color_etiqueta_sag || "",
+      agendaPesticida: product.carencia_agenda_pesticidas || product.agenda_pesticida || "",
       objectiveOperational: product.objetivo_operacional || ""
     }));
   }
@@ -20353,6 +20437,7 @@ async function loadCloudData(options = {}) {
           divisor: Number(line.divisor) || 1,
           order: Number(line.order) || 1,
           excelRow: line.excelRow || null,
+          agendaPesticida: line.agendaPesticida || "",
           incomplete: Boolean(line.incomplete)
         })));
       }
@@ -20427,7 +20512,8 @@ async function loadCloudData(options = {}) {
       outputUnit: line.unidad_resultado || "",
       divisor: Number(line.divisor_conversion) || 1000,
       productHaProgram: Number(line.producto_por_ha_programa) || 0,
-      totalProgram: Number(line.total_programa) || 0
+      totalProgram: Number(line.total_programa) || 0,
+      agendaPesticida: line.carencia_agenda_pesticidas || line.agenda_pesticida || ""
     })),
     dispatches: (dispatchesByOrder[order.id] || []).map((dispatch) => ({
       id: dispatch.id,
@@ -20437,6 +20523,12 @@ async function loadCloudData(options = {}) {
       endTime: dispatch.hora_termino || "",
       createdAt: dispatch.creado_en || dispatch.created_at || "",
       liters: Number(dispatch.litros) || 0,
+      folio: dispatch.folio || dispatch.folio_origen || "",
+      folioOrigin: dispatch.folio_origen || "",
+      pressure: dispatch.presion === null || dispatch.presion === undefined ? "" : Number(dispatch.presion),
+      speed: dispatch.velocidad === null || dispatch.velocidad === undefined ? "" : Number(dispatch.velocidad),
+      nozzle: dispatch.boquilla || "",
+      nozzleSpecification: dispatch.especificacion_boquilla || dispatch.especificacion || "",
       tractorCode: dispatch.codigo_tractor || dispatch.tractor || dispatch.tractor_code || "",
       machineCode: dispatch.codigo_maquina || dispatch.maquina || dispatch.machine_code || "",
       operatorId: dispatch.aplicador_id || dispatch.aplicador || dispatch.operator_id || "",
@@ -20791,7 +20883,8 @@ async function cloudSaveOrder(order) {
         unidad_resultado: line.outputUnit || null,
         divisor_conversion: line.divisor || 1,
         producto_por_ha_programa: line.productHaProgram || 0,
-        total_programa: line.totalProgram || 0
+        total_programa: line.totalProgram || 0,
+        carencia_agenda_pesticidas: line.agendaPesticida || null
       }));
     try {
       await sbFetch("/rest/v1/orden_productos", {
@@ -20800,11 +20893,11 @@ async function cloudSaveOrder(order) {
         body: JSON.stringify(recipeRows)
       });
     } catch (error) {
-      if (!isMissingSupabaseColumn(error, ["numero_programa", "programa_producto_id", "dosis", "unidad_dosis", "base_dosis", "unidad_resultado", "divisor_conversion"])) throw error;
+      if (!isMissingSupabaseColumn(error, ["numero_programa", "programa_producto_id", "dosis", "unidad_dosis", "base_dosis", "unidad_resultado", "divisor_conversion", "carencia_agenda_pesticidas"])) throw error;
       await sbFetch("/rest/v1/orden_productos", {
         method: "POST",
         prefer: "return=minimal",
-        body: JSON.stringify(recipeRows.map(({ programa_producto_id, numero_programa, dosis, unidad_dosis, base_dosis, unidad_resultado, divisor_conversion, ...row }) => row))
+        body: JSON.stringify(recipeRows.map(({ programa_producto_id, numero_programa, dosis, unidad_dosis, base_dosis, unidad_resultado, divisor_conversion, carencia_agenda_pesticidas, ...row }) => row))
       });
       showToast("Receta guardada con compatibilidad. Ejecuta la migración del Programa Fitosanitario para conservar la dosis oficial completa");
     }
@@ -20823,6 +20916,14 @@ async function cloudSaveDispatch(order, dispatch) {
       creado_por: supabaseSession.user?.id
     };
 
+  const operationDetails = {
+    folio: dispatch.folio || null,
+    presion: dispatch.pressure === "" ? null : Number(dispatch.pressure),
+    velocidad: dispatch.speed === "" ? null : Number(dispatch.speed),
+    boquilla: dispatch.nozzle || null,
+    especificacion_boquilla: dispatch.nozzleSpecification || null
+  };
+
   const traceSpanish = {
     hora_salida: dispatch.time || null,
     hora_termino: dispatch.endTime || null,
@@ -20840,11 +20941,11 @@ async function cloudSaveDispatch(order, dispatch) {
   };
 
   const candidates = [
-    { ...baseDispatchBody, ...traceSpanish },
-    { ...baseDispatchBody, ...traceFriendly },
-    { ...baseDispatchBody, codigo_tractor: dispatch.tractorCode || null, codigo_maquina: dispatch.machineCode || null, aplicador_id: dispatch.operatorId || null },
-    { ...baseDispatchBody, tractor: dispatch.tractorCode || null, maquina: dispatch.machineCode || null, aplicador: dispatch.operatorId || null },
-    baseDispatchBody
+    { ...baseDispatchBody, ...operationDetails, ...traceSpanish },
+    { ...baseDispatchBody, ...operationDetails, ...traceFriendly },
+    { ...baseDispatchBody, ...operationDetails, codigo_tractor: dispatch.tractorCode || null, codigo_maquina: dispatch.machineCode || null, aplicador_id: dispatch.operatorId || null },
+    { ...baseDispatchBody, ...operationDetails, tractor: dispatch.tractorCode || null, maquina: dispatch.machineCode || null, aplicador: dispatch.operatorId || null },
+    { ...baseDispatchBody, ...operationDetails }
   ];
 
   let saved;
@@ -20858,13 +20959,18 @@ async function cloudSaveDispatch(order, dispatch) {
       });
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador", "folio", "presion", "velocidad", "boquilla", "especificacion_boquilla"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
   }
 
-  if (!saved) throw lastColumnError || new Error("No se pudo guardar la salida en Supabase");
+  if (!saved) {
+    if (lastColumnError && isMissingSupabaseColumn(lastColumnError, ["folio", "presion", "velocidad", "boquilla", "especificacion_boquilla"])) {
+      throw new Error("Falta actualizar la tabla despachos. Ejecuta supabase_despachos_parametros_aplicacion.sql en Supabase");
+    }
+    throw lastColumnError || new Error("No se pudo guardar la salida en Supabase");
+  }
   const cloudDispatch = saved[0];
   if (!cloudDispatch?.id) throw new Error("Supabase no devolvio el ID del despacho");
   dispatch.id = cloudDispatch.id;
@@ -20991,6 +21097,14 @@ async function cloudUpdateDispatch(order, dispatch) {
     nota: dispatch.note || null
   };
 
+  const operationDetails = {
+    folio: dispatch.folio || null,
+    presion: dispatch.pressure === "" ? null : Number(dispatch.pressure),
+    velocidad: dispatch.speed === "" ? null : Number(dispatch.speed),
+    boquilla: dispatch.nozzle || null,
+    especificacion_boquilla: dispatch.nozzleSpecification || null
+  };
+
   const traceSpanish = {
     hora_salida: dispatch.time || null,
     hora_termino: dispatch.endTime || null,
@@ -21008,11 +21122,11 @@ async function cloudUpdateDispatch(order, dispatch) {
   };
 
   const candidates = [
-    { ...baseDispatchBody, ...traceSpanish },
-    { ...baseDispatchBody, ...traceFriendly },
-    { ...baseDispatchBody, codigo_tractor: dispatch.tractorCode || null, codigo_maquina: dispatch.machineCode || null, aplicador_id: dispatch.operatorId || null },
-    { ...baseDispatchBody, tractor: dispatch.tractorCode || null, maquina: dispatch.machineCode || null, aplicador: dispatch.operatorId || null },
-    baseDispatchBody
+    { ...baseDispatchBody, ...operationDetails, ...traceSpanish },
+    { ...baseDispatchBody, ...operationDetails, ...traceFriendly },
+    { ...baseDispatchBody, ...operationDetails, codigo_tractor: dispatch.tractorCode || null, codigo_maquina: dispatch.machineCode || null, aplicador_id: dispatch.operatorId || null },
+    { ...baseDispatchBody, ...operationDetails, tractor: dispatch.tractorCode || null, maquina: dispatch.machineCode || null, aplicador: dispatch.operatorId || null },
+    { ...baseDispatchBody, ...operationDetails }
   ];
 
   let updated = false;
@@ -21027,13 +21141,18 @@ async function cloudUpdateDispatch(order, dispatch) {
       updated = true;
       break;
     } catch (error) {
-      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador"];
+      const optionalColumns = ["hora_salida", "hora_termino", "codigo_tractor", "codigo_maquina", "aplicador_id", "aplicador_nombre_origen", "tractor", "maquina", "aplicador", "folio", "presion", "velocidad", "boquilla", "especificacion_boquilla"];
       if (!isMissingSupabaseColumn(error, optionalColumns)) throw error;
       lastColumnError = error;
     }
   }
 
-  if (!updated) throw lastColumnError || new Error("No se pudo actualizar la salida en Supabase");
+  if (!updated) {
+    if (lastColumnError && isMissingSupabaseColumn(lastColumnError, ["folio", "presion", "velocidad", "boquilla", "especificacion_boquilla"])) {
+      throw new Error("Falta actualizar la tabla despachos. Ejecuta supabase_despachos_parametros_aplicacion.sql en Supabase");
+    }
+    throw lastColumnError || new Error("No se pudo actualizar la salida en Supabase");
+  }
 
   const products = Object.entries(dispatch.products || {}).map(([productId, quantity]) => {
     const product = getProduct(productId);
@@ -21235,7 +21354,7 @@ function warehouseCard(order) {
           <summary><span>Historial de salidas</span><strong>${order.dispatches.length}</strong></summary>
           <div class="table-wrap compact-table warehouse-history-table">
             <table>
-              <thead><tr><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Accion</th></tr></thead>
+              <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Parametros</th><th>Accion</th></tr></thead>
               <tbody>
                 ${warehouseDispatchRows(order)}
               </tbody>
@@ -21252,10 +21371,23 @@ function warehouseCard(order) {
   `;
 }
 
+function dispatchTechnicalSummary(dispatch) {
+  if (!dispatch || dispatch.type === "devolucion") return "-";
+  const pressure = dispatch.pressure !== "" && dispatch.pressure !== null && dispatch.pressure !== undefined
+    ? `${number(dispatch.pressure)} bar`
+    : "-";
+  const speed = dispatch.speed !== "" && dispatch.speed !== null && dispatch.speed !== undefined
+    ? `${number(dispatch.speed)} km/h`
+    : "-";
+  const nozzle = orderNozzleText(dispatch.nozzle, dispatch.nozzleSpecification) || "-";
+  return `<span class="dispatch-parameter-summary"><b>${escapeHtml(nozzle)}</b><small>Presion ${escapeHtml(pressure)} · Velocidad ${escapeHtml(speed)}</small></span>`;
+}
+
 function warehouseDispatchRows(order) {
-  if (!order.dispatches.length) return `<tr><td colspan="9" data-label="Salidas">Sin salidas registradas aun.</td></tr>`;
+  if (!order.dispatches.length) return `<tr><td colspan="11" data-label="Salidas">Sin salidas registradas aun.</td></tr>`;
   return order.dispatches.map((dispatch) => `
     <tr>
+      <td data-label="Folio"><strong>${escapeHtml(dispatch.folio || dispatch.folioOrigin || "-")}</strong></td>
       <td data-label="Fecha">${dispatch.date || "-"}</td>
       <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
       <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
@@ -21264,6 +21396,7 @@ function warehouseDispatchRows(order) {
       <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
       <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
       <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
+      <td data-label="Parametros">${dispatchTechnicalSummary(dispatch)}</td>
       <td data-label="Accion"><div class="dispatch-row-actions"><button class="secondary-button small-button" type="button" data-action="edit-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Modificar</button><button class="danger-button small-button" type="button" data-action="delete-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Borrar</button></div></td>
     </tr>
   `).join("");
@@ -22191,11 +22324,6 @@ function orderCard(order) {
         <div><dt>Salida bodega</dt><dd>${number(real, 0)} L</dd></div>
         <div><dt>Diferencia</dt><dd class="${variance > 0 ? "bad" : "good"}">${number(variance, 0)} L</dd></div>
       </dl>
-      <div class="tech-strip">
-        <span>Presion: <strong>${order.pressure || "-"} bar</strong></span>
-        <span>Boquilla: <strong>${order.nozzle || "-"}</strong></span>
-        <span>Velocidad: <strong>${order.speed || "-"} km/h</strong></span>
-      </div>
       ${order.notes ? `<div class="gantt-detail-note"><strong>Nota de la orden</strong><p>${escapeHtml(order.notes)}</p></div>` : ""}
       <div class="recipe-list">
         ${order.recipe.map((line) => {
@@ -23068,14 +23196,6 @@ async function openOrderDialog(orderId, presetProgramId = "") {
         <label class="autofill-locked-field">Variedad<input name="variety" value="${order?.variety || ""}" placeholder="Se rellena automaticamente" readonly><small>Autocompletado por potrero/bloque</small></label>
         <label>Hectareas<input name="hectares" type="number" step="0.01" value="${order?.hectares || ""}" readonly required></label>
         <label>Mojamiento L/ha<input name="waterHa" type="number" step="1" value="${order?.waterHa || 1500}" required></label>
-        <label>Presion bar<input name="pressure" type="number" step="0.1" value="${order?.pressure || ""}" placeholder="18"></label>
-        <label>Velocidad km/h<input name="speed" type="number" step="0.1" value="${order?.speed || ""}" placeholder="4.5"></label>
-        <label>Boquilla
-          <select name="nozzle" id="nozzleModelSelect"></select>
-        </label>
-        <label>Especificacion
-          <select name="nozzleSpec" id="nozzleSpecSelect"></select>
-        </label>
       </div>
       <div class="recipe-editor">
         <div class="panel-header">
@@ -23102,26 +23222,13 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   `;
   const formElement = document.getElementById("orderForm");
   formElement.dataset.orderId = order?.id || "";
-  formElement.dataset.savedNozzle = order?.nozzle || "";
   formElement.dataset.objectiveManaged = order ? "false" : "true";
   dialog.showModal();
   renderOrderProgramPicker(selectedPrograms);
   renderOrderBlockPicker(order?.blocks || []);
-  renderOrderNozzlePicker();
   refreshOfficialProgramSelect(formElement, selectedOfficialProgram?.id || "");
   document.querySelector('[name="classification"]').addEventListener("change", () => {
-    const form = document.getElementById("orderForm");
     renderOrderBlockPicker(selectedOrderBlocks());
-    form.dataset.savedNozzle = "";
-    document.getElementById("nozzleModelSelect").value = "";
-    document.getElementById("nozzleSpecSelect").value = "";
-    renderOrderNozzlePicker();
-  });
-  document.getElementById("nozzleModelSelect")?.addEventListener("change", () => {
-    const form = document.getElementById("orderForm");
-    form.dataset.savedNozzle = "";
-    document.getElementById("nozzleSpecSelect").value = "";
-    renderOrderNozzlePicker();
   });
   document.getElementById("potreroSelect").addEventListener("change", () => {
     renderOrderBlockPicker(selectedOrderBlocks());
@@ -23806,6 +23913,7 @@ function removeRecipeLine(event) {
 async function saveOrder(orderId) {
   const form = document.getElementById("orderForm");
   if (!form.reportValidity()) return;
+  const existingOrder = orderId ? state.orders.find((item) => item.id === orderId) : null;
   syncAllRecipeProductPickers();
   syncAllRecipeLinePrograms();
   updateOrderObjectiveFromRecipe(true);
@@ -23840,10 +23948,12 @@ async function saveOrder(orderId) {
     .filter((line) => line.querySelector('[name="productId"]'))
     .map((line) => {
       const lineProgramNumber = line.querySelector('[name="lineProgramNumber"]')?.value;
+      const programProductId = line.querySelector('[name="programProductId"]')?.value || "";
+      const programProduct = state.programProducts.find((item) => String(item.id) === String(programProductId));
       return {
         productId: line.querySelector('[name="productId"]').value,
         productSearch: line.querySelector('[name="productSearch"]')?.value || "",
-        programProductId: line.querySelector('[name="programProductId"]')?.value || "",
+        programProductId,
         programNumber: isProgramNumberValue(lineProgramNumber) ? Number(lineProgramNumber) : selectedPrograms[0],
         dose100: Number(line.querySelector('[name="dose100"]').value),
         dose: Number(line.querySelector('[name="dose100"]').value),
@@ -23851,7 +23961,8 @@ async function saveOrder(orderId) {
         doseBasis: line.querySelector('[name="doseBasis"]')?.value || "per_100l",
         outputUnit: line.querySelector('[name="outputUnit"]')?.value || "",
         divisor: Number(line.querySelector('[name="doseDivisor"]')?.value) || 1,
-        productHaProgram: Number(line.querySelector('[name="productHaProgram"]').value) || 0
+        productHaProgram: Number(line.querySelector('[name="productHaProgram"]').value) || 0,
+        agendaPesticida: programProduct?.agendaPesticida || ""
       };
     });
   const unresolvedProduct = recipeRows.find((line) => line.productSearch && !line.productId);
@@ -23894,9 +24005,11 @@ async function saveOrder(orderId) {
     blocks: selectedBlocks,
     hectares: Number(data.hectares),
     waterHa: Number(data.waterHa),
-    pressure: data.pressure,
-    speed: data.speed,
-    nozzle: orderNozzleText(data.nozzle, data.nozzleSpec),
+    // Campos historicos conservados por compatibilidad. Los parametros reales
+    // se registran exclusivamente en cada salida de bodega.
+    pressure: existingOrder?.pressure || "",
+    speed: existingOrder?.speed || "",
+    nozzle: existingOrder?.nozzle || "",
     dosifier: "",
     tractorCode: "",
     machineCode: "",
@@ -24075,7 +24188,7 @@ async function cancelOrder(orderId) {
 
 function dispatchInfoRows(order) {
   if (!order?.dispatches?.length) {
-    return `<tr><td colspan="9" data-label="Salidas">Sin salidas registradas para esta orden.</td></tr>`;
+    return `<tr><td colspan="11" data-label="Salidas">Sin salidas registradas para esta orden.</td></tr>`;
   }
   return order.dispatches.map((dispatch) => {
     const products = Object.entries(dispatch.products || {})
@@ -24086,6 +24199,7 @@ function dispatchInfoRows(order) {
       .join("<br>") || "-";
     return `
       <tr>
+        <td data-label="Folio"><strong>${escapeHtml(dispatch.folio || dispatch.folioOrigin || "-")}</strong></td>
         <td data-label="Fecha">${dispatch.date || "-"}</td>
         <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
         <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
@@ -24094,6 +24208,7 @@ function dispatchInfoRows(order) {
         <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
         <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
         <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
+        <td data-label="Parametros">${dispatchTechnicalSummary(dispatch)}</td>
         <td data-label="Productos">${products}</td>
       </tr>
     `;
@@ -24128,7 +24243,7 @@ function openDispatchInfoDialog(orderId) {
       <div class="progress"><i style="width:${pct}%"></i></div>
       <div class="table-wrap compact-table dispatch-info-table">
         <table>
-          <thead><tr><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Productos</th></tr></thead>
+          <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Parametros</th><th>Productos</th></tr></thead>
           <tbody>${dispatchInfoRows(order)}</tbody>
         </table>
       </div>
@@ -24237,6 +24352,7 @@ async function openEditDispatchDialog(orderId, dispatchId) {
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
+        <label>Numero de folio<input name="folio" value="${htmlAttr(dispatch.folio || dispatch.folioOrigin || "")}" placeholder="Ej. 82015" ${dispatch.type === "salida" ? "required" : ""}></label>
         <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
         <label>Hora de inicio<input name="time" type="time" value="${dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue()}" required></label>
         <label>Hora de termino<input name="endTime" type="time" value="${dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : ""}"></label>
@@ -24250,6 +24366,7 @@ async function openEditDispatchDialog(orderId, dispatchId) {
         <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>
           ${operatorOptions(dispatch.operatorId || "")}
         </select></label>
+        ${dispatch.type === "salida" ? dispatchTechnicalFields(order, dispatch) : ""}
       </div>
       <div class="recipe-editor dispatch-product-calculator">
         <div class="dispatch-product-calculator-head"><h3>Productos ${dispatch.type === "devolucion" ? "devueltos" : "entregados"}</h3>${dispatch.type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
@@ -24271,6 +24388,7 @@ async function openEditDispatchDialog(orderId, dispatchId) {
   dialog.showModal();
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), dispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), dispatch.machineCode || "", "machine");
+  bindDispatchNozzlePicker(document.getElementById("editDispatchForm"), order, dispatchNozzleSelection(order, dispatch).spec);
   bindDispatchProductCalculator(orderId, document.getElementById("editDispatchForm"), true);
   updateEditDispatchPreview(orderId);
   document.querySelector('#editDispatchForm [name="liters"]')?.addEventListener("input", () => updateEditDispatchPreview(orderId));
@@ -24322,12 +24440,17 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   }
 
   const previous = {
+    folio: dispatch.folio,
     date: dispatch.date,
     time: dispatch.time,
     endTime: dispatch.endTime,
     liters: dispatch.liters,
     tractorCode: dispatch.tractorCode,
     machineCode: dispatch.machineCode,
+    pressure: dispatch.pressure,
+    speed: dispatch.speed,
+    nozzle: dispatch.nozzle,
+    nozzleSpecification: dispatch.nozzleSpecification,
     operatorId: dispatch.operatorId,
     operatorNameOrigin: dispatch.operatorNameOrigin,
     note: dispatch.note,
@@ -24350,12 +24473,17 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
     dispatch.products[line.productId] = newQty;
   });
 
+  dispatch.folio = String(data.get("folio") || "").trim();
   dispatch.date = data.get("date");
   dispatch.time = data.get("time") || currentTimeValue();
   dispatch.endTime = data.get("endTime") || "";
   dispatch.liters = newLiters;
   dispatch.tractorCode = data.get("tractorCode");
   dispatch.machineCode = data.get("machineCode");
+  dispatch.pressure = data.get("pressure") === null || data.get("pressure") === "" ? "" : Number(data.get("pressure"));
+  dispatch.speed = data.get("speed") === null || data.get("speed") === "" ? "" : Number(data.get("speed"));
+  dispatch.nozzle = String(data.get("nozzle") || "").trim();
+  dispatch.nozzleSpecification = String(data.get("nozzleSpecification") || "").trim();
   dispatch.operatorId = data.get("operatorId");
   dispatch.operatorNameOrigin = getOperator(data.get("operatorId"));
   dispatch.note = data.get("note");
@@ -24459,6 +24587,7 @@ async function openDispatchDialog(orderId, type = "salida") {
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
       <div class="form-grid">
+        <label>Numero de folio<input name="folio" placeholder="Ej. 82015" ${type === "salida" ? "required" : ""}></label>
         <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
         <label>Hora de inicio<input name="time" type="time" value="${currentTimeValue()}" required></label>
         <label>Hora de termino<input name="endTime" type="time"></label>
@@ -24472,6 +24601,7 @@ async function openDispatchDialog(orderId, type = "salida") {
         <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>
           ${operatorOptions(lastDispatch.operatorId || "")}
         </select></label>
+        ${type === "salida" ? dispatchTechnicalFields(order, lastDispatch) : ""}
       </div>
       <div class="recipe-editor dispatch-product-calculator">
         <div class="dispatch-product-calculator-head"><h3>${type === "devolucion" ? "Productos devueltos" : "Productos a entregar"}</h3>${type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
@@ -24494,6 +24624,7 @@ async function openDispatchDialog(orderId, type = "salida") {
   dialog.showModal();
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), lastDispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), lastDispatch.machineCode || "", "machine");
+  bindDispatchNozzlePicker(document.getElementById("dispatchForm"), order, dispatchNozzleSelection(order, lastDispatch).spec);
   bindDispatchProductCalculator(orderId, document.getElementById("dispatchForm"), false);
   updateDispatchProductQuantities(orderId);
   document.querySelector('#dispatchForm [name="liters"]').addEventListener("input", () => updateDispatchProductQuantities(orderId));
@@ -24563,12 +24694,17 @@ async function saveDispatch(orderId, type, dialog) {
   const dispatch = {
     id: uid(type === "devolucion" ? "d" : "s"),
     type,
+    folio: String(data.get("folio") || "").trim(),
     date: data.get("date"),
     time: data.get("time") || currentTimeValue(),
     endTime: data.get("endTime") || "",
     liters,
     tractorCode: data.get("tractorCode"),
     machineCode: data.get("machineCode"),
+    pressure: data.get("pressure") === null || data.get("pressure") === "" ? "" : Number(data.get("pressure")),
+    speed: data.get("speed") === null || data.get("speed") === "" ? "" : Number(data.get("speed")),
+    nozzle: String(data.get("nozzle") || "").trim(),
+    nozzleSpecification: String(data.get("nozzleSpecification") || "").trim(),
     operatorId: data.get("operatorId"),
     operatorNameOrigin: getOperator(data.get("operatorId")),
     note: data.get("note"),
@@ -25046,6 +25182,44 @@ function applicationOrderAppliedLiters(order) {
   return confirmed > 0 ? confirmed : Math.max(0, dispatchedLiters(order));
 }
 
+function applicationOrderAgendaPesticida(order, line, product = {}) {
+  if (line.agendaPesticida) return line.agendaPesticida;
+  const programLine = state.programProducts.find((item) => String(item.id) === String(line.programProductId || ""));
+  return programLine?.agendaPesticida || product.agendaPesticida || "-";
+}
+
+function applicationOrderDispatchParameterRows(order) {
+  const grouped = new Map();
+  (order.dispatches || []).forEach((dispatch, index) => {
+    if (dispatch.type === "devolucion") return;
+    const savedNozzle = dispatchNozzleSelection(order, dispatch);
+    const row = {
+      folio: dispatch.folio || dispatch.folioOrigin || String(index + 1),
+      date: dispatch.date || "",
+      tractor: dispatch.tractorCode || "-",
+      machine: dispatch.machineCode || "-",
+      nozzle: savedNozzle.model || "-",
+      specification: savedNozzle.spec || "-",
+      pressure: dispatchTechnicalValue(dispatch, "pressure"),
+      speed: dispatchTechnicalValue(dispatch, "speed")
+    };
+    const key = JSON.stringify([row.tractor, row.machine, row.nozzle, row.specification, row.pressure, row.speed]);
+    if (!grouped.has(key)) grouped.set(key, { ...row, folios: [], dates: [] });
+    grouped.get(key).folios.push(row.folio);
+    grouped.get(key).dates.push(row.date);
+  });
+  return [...grouped.values()].map((row) => [
+    [...new Set(row.folios)].join(", "),
+    [...new Set(row.dates.filter(Boolean).map(printDate))].join(", "),
+    row.tractor,
+    row.machine,
+    row.nozzle,
+    row.specification,
+    row.pressure !== "" ? `${number(row.pressure)} bar` : "-",
+    row.speed !== "" ? `${number(row.speed)} km/h` : "-"
+  ]);
+}
+
 function pdfDrawOperationTable(page, top, widths, headers, rows, style) {
   const groupHeight = 14;
   const warehouseColumns = style.warehouseColumns || 4;
@@ -25155,14 +25329,14 @@ async function downloadApplicationOrderPdf(orderId) {
       const doseUnit = line.doseUnit || (line.doseBasis === "per_ha" ? `${product.unit || "kg/L"}/ha` : `${product.unit || "kg/L"}/100 L`);
       return [
         { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
-        String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
+        String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), applicationOrderAgendaPesticida(order, line, product), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
         `${number(order.waterHa, 0)} L/ha`, orderRecipeLineObjective(order, line), `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
       ];
     });
     const recipeCount = Math.max(6, recipeRows.length);
-    while (recipeRows.length < recipeCount) recipeRows.push(Array(10).fill(""));
+    while (recipeRows.length < recipeCount) recipeRows.push(Array(11).fill(""));
     const productRowHeight = recipeCount > 8 ? Math.max(9, Math.min(13, 112 / recipeCount)) : 15;
-    top = pdfDrawTable(page, top, [95, 82, 66, 66, 45, 45, 55, 65, 215, 71], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia etiqueta", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
+    top = pdfDrawTable(page, top, [88, 72, 60, 60, 40, 42, 54, 51, 58, 205, 75], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia", "Agenda pesticida", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
       x: margin, headerHeight: 24, rowHeight: productRowHeight, headerSize: 6.1, rowSize: recipeCount > 8 ? 5.7 : 6.3,
       font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border
     });
@@ -25189,9 +25363,21 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawLine({ start: { x: margin + 670, y: top - 32 }, end: { x: margin + 785, y: top - 32 }, thickness: 0.6, color: colors.muted });
     top -= signatureHeight + 5;
 
-    const equipmentHeight = 60;
+    const parameterRows = applicationOrderDispatchParameterRows(order);
+    const compactParameterRows = parameterRows.map((row) => [
+      row[0],
+      row[2],
+      row[3],
+      [row[4], row[5]].filter((value) => value && value !== "-").join(" · ") || "-",
+      row[6],
+      row[7]
+    ]);
+    const parameterRowCount = Math.max(2, compactParameterRows.length);
+    while (compactParameterRows.length < parameterRowCount) compactParameterRows.push(Array(6).fill(""));
+    const parameterRowHeight = parameterRowCount > 4 ? Math.max(6, Math.min(9, 42 / parameterRowCount)) : 9;
+    const equipmentHeight = Math.max(60, 34 + parameterRowCount * parameterRowHeight);
     pdfDrawCheckList(page, margin, top, 105, equipmentHeight, "Maquinaria", [
-      { label: "Tractor", checked: Boolean(order.tractorCode || latest.tractorCode) }, { label: "Pulverizadora", checked: method === "P" },
+      { label: "Tractor", checked: Boolean(latest.tractorCode) }, { label: "Pulverizadora", checked: method === "P" },
       { label: "Nebulizadora", checked: method === "N" }, { label: "Maquina espalda", checked: method === "ME" }, { label: "Aereo", checked: method === "VD" }
     ], font, boldFont, colors);
     pdfDrawCheckList(page, margin + 105, top, 110, equipmentHeight, "Metodo", [
@@ -25203,18 +25389,11 @@ async function downloadApplicationOrderPdf(orderId) {
     ], font, boldFont, colors);
     const paramsX = margin + 370;
     page.drawRectangle({ x: paramsX, y: top - equipmentHeight, width: 435, height: equipmentHeight, color: colors.white, borderColor: colors.border, borderWidth: 0.55 });
-    page.drawText("PARAMETROS DE APLICACION", { x: paramsX + 7, y: top - 11, size: 6.5, font: boldFont, color: colors.green });
-    const params = [
-      ["Tractor", order.tractorCode || latest.tractorCode || "-"], ["Maquinaria", order.machineCode || latest.machineCode || "-"], ["Boquilla", order.nozzle || "-"],
-      ["Presion", `${order.pressure || "-"} bar`], ["Velocidad", `${order.speed || "-"} km/h`]
-    ];
-    params.forEach(([label, value], index) => {
-      const col = index % 3;
-      const row = Math.floor(index / 3);
-      const px = paramsX + 7 + col * 141;
-      const py = top - 27 - row * 20;
-      page.drawText(pdfSafeText(label).toUpperCase(), { x: px, y: py + 7, size: 5, font: boldFont, color: colors.muted });
-      page.drawText(pdfTextLines(boldFont, value, 6.3, 130, 1)[0], { x: px, y: py - 1, size: 6.3, font: boldFont, color: colors.ink });
+    page.drawText("PARAMETROS REALES POR SALIDA Y EQUIPO", { x: paramsX + 7, y: top - 11, size: 6.5, font: boldFont, color: colors.green });
+    pdfDrawTable(page, top - 16, [34, 45, 50, 180, 52, 60], ["Folio", "Tractor", "Maquinaria", "Boquilla / especificacion", "Presion", "Velocidad"], compactParameterRows, {
+      x: paramsX + 7, headerHeight: 13, rowHeight: parameterRowHeight, headerSize: 4.7, rowSize: parameterRowCount > 6 ? 4.5 : 5.1,
+      font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border,
+      dynamicRows: false, rowMaxLines: 1, cellPadding: 2
     });
     top -= equipmentHeight + 5;
 
@@ -25226,7 +25405,7 @@ async function downloadApplicationOrderPdf(orderId) {
       const isReturn = dispatch?.type === "devolucion";
       const processLiters = tank?.liters ?? dispatch?.liters ?? 0;
       return [
-        dispatch ? String(index + 1) : "", dispatch ? printDate(dispatch.date) : "",
+        dispatch ? String(dispatch.folio || dispatch.folioOrigin || index + 1) : "", dispatch ? printDate(dispatch.date) : "",
         dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${isReturn ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
         appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
         dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
