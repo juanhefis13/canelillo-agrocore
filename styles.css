@@ -20697,33 +20697,297 @@ body {
 }
 
 /* Salidas de bodega: selector horario y progreso de persistencia. */
+#dispatchDialog:has(.dispatch-entry-form),
+#returnDialog:has(.dispatch-entry-form) {
+  width: min(1180px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  overflow: hidden;
+  background: #f7faf8;
+}
+
 .dispatch-form-shell {
   position: relative;
 }
 
-.dispatch-time-field input[type="time"] {
-  min-height: 44px;
+.dispatch-entry-form {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: min(840px, calc(100dvh - 20px));
+  max-height: calc(100dvh - 20px);
+  gap: 10px;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.dispatch-entry-form .modal-head {
+  min-height: 42px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d5e3dd;
+}
+
+.dispatch-entry-form .modal-head h2 {
+  margin: 0;
+  color: #173d32;
+  font-size: 1.15rem;
+}
+
+.dispatch-entry-form .modal-head p {
+  margin: 3px 0 0;
+  color: #667a72;
+  font-size: 0.72rem;
+}
+
+.dispatch-order-summary {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(220px, 1.8fr) repeat(3, minmax(100px, 0.75fr));
+  gap: 7px;
+}
+
+.dispatch-order-summary > span {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid #cfe0d9;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.dispatch-order-summary small,
+.dispatch-order-summary strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dispatch-order-summary small {
+  margin-bottom: 2px;
+  color: #6c8078;
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.dispatch-order-summary strong {
+  color: #173e32;
+  font-size: 0.77rem;
+}
+
+.dispatch-order-summary .is-pending {
+  border-color: #eacb8c;
+  background: #fff9e9;
+}
+
+.dispatch-order-summary .is-pending strong {
+  color: #9b5b08;
+}
+
+.dispatch-order-summary .is-complete {
+  border-color: #a9d8c6;
+  background: #edf9f4;
+}
+
+.dispatch-form-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.04fr) minmax(440px, 0.96fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dispatch-form-main,
+.dispatch-form-side {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+}
+
+.dispatch-form-side {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  align-content: stretch;
+}
+
+.dispatch-section,
+.dispatch-entry-form .dispatch-technical-fields,
+.dispatch-entry-form .dispatch-product-calculator {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #c9ddd4;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.dispatch-section {
+  padding: 10px;
+}
+
+.dispatch-section legend {
+  padding: 0 6px;
+  color: #135d48;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.dispatch-primary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.dispatch-entry-form label {
+  gap: 4px;
+  font-size: 0.69rem;
+}
+
+.dispatch-entry-form input,
+.dispatch-entry-form select {
+  min-height: 36px;
+  padding: 7px 9px;
+  font-size: 0.76rem;
+}
+
+.dispatch-entry-form .dispatch-technical-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+  padding: 10px;
+}
+
+.dispatch-time-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  overflow: hidden;
+  border: 1px solid #c8d7d0;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.dispatch-time-control:focus-within {
+  border-color: #168262;
+  box-shadow: 0 0 0 3px rgba(22, 130, 98, 0.13);
+}
+
+.dispatch-time-control input[data-dispatch-time-text] {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  color: #173e32;
+  font-size: 0.92rem;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+  text-align: center;
+}
+
+.dispatch-time-control input[data-dispatch-time-text]::placeholder {
+  color: #8a9b94;
+  opacity: 1;
+}
+
+.dispatch-time-picker-button {
+  display: grid;
+  min-width: 38px;
+  min-height: 36px;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid #d3e1db;
+  border-radius: 0;
+  background: #eaf5f0;
+  color: #11664e;
+  font-size: 1.15rem;
   cursor: pointer;
 }
 
-.dispatch-time-field input[type="time"]::-webkit-calendar-picker-indicator {
-  width: 22px;
-  height: 22px;
-  cursor: pointer;
-  opacity: 0.9;
+.dispatch-time-picker-button:hover,
+.dispatch-time-picker-button:focus-visible {
+  background: #d9eee5;
+}
+
+.dispatch-time-control input[data-dispatch-time-native] {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dispatch-time-field > small {
+  color: #71837c;
+  font-size: 0.58rem;
+  font-weight: 750;
+}
+
+.dispatch-entry-form .dispatch-product-calculator {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  padding: 9px;
+}
+
+.dispatch-product-list {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 7px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.dispatch-entry-form .dispatch-product-calc-row {
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.85fr);
+  gap: 7px 9px;
+  min-height: 0;
+  padding: 7px;
+}
+
+.dispatch-entry-form .dispatch-product-identity,
+.dispatch-entry-form .dispatch-product-formula {
+  grid-column: auto;
+}
+
+.dispatch-entry-form .dispatch-product-identity strong {
+  font-size: 0.76rem;
+}
+
+.dispatch-entry-form .dispatch-product-identity span,
+.dispatch-entry-form .dispatch-product-formula small,
+.dispatch-entry-form .dispatch-product-formula strong {
+  font-size: 0.62rem;
+}
+
+.dispatch-entry-form .dispatch-use-calculation {
+  min-height: 33px;
+  padding: 5px 8px;
+  font-size: 0.66rem;
+}
+
+.dispatch-entry-form .calc-preview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  font-size: 0.65rem;
+}
+
+.dispatch-entry-form .modal-actions {
+  margin: 0;
+  padding-top: 9px;
+  border-top: 1px solid #d5e3dd;
 }
 
 .dispatch-save-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 3000;
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(12, 34, 27, 0.58);
-  backdrop-filter: blur(3px);
+  border-radius: 8px;
+  background: rgba(20, 46, 38, 0.54);
+  backdrop-filter: blur(2px);
 }
 
 .dispatch-save-overlay[hidden] {
@@ -20732,10 +20996,10 @@ body {
 
 .dispatch-save-status {
   display: grid;
-  width: min(390px, calc(100vw - 36px));
+  width: min(430px, calc(100vw - 46px));
   gap: 10px;
   justify-items: center;
-  padding: 24px;
+  padding: 22px;
   border: 1px solid #b8d8cc;
   border-radius: 8px;
   background: #ffffff;
@@ -20772,10 +21036,87 @@ body {
   transition: width 180ms ease;
 }
 
+.dispatch-save-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  gap: 5px;
+}
+
+.dispatch-save-steps span {
+  padding: 5px 3px;
+  border-radius: 4px;
+  background: #edf2ef;
+  color: #788981;
+  font-size: 0.6rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+.dispatch-save-steps span.is-active {
+  background: #dff2e9;
+  color: #10664d;
+}
+
+.dispatch-save-steps span.is-complete {
+  background: #147a5b;
+  color: #ffffff;
+}
+
 .dispatch-save-status b {
   color: #0d694e;
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 960px) {
+  .dispatch-entry-form {
+    height: auto;
+    min-height: min(760px, calc(100dvh - 20px));
+    overflow: auto;
+  }
+
+  .dispatch-form-workspace {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .dispatch-product-list {
+    max-height: 330px;
+  }
+}
+
+@media (max-width: 640px) {
+  #dispatchDialog:has(.dispatch-entry-form),
+  #returnDialog:has(.dispatch-entry-form) {
+    width: calc(100vw - 12px) !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 12px);
+  }
+
+  .dispatch-entry-form {
+    max-height: calc(100dvh - 12px) !important;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .dispatch-order-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dispatch-order-blocks {
+    grid-column: 1 / -1;
+  }
+
+  .dispatch-primary-grid,
+  .dispatch-entry-form .dispatch-technical-fields,
+  .dispatch-entry-form .calc-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .dispatch-entry-form .dispatch-product-calc-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .irrigation-current-species {

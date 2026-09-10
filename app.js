@@ -1746,9 +1746,103 @@ function currentTimeValue() {
 }
 
 function dispatchTimeField(name, label, value = "", required = false) {
+  const normalized = extractTimeValue(value);
   return `<label class="dispatch-time-field">${escapeHtml(label)}
-    <input name="${htmlAttr(name)}" type="time" lang="es-CL" step="60" value="${htmlAttr(extractTimeValue(value))}" ${required ? "required" : ""}>
+    <span class="dispatch-time-control">
+      <input name="${htmlAttr(name)}" type="text" inputmode="numeric" autocomplete="off" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" value="${htmlAttr(normalized)}" data-dispatch-time-text ${required ? "required" : ""} aria-label="${htmlAttr(label)} en formato de 24 horas">
+      <button type="button" class="dispatch-time-picker-button" data-dispatch-time-picker title="Seleccionar ${htmlAttr(label.toLowerCase())}" aria-label="Seleccionar ${htmlAttr(label.toLowerCase())}"><span aria-hidden="true">◷</span></button>
+      <input type="time" lang="es-CL" step="60" value="${htmlAttr(normalized)}" data-dispatch-time-native tabindex="-1" aria-hidden="true">
+    </span>
+    <small>Formato 24 horas</small>
   </label>`;
+}
+
+function normalizeDispatchTimeValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const separated = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  const digits = text.replace(/\D/g, "").slice(0, 4);
+  let hours;
+  let minutes;
+  if (separated) {
+    hours = Number(separated[1]);
+    minutes = Number(separated[2]);
+  } else if (digits.length <= 2) {
+    hours = Number(digits);
+    minutes = 0;
+  } else if (digits.length === 3) {
+    hours = Number(digits.slice(0, 1));
+    minutes = Number(digits.slice(1));
+  } else {
+    hours = Number(digits.slice(0, 2));
+    minutes = Number(digits.slice(2));
+  }
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return "";
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function bindDispatchTimeFields(form) {
+  form?.querySelectorAll(".dispatch-time-field").forEach((field) => {
+    const textInput = field.querySelector("[data-dispatch-time-text]");
+    const nativeInput = field.querySelector("[data-dispatch-time-native]");
+    const picker = field.querySelector("[data-dispatch-time-picker]");
+    if (!textInput || !nativeInput || !picker) return;
+
+    const commitTextValue = () => {
+      if (!textInput.value.trim()) {
+        textInput.setCustomValidity("");
+        nativeInput.value = "";
+        return;
+      }
+      const normalized = normalizeDispatchTimeValue(textInput.value);
+      if (!normalized) {
+        textInput.setCustomValidity("Ingresa una hora válida entre 00:00 y 23:59");
+        return;
+      }
+      textInput.value = normalized;
+      nativeInput.value = normalized;
+      textInput.setCustomValidity("");
+    };
+
+    textInput.addEventListener("input", () => textInput.setCustomValidity(""));
+    textInput.addEventListener("blur", commitTextValue);
+    nativeInput.addEventListener("change", () => {
+      if (!nativeInput.value) return;
+      textInput.value = nativeInput.value.slice(0, 5);
+      textInput.setCustomValidity("");
+    });
+    picker.addEventListener("click", () => {
+      const current = normalizeDispatchTimeValue(textInput.value);
+      nativeInput.value = current || "00:00";
+      try {
+        if (typeof nativeInput.showPicker === "function") nativeInput.showPicker();
+        else nativeInput.click();
+      } catch {
+        nativeInput.focus();
+        nativeInput.click();
+      }
+    });
+  });
+}
+
+function normalizeDispatchTimeFields(form) {
+  let valid = true;
+  form?.querySelectorAll(".dispatch-time-field").forEach((field) => {
+    const textInput = field.querySelector("[data-dispatch-time-text]");
+    const nativeInput = field.querySelector("[data-dispatch-time-native]");
+    if (!textInput || !nativeInput) return;
+    const rawValue = textInput.value.trim();
+    const normalized = normalizeDispatchTimeValue(rawValue);
+    if (rawValue && !normalized) {
+      textInput.setCustomValidity("Ingresa una hora válida entre 00:00 y 23:59");
+      valid = false;
+      return;
+    }
+    textInput.value = normalized;
+    nativeInput.value = normalized;
+    textInput.setCustomValidity("");
+  });
+  return valid;
 }
 
 function dispatchSaveProgressMarkup() {
@@ -1759,6 +1853,12 @@ function dispatchSaveProgressMarkup() {
         <strong data-dispatch-save-title>Guardando salida</strong>
         <span data-dispatch-save-detail>Preparando los datos...</span>
         <div class="dispatch-save-progress" aria-hidden="true"><i data-dispatch-save-bar></i></div>
+        <div class="dispatch-save-steps" aria-hidden="true">
+          <span data-dispatch-save-step="10">Salida</span>
+          <span data-dispatch-save-step="32">Productos</span>
+          <span data-dispatch-save-step="52">Inventario</span>
+          <span data-dispatch-save-step="88">Finalizar</span>
+        </div>
         <b data-dispatch-save-percent>0%</b>
       </div>
     </div>`;
@@ -1782,6 +1882,11 @@ function setDispatchSaveProgress(form, percent = null, title = "Guardando salida
   if (detailNode) detailNode.textContent = detail;
   if (bar) bar.style.width = `${safePercent}%`;
   if (percentNode) percentNode.textContent = `${Math.round(safePercent)}%`;
+  overlay.querySelectorAll("[data-dispatch-save-step]").forEach((step) => {
+    const threshold = Number(step.dataset.dispatchSaveStep) || 0;
+    step.classList.toggle("is-complete", safePercent > threshold);
+    step.classList.toggle("is-active", safePercent >= threshold && safePercent <= threshold + 36);
+  });
 }
 
 function currentDateTimeLocalValue() {
@@ -20471,6 +20576,20 @@ function dispatchTechnicalFields(order, dispatch = {}) {
   `;
 }
 
+function dispatchOrderSummary(order) {
+  const total = plannedLiters(order);
+  const applied = dispatchedLiters(order);
+  const pending = Math.max(0, total - applied);
+  return `
+    <div class="dispatch-order-summary" aria-label="Resumen de la orden">
+      <span><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero))}</strong></span>
+      <span class="dispatch-order-blocks"><small>Bloques</small><strong>${escapeHtml(orderBlocksLabel(order) || "Sin bloques")}</strong></span>
+      <span><small>Solicitado</small><strong>${number(total, 0)} L</strong></span>
+      <span><small>Aplicado neto</small><strong>${number(applied, 0)} L</strong></span>
+      <span class="${pending > 0 ? "is-pending" : "is-complete"}"><small>Pendiente</small><strong>${number(pending, 0)} L</strong></span>
+    </div>`;
+}
+
 async function loadCloudData(options = {}) {
   if (!supabaseSession) return;
   await loadCloudProfile();
@@ -24914,39 +25033,45 @@ async function openEditDispatchDialog(orderId, dispatchId) {
 
   const dialog = document.getElementById(dispatch.type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body dispatch-form-shell" id="editDispatchForm" data-dispatch-type="${dispatch.type}">
+    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form" id="editDispatchForm" data-dispatch-type="${dispatch.type}">
       <div class="modal-head">
-        <h2>Modificar ${dispatch.type === "devolucion" ? "devolucion" : "salida"} - Orden #${order.number}</h2>
+        <div><h2>Modificar ${dispatch.type === "devolucion" ? "devolucion" : "salida"} - Orden #${order.number}</h2><p>Datos de entrega, equipo y productos utilizados.</p></div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="form-grid">
-        <label>Numero de folio<input name="folio" value="${htmlAttr(dispatch.folio || dispatch.folioOrigin || "")}" placeholder="Ej. 82015" ${dispatch.type === "salida" ? "required" : ""}></label>
-        <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
-        ${dispatchTimeField("time", "Hora de inicio", dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue(), true)}
-        ${dispatchTimeField("endTime", "Hora de termino", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
-        <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
-        <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${dispatch.type === "salida" ? "required" : ""}>${machineCodeOptions(dispatch.machineCode || "")}</select></label>
-        <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>
-          ${operatorOptions(dispatch.operatorId || "")}
-        </select></label>
-        ${dispatch.type === "salida" ? dispatchTechnicalFields(order, dispatch) : ""}
+      ${dispatchOrderSummary(order)}
+      <div class="dispatch-form-workspace">
+        <div class="dispatch-form-main">
+          <fieldset class="dispatch-section">
+            <legend>Datos de la salida</legend>
+            <div class="form-grid dispatch-primary-grid">
+              <label>Numero de folio<input name="folio" value="${htmlAttr(dispatch.folio || dispatch.folioOrigin || "")}" placeholder="Ej. 82015" ${dispatch.type === "salida" ? "required" : ""}></label>
+              <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
+              ${dispatchTimeField("time", "Hora de inicio", dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue(), true)}
+              ${dispatchTimeField("endTime", "Hora de termino", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
+              <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
+              <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>${operatorOptions(dispatch.operatorId || "")}</select></label>
+              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
+              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${dispatch.type === "salida" ? "required" : ""}>${machineCodeOptions(dispatch.machineCode || "")}</select></label>
+            </div>
+          </fieldset>
+          ${dispatch.type === "salida" ? dispatchTechnicalFields(order, dispatch) : ""}
+        </div>
+        <div class="dispatch-form-side">
+          <div class="recipe-editor dispatch-product-calculator">
+            <div class="dispatch-product-calculator-head"><h3>Productos ${dispatch.type === "devolucion" ? "devueltos" : "entregados"}</h3>${dispatch.type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
+            <div class="dispatch-product-list">
+              ${order.recipe.map((line) => {
+                const qty = dispatch.products?.[line.productId] ?? 0;
+                return dispatch.type === "salida"
+                  ? dispatchProductCalculatorRow(order, line, qty, true)
+                  : `<label>${escapeHtml(getProduct(line.productId)?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${Number(qty || 0).toFixed(3)}" required><span>${escapeHtml(getProduct(line.productId)?.unit || "")}</span></label>`;
+              }).join("")}
+            </div>
+          </div>
+          <div class="calc-preview" id="editDispatchCalcPreview"></div>
+          <label>Observacion<input name="note" value="${htmlAttr(dispatch.note || "")}" placeholder="Motivo o detalle de la modificacion"></label>
+        </div>
       </div>
-      <div class="recipe-editor dispatch-product-calculator">
-        <div class="dispatch-product-calculator-head"><h3>Productos ${dispatch.type === "devolucion" ? "devueltos" : "entregados"}</h3>${dispatch.type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
-        ${order.recipe.map((line) => {
-          const qty = dispatch.products?.[line.productId] ?? 0;
-          return dispatch.type === "salida"
-            ? dispatchProductCalculatorRow(order, line, qty, true)
-            : `<label>${escapeHtml(getProduct(line.productId)?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${Number(qty || 0).toFixed(3)}" required><span>${escapeHtml(getProduct(line.productId)?.unit || "")}</span></label>`;
-        }).join("")}
-      </div>
-      <div class="calc-preview" id="editDispatchCalcPreview"></div>
-      <label>Observacion<input name="note" value="${dispatch.note || ""}" placeholder="Motivo o detalle de la modificacion"></label>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
         <button class="primary-button" type="button" id="updateDispatch">Guardar modificacion</button>
@@ -24958,6 +25083,7 @@ async function openEditDispatchDialog(orderId, dispatchId) {
   dialog.oncancel = (event) => {
     if (document.getElementById("editDispatchForm")?.dataset.saving === "true") event.preventDefault();
   };
+  bindDispatchTimeFields(document.getElementById("editDispatchForm"));
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), dispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), dispatch.machineCode || "", "machine");
   bindDispatchNozzlePicker(document.getElementById("editDispatchForm"), order, dispatchNozzleSelection(order, dispatch).spec);
@@ -24992,6 +25118,7 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   const dispatch = order?.dispatches?.find((item) => String(item.id) === String(dispatchId));
   const form = document.getElementById("editDispatchForm");
   if (!order || !dispatch || !form) return;
+  normalizeDispatchTimeFields(form);
   if (!form.reportValidity()) return;
 
   const data = new FormData(form);
@@ -25158,40 +25285,46 @@ async function openDispatchDialog(orderId, type = "salida") {
   const lastDispatch = [...order.dispatches].reverse().find((item) => item.type === "salida") || {};
   const dialog = document.getElementById(type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body dispatch-form-shell" id="dispatchForm" data-dispatch-type="${type}">
+    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form" id="dispatchForm" data-dispatch-type="${type}">
       <div class="modal-head">
-        <h2>${type === "devolucion" ? "Devolucion de sobrante" : "Orden de salida"} - #${order.number}</h2>
+        <div><h2>${type === "devolucion" ? "Devolucion de sobrante" : "Nueva salida de bodega"} - Orden #${order.number}</h2><p>Registra la entrega, el horario y los parámetros usados en terreno.</p></div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="form-grid">
-        <label>Numero de folio<input name="folio" placeholder="Ej. 82015" ${type === "salida" ? "required" : ""}></label>
-        <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        ${dispatchTimeField("time", "Hora de inicio", currentTimeValue(), true)}
-        ${dispatchTimeField("endTime", "Hora de termino")}
-        <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
-        <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Total solicitado<input value="${number(plannedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label class="locked-field">Acumulado neto<input value="${number(dispatchedLiters(order), 0)} L" disabled><small>No editable por bodega</small></label>
-        <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
-        <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${type === "salida" ? "required" : ""}>${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
-        <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>
-          ${operatorOptions(lastDispatch.operatorId || "")}
-        </select></label>
-        ${type === "salida" ? dispatchTechnicalFields(order, lastDispatch) : ""}
+      ${dispatchOrderSummary(order)}
+      <div class="dispatch-form-workspace">
+        <div class="dispatch-form-main">
+          <fieldset class="dispatch-section">
+            <legend>Datos de la salida</legend>
+            <div class="form-grid dispatch-primary-grid">
+              <label>Numero de folio<input name="folio" placeholder="Ej. 82015" ${type === "salida" ? "required" : ""}></label>
+              <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+              ${dispatchTimeField("time", "Hora de inicio", currentTimeValue(), true)}
+              ${dispatchTimeField("endTime", "Hora de termino")}
+              <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
+              <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>${operatorOptions(lastDispatch.operatorId || "")}</select></label>
+              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
+              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${type === "salida" ? "required" : ""}>${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
+            </div>
+          </fieldset>
+          ${type === "salida" ? dispatchTechnicalFields(order, lastDispatch) : ""}
+        </div>
+        <div class="dispatch-form-side">
+          <div class="recipe-editor dispatch-product-calculator">
+            <div class="dispatch-product-calculator-head"><h3>${type === "devolucion" ? "Productos devueltos" : "Productos a entregar"}</h3>${type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
+            <div class="dispatch-product-list">
+              ${order.recipe.map((line) => {
+                const product = getProduct(line.productId);
+                const qty = dispatchProductQuantity(order, line, defaultLiters);
+                return type === "salida"
+                  ? dispatchProductCalculatorRow(order, line, qty, false)
+                  : `<label>${escapeHtml(product?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${number(qty, 3).replaceAll(".", "").replace(",", ".")}" required><span>${escapeHtml(product?.unit || "")}</span></label>`;
+              }).join("")}
+            </div>
+          </div>
+          <div class="calc-preview" id="dispatchCalcPreview"></div>
+          <label>Observacion<input name="note" placeholder="${type === "devolucion" ? "Sobro producto, error de salida, devolucion parcial" : "Salida parcial, estanque, retiro de bodega"}"></label>
+        </div>
       </div>
-      <div class="recipe-editor dispatch-product-calculator">
-        <div class="dispatch-product-calculator-head"><h3>${type === "devolucion" ? "Productos devueltos" : "Productos a entregar"}</h3>${type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
-        ${order.recipe.map((line) => {
-          const product = getProduct(line.productId);
-          const qty = dispatchProductQuantity(order, line, defaultLiters);
-          return type === "salida"
-            ? dispatchProductCalculatorRow(order, line, qty, false)
-            : `<label>${escapeHtml(product?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${number(qty, 3).replaceAll(".", "").replace(",", ".")}" required><span>${escapeHtml(product?.unit || "")}</span></label>`;
-        }).join("")}
-      </div>
-      <div class="calc-preview" id="dispatchCalcPreview"></div>
-      <label>Observacion<input name="note" placeholder="${type === "devolucion" ? "Sobro producto, error de salida, devolucion parcial" : "Salida parcial, estanque, retiro de bodega"}"></label>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
         <button class="primary-button" type="button" id="saveDispatch">${type === "devolucion" ? "Guardar devolucion" : "Guardar salida"}</button>
@@ -25203,6 +25336,7 @@ async function openDispatchDialog(orderId, type = "salida") {
   dialog.oncancel = (event) => {
     if (document.getElementById("dispatchForm")?.dataset.saving === "true") event.preventDefault();
   };
+  bindDispatchTimeFields(document.getElementById("dispatchForm"));
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), lastDispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), lastDispatch.machineCode || "", "machine");
   bindDispatchNozzlePicker(document.getElementById("dispatchForm"), order, dispatchNozzleSelection(order, lastDispatch).spec);
@@ -25235,6 +25369,7 @@ function updateDispatchProductQuantities(orderId) {
 async function saveDispatch(orderId, type, dialog) {
   const order = state.orders.find((item) => item.id === orderId);
   const form = document.getElementById("dispatchForm");
+  normalizeDispatchTimeFields(form);
   if (!form.reportValidity()) return;
   const data = new FormData(form);
   const liters = Number(data.get("liters")) || 0;
@@ -28815,7 +28950,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=432-dispatch-save-performance", { updateViaCache: "none" })
+    .register("./sw.js?v=433-dispatch-dialog-24h", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
