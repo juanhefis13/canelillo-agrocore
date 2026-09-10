@@ -4591,6 +4591,28 @@ td span,
   min-height: 0;
 }
 
+.fertilizer-dose-variety-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  width: min(100%, 420px);
+  margin-inline: auto;
+  color: #315d4d;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.fertilizer-dose-variety-filter select {
+  width: 100%;
+  min-height: 39px;
+  border: 1px solid rgba(22, 103, 72, 0.24);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #fff;
+  color: #143d31;
+  font-weight: 850;
+}
+
 .fertilizer-dose-species-panel[hidden] {
   display: none;
 }
@@ -4654,7 +4676,7 @@ td span,
 
 .fertilizer-recommendation-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -4819,7 +4841,7 @@ td span,
 
 .fertilizer-recommendation-potrero-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -4867,7 +4889,7 @@ td span,
 
 .fertilizer-recommendation-row {
   display: grid;
-  grid-template-columns: 66px minmax(155px, 1fr) 76px 78px 108px;
+  grid-template-columns: 62px minmax(150px, 1fr) 68px 72px 102px 86px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
@@ -5005,14 +5027,14 @@ td span,
   }
 
   .fertilizer-recommendation-row {
-    grid-template-columns: 42px minmax(92px, 1fr) 53px 58px 72px;
+    grid-template-columns: 42px minmax(100px, 1fr) 53px 58px 72px 68px;
     gap: 5px;
     padding-inline: 7px;
     font-size: 0.64rem;
   }
 
   .fertilizer-recommendation-table {
-    min-width: 430px;
+    min-width: 520px;
   }
 
   .fertilizer-recommendation-table-scroll {
@@ -24851,7 +24873,7 @@ body {
 
 #warehouse .warehouse-filters {
   display: grid !important;
-  grid-template-columns: minmax(100px, 0.7fr) minmax(110px, 0.8fr) repeat(2, minmax(135px, 1fr)) auto !important;
+  grid-template-columns: minmax(175px, 1.1fr) minmax(100px, 0.7fr) minmax(110px, 0.8fr) repeat(2, minmax(135px, 1fr)) auto !important;
   align-items: end !important;
   gap: 6px !important;
   width: 100%;

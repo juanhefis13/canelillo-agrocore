@@ -413,6 +413,7 @@ let managerStatusFilter = "all";
 let managerPotreroFilter = "Todos";
 let managerSpeciesFilters = new Set(["Todas"]);
 let warehouseStatusFilter = "all";
+let warehouseSeasonFilter = "";
 const initialWarehouseMonthRange = currentWarehouseMonthRange();
 let warehouseDateFromFilter = initialWarehouseMonthRange.from;
 let warehouseDateToFilter = initialWarehouseMonthRange.to;
@@ -570,7 +571,7 @@ let fertilizerStorageView = "estanques";
 let fertilizerStockRows = [];
 let fertilizerStockLots = [];
 let fertilizerProducts = [];
-let fertilizerSpeciesDoseColumnsAvailable = true;
+let fertilizerVarietyDoseColumnAvailable = true;
 let fertilizerCasetas = [];
 let fertilizerTanks = [];
 let fertilizerFields = [];
@@ -7852,6 +7853,26 @@ function currentWarehouseMonthRange(referenceDate = new Date()) {
   };
 }
 
+function currentWarehouseSeasonId(referenceDate = new Date()) {
+  const calendarYear = referenceDate.getFullYear();
+  const startYear = referenceDate.getMonth() >= 6 ? calendarYear : calendarYear - 1;
+  const endYear = startYear + 1;
+  const current = state.seasons.find((season) => {
+    const label = applicationSeasonLabel(season);
+    return label.includes(`${startYear}-${endYear}`)
+      || (Number(season.startYear) === startYear && Number(season.endYear) === endYear);
+  });
+  if (current?.id) return String(current.id);
+  const configured = state.settings?.currentSeasonId;
+  if (configured && state.seasons.some((season) => String(season.id) === String(configured))) return String(configured);
+  return String(state.seasons[0]?.id || "all");
+}
+
+function matchesWarehouseSeasonFilter(order) {
+  if (!warehouseSeasonFilter || warehouseSeasonFilter === "all") return true;
+  return String(order.seasonId || "") === String(warehouseSeasonFilter);
+}
+
 function matchesWarehouseDateFilter(order) {
   const date = orderDateForFilter(order);
   if (!date) return true;
@@ -8865,6 +8886,7 @@ function switchView(view) {
   if (enteringWarehouse) {
     const monthRange = currentWarehouseMonthRange();
     warehouseStatusFilter = "all";
+    warehouseSeasonFilter = currentWarehouseSeasonId();
     warehouseDateFromFilter = monthRange.from;
     warehouseDateToFilter = monthRange.to;
     warehouseOrderSearch = "";
@@ -11296,6 +11318,17 @@ function normalizeFertilizerProduct(row) {
   const duplicatedLegacySpeciesDose = hasSpeciesDoseColumns
     && legacyRecommendedKgHa !== null
     && Object.values(speciesDoseValues).every((value) => value === legacyRecommendedKgHa);
+  let varietyDoseValues = row.kg_ha_por_variedad || {};
+  if (typeof varietyDoseValues === "string") {
+    try {
+      varietyDoseValues = JSON.parse(varietyDoseValues);
+    } catch (_) {
+      varietyDoseValues = {};
+    }
+  }
+  const recommendedKgHaByVariety = Object.fromEntries(Object.entries(varietyDoseValues || {})
+    .map(([variety, value]) => [fertilizerReportKey(variety), nullableNumber(value)])
+    .filter(([variety, value]) => variety && value !== null && Number.isFinite(value)));
   return {
     id: row.id,
     name: row.nombre_comercial || row.nombre_normalizado || "Producto",
@@ -11307,6 +11340,7 @@ function normalizeFertilizerProduct(row) {
     recommendedKgHaBySpecies: duplicatedLegacySpeciesDose || !hasSpeciesDoseColumns
       ? { PALTO: null, MANDARINA: null, NARANJA: legacyRecommendedKgHa }
       : speciesDoseValues,
+    recommendedKgHaByVariety,
     duplicatedLegacySpeciesDose
   };
 }
@@ -11554,7 +11588,7 @@ async function loadFertilizerUserNamesForHistory(rows = []) {
 async function loadFertilizerRowsFromSupabase() {
   fertilizerStockError = "";
   fertilizerHistoryLoadError = "";
-  fertilizerSpeciesDoseColumnsAvailable = true;
+  fertilizerVarietyDoseColumnAvailable = true;
   fertilizerConsumptionTraceAvailable = true;
   const historyErrors = [];
   const [rows, productsRaw, casetasRaw, tanksRaw, fieldsRaw, preparationsRaw, applicationsRaw, consumptionsRaw, lotsRaw] = await Promise.all([
@@ -11563,17 +11597,17 @@ async function loadFertilizerRowsFromSupabase() {
       "select=id,caseta,caseta_key,numero_estanque,estanque_key,fip,fip_key,volumen_maximo_litros,litros_actuales,litros_preparados,litros_aplicados,ultima_preparacion,ultima_aplicacion,potreros,potreros_json,activo&activo=eq.true&order=caseta.asc,numero_estanque.asc,fip.asc",
       1000
     ),
-    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
-      if (!isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])) return [];
-      fertilizerSpeciesDoseColumnsAvailable = false;
-      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
-        if (!isMissingSupabaseColumn(legacyError, ["kg_ha_recomendado"])) return [];
+    sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado,kg_ha_por_variedad&activo=eq.true&order=nombre_comercial.asc", 1000).catch((error) => {
+      if (!isMissingSupabaseColumn(error, ["kg_ha_por_variedad"])) return [];
+      fertilizerVarietyDoseColumnAvailable = false;
+      return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af,kg_ha_recomendado,kg_ha_palto,kg_ha_mandarina,kg_ha_naranja&activo=eq.true&order=nombre_comercial.asc", 1000).catch((legacyError) => {
+        if (!isMissingSupabaseColumn(legacyError, ["kg_ha_recomendado", "kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])) return [];
         return sbSelectAll("fertilizante_productos", "select=id,nombre_comercial,nombre_normalizado,unidad,disolucion,n,p,k,b,zn,mg,ca,ah,af&activo=eq.true&order=nombre_comercial.asc", 1000);
       });
     }),
     sbSelectAll("fertilizante_casetas", "select=id,nombre,nombre_normalizado&activo=eq.true&order=nombre.asc", 1000).catch(() => []),
     sbSelectAll("fertilizante_estanques", "select=id,caseta_id,numero_estanque,numero_estanque_normalizado,fip,fip_normalizado,volumen_maximo_litros&activo=eq.true&order=caseta_id.asc,numero_estanque.asc,fip.asc", 1000).catch(() => []),
-    sbSelectAll("campos", "select=id,potrero,bloque,especie,variedad,hectareas,activo&activo=eq.true&order=potrero.asc,bloque.asc", 5000).catch(() => []),
+    sbSelectAll("campos", "select=id,potrero,bloque,especie,variedad,hectareas,caudal,horas_riego_base,activo&activo=eq.true&order=potrero.asc,bloque.asc", 5000).catch(() => []),
     loadFertilizerPreparationsForModule().catch((error) => {
       console.warn("No se pudo cargar el historial de preparaciones", error);
       historyErrors.push(`Preparaciones: ${error.message || "error de lectura"}`);
@@ -11606,7 +11640,9 @@ async function loadFertilizerRowsFromSupabase() {
     block: field.bloque || "",
     crop: field.especie || "",
     variety: field.variedad || "",
-    hectares: Number(field.hectareas) || 0
+    hectares: Number(field.hectareas) || 0,
+    flow: field.caudal === null || field.caudal === undefined ? null : Number(field.caudal),
+    baseHours: field.horas_riego_base === null || field.horas_riego_base === undefined ? null : Number(field.horas_riego_base)
   })).sort((a, b) => comparePotrero(a.potrero, b.potrero) || String(a.block).localeCompare(String(b.block), "es", { numeric: true }));
   fertilizerStockLots = lotsRaw;
   fertilizerPreparationHistory = preparationsRaw.filter((row) => !row.revertida);
@@ -12764,6 +12800,19 @@ function fertilizerRecommendedLiters(recommendedKgHa, hectares, dissolution) {
   return dose * area / ratio;
 }
 
+function fertilizerFieldIrrigationCubicMeters(field) {
+  const flow = Number(field?.flow);
+  const hours = Number(field?.baseHours);
+  if (!Number.isFinite(flow) || flow <= 0 || !Number.isFinite(hours) || hours <= 0) return null;
+  return flow * hours;
+}
+
+function fertilizerRecommendedLitersPerM3(liters, field) {
+  const irrigationM3 = fertilizerFieldIrrigationCubicMeters(field);
+  if (!irrigationM3) return null;
+  return (Number(liters) || 0) / irrigationM3;
+}
+
 const FERTILIZER_DOSE_SPECIES = [
   { key: "PALTO", label: "Palto", column: "kg_ha_palto" },
   { key: "MANDARINA", label: "Mandarina", column: "kg_ha_mandarina" },
@@ -12783,19 +12832,47 @@ function fertilizerDoseSpeciesMeta(species) {
   return FERTILIZER_DOSE_SPECIES.find((item) => item.key === key) || null;
 }
 
-function fertilizerRecommendedDoseForProduct(product, species) {
+function fertilizerRecommendedDoseForSpecies(product, species) {
   const meta = fertilizerDoseSpeciesMeta(species);
   if (!product || !meta) return null;
   const value = product.recommendedKgHaBySpecies?.[meta.key];
   return value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
 }
 
-function renderFertilizerSpeciesDosePanel(species, activeSpecies) {
+function fertilizerDoseVarieties() {
+  const varieties = new Map();
+  (fertilizerFields || []).forEach((field) => {
+    const key = fertilizerReportKey(field.variety);
+    if (!key || varieties.has(key)) return;
+    varieties.set(key, {
+      key,
+      label: String(field.variety || "").trim(),
+      species: fertilizerDoseSpeciesMeta(field.crop)?.label || field.crop || "Sin especie",
+      speciesKey: normalizeFertilizerDoseSpecies(field.crop)
+    });
+  });
+  return [...varieties.values()].sort((a, b) => a.species.localeCompare(b.species, "es", { sensitivity: "base" })
+    || a.label.localeCompare(b.label, "es", { numeric: true, sensitivity: "base" }));
+}
+
+function fertilizerRecommendedDoseForVariety(product, variety, species = "") {
+  if (!product) return null;
+  const key = fertilizerReportKey(typeof variety === "object" ? variety.variety : variety);
+  const value = product.recommendedKgHaByVariety?.[key];
+  if (value !== null && value !== undefined && Number.isFinite(Number(value))) return Number(value);
+  return fertilizerVarietyDoseColumnAvailable ? null : fertilizerRecommendedDoseForSpecies(product, species);
+}
+
+function fertilizerRecommendedDoseForField(product, field) {
+  return fertilizerRecommendedDoseForVariety(product, field?.variety, field?.crop);
+}
+
+function renderFertilizerVarietyDosePanel(variety, activeVariety) {
   return `
-    <div class="fertilizer-dose-species-panel" data-dose-species-panel="${species.key}" ${species.key === activeSpecies ? "" : "hidden"}>
+    <div class="fertilizer-dose-species-panel" data-dose-variety-panel="${htmlAttr(variety.key)}" ${variety.key === activeVariety ? "" : "hidden"}>
       <div class="fertilizer-dose-list" role="list">
         ${(fertilizerProducts || []).map((product) => {
-          const value = fertilizerRecommendedDoseForProduct(product, species.key);
+          const value = fertilizerRecommendedDoseForVariety(product, variety.label, variety.speciesKey);
           return `
             <label class="fertilizer-dose-row" role="listitem">
               <span>
@@ -12803,7 +12880,7 @@ function renderFertilizerSpeciesDosePanel(species, activeSpecies) {
                 <small>${escapeHtml(product.unit)} · Disolucion base ${number(product.dissolution, 4)}</small>
               </span>
               <span class="fertilizer-dose-input">
-                <input type="number" min="0" step="0.001" inputmode="decimal" data-product-dose="${htmlAttr(product.id)}" data-dose-species="${species.key}" value="${value === null ? "" : htmlAttr(value)}" placeholder="Sin definir" aria-label="Kg por hectarea de ${htmlAttr(product.name)} para ${species.label}">
+                <input type="number" min="0" step="0.001" inputmode="decimal" data-product-dose="${htmlAttr(product.id)}" data-dose-variety="${htmlAttr(variety.key)}" value="${value === null ? "" : htmlAttr(value)}" placeholder="Sin definir" aria-label="Kg por hectarea de ${htmlAttr(product.name)} para ${htmlAttr(variety.label)}">
                 <b>kg/ha</b>
               </span>
             </label>
@@ -12819,43 +12896,43 @@ function openFertilizerRecommendedKgHaDialog() {
     showToast("Inicia sesion para actualizar las dosis recomendadas");
     return;
   }
-  const activeSpecies = FERTILIZER_DOSE_SPECIES[0].key;
+  const varieties = fertilizerDoseVarieties();
+  if (!varieties.length) {
+    showToast("No hay variedades activas en la tabla campos");
+    return;
+  }
+  const activeVariety = varieties[0].key;
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <form method="dialog" class="modal-body fertilizer-dose-dialog" id="fertilizerDoseForm">
       <div class="modal-head">
         <div>
           <h2>Actualizar kg/ha recomendados</h2>
-          <p>Define una dosis diferente para cada producto y especie.</p>
+          <p>Define una dosis diferente para cada producto y variedad.</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="fertilizer-dose-species-tabs segmented-control" role="tablist" aria-label="Especie para dosis recomendada">
-        ${FERTILIZER_DOSE_SPECIES.map((species) => `<button type="button" role="tab" data-dose-species-tab="${species.key}" aria-selected="${species.key === activeSpecies}" class="${species.key === activeSpecies ? "active" : ""}">${species.label}</button>`).join("")}
-      </div>
-      ${fertilizerSpeciesDoseColumnsAvailable ? "" : `<div class="fertilizer-recommendation-warning">Faltan las columnas por especie en Supabase. Ejecuta supabase_fertilizante_kg_ha_recomendado.sql y vuelve a cargar.</div>`}
+      <label class="fertilizer-dose-variety-filter">Variedad
+        <select id="fertilizerDoseVarietySelect">
+          ${varieties.map((variety) => `<option value="${htmlAttr(variety.key)}">${escapeHtml(variety.label)} · ${escapeHtml(variety.species)}</option>`).join("")}
+        </select>
+      </label>
+      ${fertilizerVarietyDoseColumnAvailable ? "" : `<div class="fertilizer-recommendation-warning">Falta habilitar las recomendaciones por variedad. Ejecuta supabase_fertilizante_kg_ha_por_variedad.sql y vuelve a cargar.</div>`}
       <div class="fertilizer-dose-panels">
-        ${FERTILIZER_DOSE_SPECIES.map((species) => renderFertilizerSpeciesDosePanel(species, activeSpecies)).join("")}
+        ${varieties.map((variety) => renderFertilizerVarietyDosePanel(variety, activeVariety)).join("")}
       </div>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
-        <button class="primary-button" type="button" id="saveFertilizerRecommendedKgHa" ${fertilizerSpeciesDoseColumnsAvailable ? "" : "disabled"}>Guardar cambios</button>
+        <button class="primary-button" type="button" id="saveFertilizerRecommendedKgHa" ${fertilizerVarietyDoseColumnAvailable ? "" : "disabled"}>Guardar cambios</button>
       </div>
     </form>
   `;
   dialog.showModal();
   const form = document.getElementById("fertilizerDoseForm");
-  form?.querySelectorAll("[data-dose-species-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const species = button.dataset.doseSpeciesTab;
-      form.querySelectorAll("[data-dose-species-tab]").forEach((item) => {
-        const active = item.dataset.doseSpeciesTab === species;
-        item.classList.toggle("active", active);
-        item.setAttribute("aria-selected", String(active));
-      });
-      form.querySelectorAll("[data-dose-species-panel]").forEach((panel) => {
-        panel.hidden = panel.dataset.doseSpeciesPanel !== species;
-      });
+  document.getElementById("fertilizerDoseVarietySelect")?.addEventListener("change", (event) => {
+    const variety = event.target.value;
+    form?.querySelectorAll("[data-dose-variety-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.doseVarietyPanel !== variety;
     });
   });
   document.getElementById("saveFertilizerRecommendedKgHa")?.addEventListener("click", saveFertilizerRecommendedKgHa);
@@ -12865,30 +12942,22 @@ async function saveFertilizerRecommendedKgHa() {
   const form = document.getElementById("fertilizerDoseForm");
   const button = document.getElementById("saveFertilizerRecommendedKgHa");
   if (!form || !button || !form.reportValidity()) return;
-  if (!fertilizerSpeciesDoseColumnsAvailable) {
-    showToast("Ejecuta supabase_fertilizante_kg_ha_recomendado.sql antes de guardar");
+  if (!fertilizerVarietyDoseColumnAvailable) {
+    showToast("Ejecuta supabase_fertilizante_kg_ha_por_variedad.sql antes de guardar");
     return;
   }
   const changesByProduct = new Map();
   let changedDoseCount = 0;
-  let repairedProductCount = 0;
-  (fertilizerProducts || []).filter((product) => product.duplicatedLegacySpeciesDose).forEach((product) => {
-    changesByProduct.set(product.id, {
-      product,
-      payload: { kg_ha_palto: null, kg_ha_mandarina: null, kg_ha_naranja: product.recommendedKgHa }
-    });
-    repairedProductCount += 1;
-  });
   [...form.querySelectorAll("[data-product-dose]")].forEach((input) => {
     const product = fertilizerProductById(input.dataset.productDose);
-    const species = input.dataset.doseSpecies;
-    const speciesMeta = fertilizerDoseSpeciesMeta(species);
+    const variety = input.dataset.doseVariety;
     const raw = String(input.value || "").trim();
     const value = raw === "" ? null : Number(raw);
-    const currentValue = fertilizerRecommendedDoseForProduct(product, species);
-    if (!product || !speciesMeta || value === currentValue) return;
-    if (!changesByProduct.has(product.id)) changesByProduct.set(product.id, { product, payload: {} });
-    changesByProduct.get(product.id).payload[speciesMeta.column] = value;
+    const currentValue = product?.recommendedKgHaByVariety?.[variety] ?? null;
+    if (!product || !variety || value === currentValue) return;
+    if (!changesByProduct.has(product.id)) changesByProduct.set(product.id, { product, values: { ...(product.recommendedKgHaByVariety || {}) } });
+    if (value === null) delete changesByProduct.get(product.id).values[variety];
+    else changesByProduct.get(product.id).values[variety] = value;
     changedDoseCount += 1;
   });
   const changes = [...changesByProduct.values()];
@@ -12896,31 +12965,28 @@ async function saveFertilizerRecommendedKgHa() {
     showToast("No hay cambios en los kg/ha recomendados");
     return;
   }
-  if (changes.some(({ payload }) => Object.values(payload).some((value) => value !== null && (!Number.isFinite(value) || value < 0)))) {
+  if (changes.some(({ values }) => Object.values(values).some((value) => !Number.isFinite(value) || value < 0))) {
     showToast("Los kg/ha deben ser numeros positivos");
     return;
   }
   button.disabled = true;
   button.textContent = "Guardando...";
   try {
-    await Promise.all(changes.map(({ product, payload }) => sbFetch(`/rest/v1/fertilizante_productos?id=eq.${encodeURIComponent(product.id)}`, {
+    await Promise.all(changes.map(({ product, values }) => sbFetch(`/rest/v1/fertilizante_productos?id=eq.${encodeURIComponent(product.id)}`, {
       method: "PATCH",
       prefer: "return=minimal",
-      body: JSON.stringify({ ...payload, actualizado_en: new Date().toISOString() })
+      body: JSON.stringify({ kg_ha_por_variedad: values, actualizado_en: new Date().toISOString() })
     })));
     resetFertilizerLoadedState();
     document.getElementById("purchaseDialog")?.close();
     await loadFertilizerRows();
     if (currentView === "fertilizers") renderFertilizers();
-    const updateMessage = changedDoseCount
-      ? `${changedDoseCount} dosis por especie actualizada${changedDoseCount === 1 ? "" : "s"}`
-      : "Dosis por especie corregidas";
-    showToast(`${updateMessage}${repairedProductCount ? ` · ${repairedProductCount} duplicacion${repairedProductCount === 1 ? "" : "es"} reparada${repairedProductCount === 1 ? "" : "s"}` : ""}`);
+    showToast(`${changedDoseCount} dosis por variedad actualizada${changedDoseCount === 1 ? "" : "s"}`);
   } catch (error) {
     button.disabled = false;
     button.textContent = "Guardar cambios";
-    const migrationHint = isMissingSupabaseColumn(error, ["kg_ha_palto", "kg_ha_mandarina", "kg_ha_naranja"])
-      ? " Ejecuta supabase_fertilizante_kg_ha_recomendado.sql en Supabase."
+    const migrationHint = isMissingSupabaseColumn(error, ["kg_ha_por_variedad"])
+      ? " Ejecuta supabase_fertilizante_kg_ha_por_variedad.sql en Supabase."
       : "";
     showToast(`No se guardaron los kg/ha: ${error.message}.${migrationHint}`);
   }
@@ -12942,28 +13008,35 @@ function openFertilizerTankRecommendationDialog(tankId) {
   const compactGroups = groups.size > 1;
   const fieldRecommendations = fields.map((field) => {
     const species = fertilizerDoseSpeciesMeta(field.crop);
-    const dose = fertilizerRecommendedDoseForProduct(product, field.crop);
+    const dose = fertilizerRecommendedDoseForField(product, field);
     const hasDose = dose !== null && Number.isFinite(dose) && dose >= 0;
+    const liters = hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0;
     return {
       field,
       species,
       dose,
       hasDose,
-      liters: hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0
+      liters,
+      irrigationM3: fertilizerFieldIrrigationCubicMeters(field),
+      litersPerM3: hasDose && dissolution > 0 ? fertilizerRecommendedLitersPerM3(liters, field) : null
     };
   });
   const calculableFields = fieldRecommendations.filter((entry) => entry.hasDose && dissolution > 0);
-  const missingSpecies = [...new Set(fieldRecommendations
+  const missingVarieties = [...new Set(fieldRecommendations
     .filter((entry) => !entry.hasDose)
-    .map((entry) => entry.species?.label || entry.field.crop || "Sin especie"))];
-  const usedSpecies = [...new Set(fieldRecommendations.map((entry) => entry.species?.key).filter(Boolean))];
+    .map((entry) => entry.field.variety || "Sin variedad"))];
+  const usedVarieties = [...new Set(fieldRecommendations.map((entry) => fertilizerReportKey(entry.field.variety)).filter(Boolean))];
   const canCalculate = Boolean(product) && dissolution > 0 && calculableFields.length > 0;
   const totalLiters = canCalculate
     ? calculableFields.reduce((sum, entry) => sum + entry.liters, 0)
     : 0;
-  const doseSummary = usedSpecies.length === 1
-    ? fertilizerRecommendedDoseForProduct(product, usedSpecies[0])
+  const doseSummary = usedVarieties.length === 1
+    ? fertilizerRecommendedDoseForField(product, fieldRecommendations[0]?.field)
     : null;
+  const entriesWithIrrigation = calculableFields.filter((entry) => Number(entry.irrigationM3) > 0);
+  const totalIrrigationM3 = entriesWithIrrigation.reduce((sum, entry) => sum + entry.irrigationM3, 0);
+  const totalLitersWithIrrigation = entriesWithIrrigation.reduce((sum, entry) => sum + entry.liters, 0);
+  const totalLitersPerM3 = totalIrrigationM3 > 0 ? totalLitersWithIrrigation / totalIrrigationM3 : null;
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <div class="modal-body fertilizer-recommendation-dialog">
@@ -12976,13 +13049,14 @@ function openFertilizerTankRecommendationDialog(tankId) {
       </div>
       <div class="fertilizer-recommendation-summary">
         <span><small>Producto</small><strong>${escapeHtml(product?.name || "Sin preparacion registrada")}</strong></span>
-        <span><small>Kg/ha por especie</small><strong>${usedSpecies.length > 1 ? "Segun especie" : doseSummary === null ? "Sin definir" : `${number(doseSummary)} kg/ha`}</strong></span>
+        <span><small>Kg/ha por variedad</small><strong>${usedVarieties.length > 1 ? "Segun variedad" : doseSummary === null ? "Sin definir" : `${number(doseSummary)} kg/ha`}</strong></span>
         <span><small>Disolucion utilizada</small><strong>${dissolution > 0 ? number(dissolution, 4) : "Sin definir"}</strong><em>${escapeHtml(dissolutionSource)}</em></span>
-        <span><small>Total recomendado</small><strong>${canCalculate ? `${number(totalLiters, 1)} L${missingSpecies.length ? " parciales" : ""}` : "Pendiente"}</strong></span>
+        <span><small>Total recomendado</small><strong>${canCalculate ? `${number(totalLiters, 1)} L${missingVarieties.length ? " parciales" : ""}` : "Pendiente"}</strong></span>
+        <span><small>Promedio con riego base</small><strong>${totalLitersPerM3 === null ? "Sin caudal/horas" : `${number(totalLitersPerM3, 2)} L/m³`}</strong></span>
       </div>
       ${tank.litrosActuales <= 0 && preparation ? `<div class="fertilizer-recommendation-warning">El estanque esta vacio. El calculo usa su ultima preparacion registrada.</div>` : ""}
       ${!product ? `<div class="empty-state compact"><strong>Este estanque no tiene una preparacion con producto.</strong><p>Registra una preparacion para identificar el producto y calcular la recomendacion.</p></div>` : ""}
-      ${product && missingSpecies.length ? `<div class="fertilizer-recommendation-warning">Falta definir ${escapeHtml(product.name)} para: ${missingSpecies.map(escapeHtml).join(", ")}.</div>` : ""}
+      ${product && missingVarieties.length ? `<div class="fertilizer-recommendation-warning">Falta definir ${escapeHtml(product.name)} para: ${missingVarieties.map(escapeHtml).join(", ")}.</div>` : ""}
       ${product && dissolution <= 0 ? `<div class="empty-state compact"><strong>No hay una disolucion valida.</strong><p>Registra cantidad de producto y litros de agua en la preparacion del estanque.</p></div>` : ""}
       ${product && dissolution > 0 && groups.size ? `
         <div class="fertilizer-recommendation-groups${compactGroups ? " is-compact" : ""}">
@@ -12990,10 +13064,14 @@ function openFertilizerTankRecommendationDialog(tankId) {
             const potreroEntries = potreroFields.map((field) => fieldRecommendations.find((entry) => entry.field.id === field.id));
             const potreroLiters = potreroEntries.reduce((sum, entry) => sum + (entry?.liters || 0), 0);
             const potreroHectares = potreroFields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
+            const potreroEntriesWithIrrigation = potreroEntries.filter((entry) => Number(entry?.irrigationM3) > 0);
+            const potreroIrrigationM3 = potreroEntriesWithIrrigation.reduce((sum, entry) => sum + entry.irrigationM3, 0);
+            const potreroLitersWithIrrigation = potreroEntriesWithIrrigation.reduce((sum, entry) => sum + (entry?.liters || 0), 0);
+            const potreroLitersPerM3 = potreroIrrigationM3 > 0 ? potreroLitersWithIrrigation / potreroIrrigationM3 : null;
             if (compactGroups) return `
               <button type="button" class="fertilizer-recommendation-potrero" data-action="open-fertilizer-potrero-recommendation" data-tank-id="${htmlAttr(tank.id)}" data-potrero="${htmlAttr(potrero)}">
                 <span><strong>${escapeHtml(potreroLabel(potrero))}</strong><small>${number(potreroFields.length, 0)} bloques · ${number(potreroHectares)} ha</small></span>
-                <span><em>${number(potreroLiters, 1)} L</em><b aria-hidden="true">+</b></span>
+                <span><em>${number(potreroLiters, 1)} L${potreroLitersPerM3 === null ? "" : ` · ${number(potreroLitersPerM3, 2)} L/m³`}</em><b aria-hidden="true">+</b></span>
               </button>
             `;
             return `
@@ -13004,10 +13082,10 @@ function openFertilizerTankRecommendationDialog(tankId) {
                 </div>
                 <div class="fertilizer-recommendation-table-scroll" tabindex="0" aria-label="Bloques recomendados de ${htmlAttr(potreroLabel(potrero))}">
                   <div class="fertilizer-recommendation-table">
-                    <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
+                    <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span><span>L/m³</span></div>
                     ${potreroEntries.map((entry) => {
                       const field = entry.field;
-                      return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
+                      return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose ? `${number(entry.liters, 1)} L` : "-"}</b><b>${entry.litersPerM3 === null ? "-" : `${number(entry.litersPerM3, 2)} L/m³`}</b></div>`;
                     }).join("")}
                   </div>
                 </div>
@@ -13017,7 +13095,7 @@ function openFertilizerTankRecommendationDialog(tankId) {
         </div>
       ` : ""}
       ${product && dissolution > 0 && !groups.size ? `<div class="empty-state compact"><strong>El estanque no tiene potreros asociados.</strong><p>Asocia sus sectores antes de calcular los bloques.</p></div>` : ""}
-      <div class="fertilizer-formula-note"><span>Formula</span><strong>(kg/ha de la especie × hectareas del bloque) ÷ disolucion</strong></div>
+      <div class="fertilizer-formula-note"><span>Formulas</span><strong>Litros recomendados = (kg/ha de la variedad × ha) ÷ disolucion · L/m³ = litros recomendados ÷ (caudal × horas base)</strong></div>
       <div class="modal-actions"><button class="primary-button" type="button" data-action="close-dialog">Cerrar</button></div>
     </div>
   `;
@@ -13034,18 +13112,25 @@ function openFertilizerPotreroRecommendationDialog(tankId, potrero) {
   const fields = fertilizerFieldsForTank(tank).filter((field) => fertilizerReportKey(field.potrero) === fertilizerReportKey(potrero));
   const entries = fields.map((field) => {
     const species = fertilizerDoseSpeciesMeta(field.crop);
-    const dose = fertilizerRecommendedDoseForProduct(product, field.crop);
+    const dose = fertilizerRecommendedDoseForField(product, field);
     const hasDose = dose !== null && Number.isFinite(dose) && dose >= 0;
+    const recommendedLiters = hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0;
     return {
       field,
       species,
       dose,
       hasDose,
-      liters: hasDose && dissolution > 0 ? fertilizerRecommendedLiters(dose, field.hectares, dissolution) : 0
+      liters: recommendedLiters,
+      irrigationM3: fertilizerFieldIrrigationCubicMeters(field),
+      litersPerM3: hasDose && dissolution > 0 ? fertilizerRecommendedLitersPerM3(recommendedLiters, field) : null
     };
   });
   const hectares = fields.reduce((sum, field) => sum + (Number(field.hectares) || 0), 0);
   const liters = entries.reduce((sum, entry) => sum + entry.liters, 0);
+  const entriesWithIrrigation = entries.filter((entry) => Number(entry.irrigationM3) > 0);
+  const irrigationM3 = entriesWithIrrigation.reduce((sum, entry) => sum + entry.irrigationM3, 0);
+  const litersWithIrrigation = entriesWithIrrigation.reduce((sum, entry) => sum + entry.liters, 0);
+  const litersPerM3 = irrigationM3 > 0 ? litersWithIrrigation / irrigationM3 : null;
   const dialog = document.getElementById("purchaseDialog");
   dialog.innerHTML = `
     <div class="modal-body fertilizer-recommendation-dialog fertilizer-recommendation-detail">
@@ -13062,13 +13147,14 @@ function openFertilizerPotreroRecommendationDialog(tankId, potrero) {
         <span><small>Superficie</small><strong>${number(hectares)} ha</strong></span>
         <span><small>Disolucion</small><strong>${dissolution > 0 ? number(dissolution, 4) : "Sin definir"}</strong><em>${escapeHtml(dissolutionSource)}</em></span>
         <span><small>Total recomendado</small><strong>${dissolution > 0 ? `${number(liters, 1)} L` : "Pendiente"}</strong></span>
+        <span><small>Promedio con riego base</small><strong>${litersPerM3 === null ? "Sin caudal/horas" : `${number(litersPerM3, 2)} L/m³`}</strong></span>
       </div>
       <div class="fertilizer-recommendation-table-scroll is-expanded" tabindex="0" aria-label="Bloques recomendados de ${htmlAttr(potreroLabel(potrero))}">
         <div class="fertilizer-recommendation-table">
-          <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span></div>
+          <div class="fertilizer-recommendation-row is-head"><span>Bloque</span><span>Especie / variedad</span><span>Ha</span><span>Kg/ha</span><span>Recomendado</span><span>L/m³</span></div>
           ${entries.map((entry) => {
             const field = entry.field;
-            return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose && dissolution > 0 ? `${number(entry.liters, 1)} L` : "-"}</b></div>`;
+            return `<div class="fertilizer-recommendation-row"><strong>${escapeHtml(field.block || "-")}</strong><span><small>${escapeHtml(entry.species?.label || field.crop || "Sin especie")}</small>${escapeHtml(field.variety || "Sin variedad")}</span><span>${number(field.hectares)} ha</span><span>${entry.hasDose ? number(entry.dose) : "Sin definir"}</span><b>${entry.hasDose && dissolution > 0 ? `${number(entry.liters, 1)} L` : "-"}</b><b>${entry.litersPerM3 === null ? "-" : `${number(entry.litersPerM3, 2)} L/m³`}</b></div>`;
           }).join("") || `<div class="empty-state compact"><strong>Sin bloques activos para este potrero.</strong></div>`}
         </div>
       </div>
@@ -21239,8 +21325,13 @@ function isUuid(value) {
 }
 
 function renderWarehouse() {
+  const seasons = [...state.seasons].sort((a, b) => applicationSeasonLabel(b).localeCompare(applicationSeasonLabel(a), "es", { numeric: true }));
+  if (!warehouseSeasonFilter || (warehouseSeasonFilter !== "all" && !seasons.some((season) => String(season.id) === String(warehouseSeasonFilter)))) {
+    warehouseSeasonFilter = currentWarehouseSeasonId();
+  }
   const warehouseOrders = sortOrdersNewestFirst(state.orders)
     .filter((order) => matchesOrderStatusFilter(order, warehouseStatusFilter))
+    .filter(matchesWarehouseSeasonFilter)
     .filter(matchesWarehouseDateFilter);
   views.warehouse.innerHTML = `
     <section class="panel">
@@ -21250,6 +21341,12 @@ function renderWarehouse() {
           <p>Registra salidas parciales y devoluciones. El mojamiento acumulado no debe superar lo autorizado.</p>
         </div>
         <div class="warehouse-filters">
+          <label class="inline-filter">Temporada
+            <select id="warehouseSeasonFilter">
+              <option value="all" ${warehouseSeasonFilter === "all" ? "selected" : ""}>Todas</option>
+              ${seasons.map((season) => `<option value="${htmlAttr(season.id)}" ${String(season.id) === String(warehouseSeasonFilter) ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}
+            </select>
+          </label>
           <label class="inline-filter">Estado
             <select id="warehouseStatusFilter">${statusFilterOptions(warehouseStatusFilter)}</select>
           </label>
@@ -21271,6 +21368,10 @@ function renderWarehouse() {
       </div>
     </section>
   `;
+  document.getElementById("warehouseSeasonFilter")?.addEventListener("change", (event) => {
+    warehouseSeasonFilter = event.target.value;
+    renderWarehouse();
+  });
   document.getElementById("warehouseStatusFilter")?.addEventListener("change", (event) => {
     warehouseStatusFilter = event.target.value;
     renderWarehouse();
@@ -25252,7 +25353,7 @@ async function downloadApplicationOrderPdf(orderId) {
     pdfDoc.setTitle(`Orden ${order.number} - Aplicación de Fitosanitarios y Fertilizantes`);
     pdfDoc.setAuthor("Canelillo AgroCore");
     pdfDoc.setSubject(pdfSafeText(order.objective || "Orden de aplicación"));
-    const page = pdfDoc.addPage([841.89, 595.28]);
+    let page = pdfDoc.addPage([841.89, 595.28]);
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const [logo, weather, temperatureReadings] = await Promise.all([
@@ -25279,6 +25380,51 @@ async function downloadApplicationOrderPdf(orderId) {
     const blocks = orderBlocksGroupedLabel(order);
     const method = String(order.classification || "").toUpperCase();
     const appliedTotal = applicationOrderAppliedLiters(order);
+    const allRecipeRows = (order.recipe || []).map((line) => {
+      const product = getProduct(line.productId) || {};
+      const dose = Number(line.dose ?? line.dose100) || 0;
+      const doseUnit = line.doseUnit || (line.doseBasis === "per_ha" ? `${product.unit || "kg/L"}/ha` : `${product.unit || "kg/L"}/100 L`);
+      return [
+        { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
+        String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), applicationOrderAgendaPesticida(order, line, product), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
+        `${number(order.waterHa, 0)} L/ha`, orderRecipeLineObjective(order, line), `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
+      ];
+    });
+    const allCompactParameterRows = applicationOrderDispatchParameterRows(order).map((row) => [
+      row[0], row[2], row[3],
+      [row[4], row[5]].filter((value) => value && value !== "-").join(" · ") || "-",
+      row[6], row[7]
+    ]);
+    const rawOperationCount = Math.max((order.dispatches || []).length, (order.tanks || []).length);
+    const allOperationRows = Array.from({ length: rawOperationCount }, (_, index) => {
+      const dispatch = order.dispatches?.[index];
+      const tank = order.tanks?.[index];
+      const appliedDate = tank?.appliedAt ? String(tank.appliedAt).slice(0, 10) : dispatch?.date || "";
+      const isReturn = dispatch?.type === "devolucion";
+      const processLiters = tank?.liters ?? dispatch?.liters ?? 0;
+      return [
+        dispatch ? String(dispatch.folio || dispatch.folioOrigin || index + 1) : "", dispatch ? printDate(dispatch.date) : "",
+        dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${isReturn ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
+        appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
+        dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
+        dispatch || tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch || tank ? `${isReturn ? "-" : ""}${number(processLiters, 0)}` : "",
+        dispatchOperatorName(dispatch), tank?.tractorCode || dispatch?.tractorCode || "-",
+        tank?.machineCode || dispatch?.machineCode || "-", dispatch ? applicationOrderTemperatureLabel(dispatch, temperatureReadings) : "-"
+      ];
+    });
+    const naturalFirstPageHeight = 46 + 42
+      + 24 + Math.max(6, allRecipeRows.length) * 15 + 5
+      + 45
+      + Math.max(60, 34 + Math.max(2, allCompactParameterRows.length) * 9) + 5
+      + 14 + 24 + Math.max(5, allOperationRows.length) * 18 + 25;
+    const fitsSinglePage = naturalFirstPageHeight <= 540;
+    const firstRecipeRows = fitsSinglePage ? allRecipeRows : allRecipeRows.slice(0, 6);
+    const firstParameterRows = fitsSinglePage ? allCompactParameterRows : allCompactParameterRows.slice(0, 2);
+    const firstOperationRows = fitsSinglePage ? allOperationRows : allOperationRows.slice(0, 5);
+    const remainingRecipeRows = fitsSinglePage ? [] : allRecipeRows.slice(6);
+    const remainingParameterRows = fitsSinglePage ? [] : allCompactParameterRows.slice(2);
+    const remainingOperationRows = fitsSinglePage ? [] : allOperationRows.slice(5);
+    const hasContinuation = remainingRecipeRows.length || remainingParameterRows.length || remainingOperationRows.length;
 
     page.drawLine({ start: { x: margin, y: top - 40 }, end: { x: margin + contentWidth, y: top - 40 }, thickness: 3, color: colors.green });
     if (logo) {
@@ -25323,21 +25469,12 @@ async function downloadApplicationOrderPdf(orderId) {
     });
     top -= 42;
 
-    const recipeRows = (order.recipe || []).map((line) => {
-      const product = getProduct(line.productId) || {};
-      const dose = Number(line.dose ?? line.dose100) || 0;
-      const doseUnit = line.doseUnit || (line.doseBasis === "per_ha" ? `${product.unit || "kg/L"}/ha` : `${product.unit || "kg/L"}/100 L`);
-      return [
-        { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
-        String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), applicationOrderAgendaPesticida(order, line, product), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
-        `${number(order.waterHa, 0)} L/ha`, orderRecipeLineObjective(order, line), `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
-      ];
-    });
+    const recipeRows = [...firstRecipeRows];
     const recipeCount = Math.max(6, recipeRows.length);
     while (recipeRows.length < recipeCount) recipeRows.push(Array(11).fill(""));
-    const productRowHeight = recipeCount > 8 ? Math.max(9, Math.min(13, 112 / recipeCount)) : 15;
+    const productRowHeight = 15;
     top = pdfDrawTable(page, top, [88, 72, 60, 60, 40, 42, 54, 51, 58, 205, 75], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia", "Agenda pesticida", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
-      x: margin, headerHeight: 24, rowHeight: productRowHeight, headerSize: 6.1, rowSize: recipeCount > 8 ? 5.7 : 6.3,
+      x: margin, headerHeight: 24, rowHeight: productRowHeight, headerSize: 6.1, rowSize: 6.3,
       font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border
     });
     top -= 5;
@@ -25363,18 +25500,10 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawLine({ start: { x: margin + 670, y: top - 32 }, end: { x: margin + 785, y: top - 32 }, thickness: 0.6, color: colors.muted });
     top -= signatureHeight + 5;
 
-    const parameterRows = applicationOrderDispatchParameterRows(order);
-    const compactParameterRows = parameterRows.map((row) => [
-      row[0],
-      row[2],
-      row[3],
-      [row[4], row[5]].filter((value) => value && value !== "-").join(" · ") || "-",
-      row[6],
-      row[7]
-    ]);
+    const compactParameterRows = [...firstParameterRows];
     const parameterRowCount = Math.max(2, compactParameterRows.length);
     while (compactParameterRows.length < parameterRowCount) compactParameterRows.push(Array(6).fill(""));
-    const parameterRowHeight = parameterRowCount > 4 ? Math.max(6, Math.min(9, 42 / parameterRowCount)) : 9;
+    const parameterRowHeight = 9;
     const equipmentHeight = Math.max(60, 34 + parameterRowCount * parameterRowHeight);
     pdfDrawCheckList(page, margin, top, 105, equipmentHeight, "Maquinaria", [
       { label: "Tractor", checked: Boolean(latest.tractorCode) }, { label: "Pulverizadora", checked: method === "P" },
@@ -25391,37 +25520,20 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawRectangle({ x: paramsX, y: top - equipmentHeight, width: 435, height: equipmentHeight, color: colors.white, borderColor: colors.border, borderWidth: 0.55 });
     page.drawText("PARAMETROS REALES POR SALIDA Y EQUIPO", { x: paramsX + 7, y: top - 11, size: 6.5, font: boldFont, color: colors.green });
     pdfDrawTable(page, top - 16, [34, 45, 50, 180, 52, 60], ["Folio", "Tractor", "Maquinaria", "Boquilla / especificacion", "Presion", "Velocidad"], compactParameterRows, {
-      x: paramsX + 7, headerHeight: 13, rowHeight: parameterRowHeight, headerSize: 4.7, rowSize: parameterRowCount > 6 ? 4.5 : 5.1,
+      x: paramsX + 7, headerHeight: 13, rowHeight: parameterRowHeight, headerSize: 4.7, rowSize: 5.1,
       font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border,
       dynamicRows: false, rowMaxLines: 1, cellPadding: 2
     });
     top -= equipmentHeight + 5;
 
-    const operationCount = Math.max(5, (order.dispatches || []).length, (order.tanks || []).length);
-    const operationRows = Array.from({ length: operationCount }, (_, index) => {
-      const dispatch = order.dispatches?.[index];
-      const tank = order.tanks?.[index];
-      const appliedDate = tank?.appliedAt ? String(tank.appliedAt).slice(0, 10) : dispatch?.date || "";
-      const isReturn = dispatch?.type === "devolucion";
-      const processLiters = tank?.liters ?? dispatch?.liters ?? 0;
-      return [
-        dispatch ? String(dispatch.folio || dispatch.folioOrigin || index + 1) : "", dispatch ? printDate(dispatch.date) : "",
-        dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${isReturn ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
-        appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
-        dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
-        dispatch || tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch || tank ? `${isReturn ? "-" : ""}${number(processLiters, 0)}` : "",
-        dispatchOperatorName(dispatch), tank?.tractorCode || dispatch?.tractorCode || "-",
-        tank?.machineCode || dispatch?.machineCode || "-", dispatch ? applicationOrderTemperatureLabel(dispatch, temperatureReadings) : "-"
-      ];
-    });
-    const operationRowHeight = operationCount > 6 ? Math.max(8, Math.min(11, 65 / operationCount)) : 12;
-    const operationRowMaxLines = operationCount <= 6 ? 3 : operationCount <= 10 ? 2 : 1;
-    const operationMaxRowHeight = operationCount <= 6 ? 28 : operationCount <= 10 ? 21 : 13;
+    const operationRows = [...firstOperationRows];
+    while (operationRows.length < 5) operationRows.push(Array(13).fill(""));
+    const operationRowHeight = 12;
     top = pdfDrawOperationTable(page, top, [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100], ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"], operationRows, {
-      x: margin, headerHeight: 24, rowHeight: operationRowHeight, headerSize: 5.5, rowSize: operationCount > 6 ? 5.2 : 5.8,
+      x: margin, headerHeight: 24, rowHeight: operationRowHeight, headerSize: 5.5, rowSize: 5.8,
       font, boldFont, warehouseColumns: 4, groupFill: colors.paleGreen, headerFill: colors.softGreen,
       bodyFill: colors.white, border: colors.border, dynamicRows: true,
-      rowMaxLines: operationRowMaxLines, maxRowHeight: operationMaxRowHeight
+      rowMaxLines: 2, maxRowHeight: 18
     });
     top -= 5;
     page.drawLine({ start: { x: margin, y: top }, end: { x: margin + contentWidth, y: top }, thickness: 2, color: colors.green });
@@ -25429,6 +25541,75 @@ async function downloadApplicationOrderPdf(orderId) {
     page.drawText(pdfSafeText(orderViableHarvestDate(order)), { x: margin + 150, y: top - 12, size: 7, font: boldFont, color: colors.ink });
     const footer = "Orden generada desde Canelillo AgroCore";
     page.drawText(footer, { x: margin + contentWidth - font.widthOfTextAtSize(footer, 5.5) - 5, y: top - 12, size: 5.5, font, color: colors.muted });
+
+    if (hasContinuation) {
+      const continuationBottom = 30;
+      let continuationTop = 0;
+      const addContinuationPage = () => {
+        page = pdfDoc.addPage([841.89, 595.28]);
+        const pageTop = page.getHeight() - margin;
+        if (logo) {
+          const logoScale = Math.min(42 / logo.width, 30 / logo.height);
+          page.drawImage(logo, { x: margin + 3, y: pageTop - 32, width: logo.width * logoScale, height: logo.height * logoScale });
+        }
+        page.drawText("CONTINUACION ORDEN DE APLICACION", { x: margin + 55, y: pageTop - 14, size: 12, font: boldFont, color: colors.darkGreen });
+        page.drawText(`Orden N° ${pdfSafeText(order.number)} - ${pdfSafeText(potreroListLabel(order.potrero))}`, { x: margin + 55, y: pageTop - 28, size: 7, font: boldFont, color: colors.green });
+        page.drawLine({ start: { x: margin, y: pageTop - 38 }, end: { x: margin + contentWidth, y: pageTop - 38 }, thickness: 2, color: colors.green });
+        continuationTop = pageTop - 50;
+      };
+      const drawContinuationSection = ({ title: sectionTitle, widths, headers, rows, rowHeight, headerHeight, rowSize, operation = false, rowMaxLines = 2 }) => {
+        const remaining = [...rows];
+        while (remaining.length) {
+          if (!continuationTop) addContinuationPage();
+          const tableExtraHeight = operation ? 14 : 0;
+          const overhead = 17 + headerHeight + tableExtraHeight;
+          let capacity = Math.floor((continuationTop - continuationBottom - overhead) / rowHeight);
+          if (capacity < 1) {
+            addContinuationPage();
+            capacity = Math.max(1, Math.floor((continuationTop - continuationBottom - overhead) / rowHeight));
+          }
+          const chunk = remaining.splice(0, capacity);
+          page.drawText(pdfSafeText(sectionTitle).toUpperCase(), { x: margin, y: continuationTop - 9, size: 7.5, font: boldFont, color: colors.green });
+          continuationTop -= 17;
+          const tableStyle = {
+            x: margin, headerHeight, rowHeight, headerSize: operation ? 5.5 : 6,
+            rowSize, font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white,
+            border: colors.border, dynamicRows: false, rowMaxLines, maxRowHeight: rowHeight,
+            groupFill: colors.paleGreen, warehouseColumns: 4
+          };
+          continuationTop = operation
+            ? pdfDrawOperationTable(page, continuationTop, widths, headers, chunk, tableStyle)
+            : pdfDrawTable(page, continuationTop, widths, headers, chunk, tableStyle);
+          continuationTop -= 10;
+        }
+      };
+
+      drawContinuationSection({
+        title: "Productos - continuacion",
+        widths: [88, 72, 60, 60, 40, 42, 54, 51, 58, 205, 75],
+        headers: ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia", "Agenda pesticida", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"],
+        rows: remainingRecipeRows, rowHeight: 15, headerHeight: 24, rowSize: 6.3
+      });
+      drawContinuationSection({
+        title: "Parametros reales por salida y equipo - continuacion",
+        widths: [65, 80, 90, 330, 110, 130],
+        headers: ["Folio", "Tractor", "Maquinaria", "Boquilla / especificacion", "Presion", "Velocidad"],
+        rows: remainingParameterRows, rowHeight: 12, headerHeight: 18, rowSize: 6
+      });
+      drawContinuationSection({
+        title: "Salidas de bodega y terreno - continuacion",
+        widths: [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100],
+        headers: ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"],
+        rows: remainingOperationRows, rowHeight: 18, headerHeight: 24, rowSize: 5.6, operation: true
+      });
+    }
+
+    const pdfPages = pdfDoc.getPages();
+    pdfPages.forEach((pdfPage, pageIndex) => {
+      const pageLabel = `Hoja ${pageIndex + 1} de ${pdfPages.length}`;
+      const pageLabelWidth = boldFont.widthOfTextAtSize(pageLabel, 5.5);
+      pdfPage.drawText(pageLabel, { x: (pdfPage.getWidth() - pageLabelWidth) / 2, y: 8, size: 5.5, font: boldFont, color: colors.muted });
+    });
 
     const pdfBytes = await pdfDoc.save();
     const blob = new Blob([pdfBytes], { type: "application/pdf" });
@@ -27911,9 +28092,11 @@ document.addEventListener("click", async (event) => {
     renderIrrigation();
   }
   if (action === "clear-warehouse-filter") {
+    const monthRange = currentWarehouseMonthRange();
     warehouseStatusFilter = "all";
-    warehouseDateFromFilter = "";
-    warehouseDateToFilter = "";
+    warehouseSeasonFilter = currentWarehouseSeasonId();
+    warehouseDateFromFilter = monthRange.from;
+    warehouseDateToFilter = monthRange.to;
     warehouseOrderSearch = "";
     renderWarehouse();
   }
