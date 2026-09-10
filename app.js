@@ -1745,6 +1745,45 @@ function currentTimeValue() {
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
+function dispatchTimeField(name, label, value = "", required = false) {
+  return `<label class="dispatch-time-field">${escapeHtml(label)}
+    <input name="${htmlAttr(name)}" type="time" lang="es-CL" step="60" value="${htmlAttr(extractTimeValue(value))}" ${required ? "required" : ""}>
+  </label>`;
+}
+
+function dispatchSaveProgressMarkup() {
+  return `
+    <div class="dispatch-save-overlay" data-dispatch-save-overlay hidden role="status" aria-live="polite" aria-busy="true">
+      <div class="dispatch-save-status">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong data-dispatch-save-title>Guardando salida</strong>
+        <span data-dispatch-save-detail>Preparando los datos...</span>
+        <div class="dispatch-save-progress" aria-hidden="true"><i data-dispatch-save-bar></i></div>
+        <b data-dispatch-save-percent>0%</b>
+      </div>
+    </div>`;
+}
+
+function setDispatchSaveProgress(form, percent = null, title = "Guardando salida", detail = "") {
+  if (!form) return;
+  const overlay = form.querySelector("[data-dispatch-save-overlay]");
+  const saving = percent !== null && percent !== undefined && Number.isFinite(Number(percent));
+  form.dataset.saving = saving ? "true" : "false";
+  if (!overlay) return;
+  overlay.hidden = !saving;
+  form.querySelectorAll("button").forEach((button) => { button.disabled = saving; });
+  if (!saving) return;
+  const safePercent = Math.max(0, Math.min(100, Number(percent)));
+  const titleNode = overlay.querySelector("[data-dispatch-save-title]");
+  const detailNode = overlay.querySelector("[data-dispatch-save-detail]");
+  const bar = overlay.querySelector("[data-dispatch-save-bar]");
+  const percentNode = overlay.querySelector("[data-dispatch-save-percent]");
+  if (titleNode) titleNode.textContent = title;
+  if (detailNode) detailNode.textContent = detail;
+  if (bar) bar.style.width = `${safePercent}%`;
+  if (percentNode) percentNode.textContent = `${Math.round(safePercent)}%`;
+}
+
 function currentDateTimeLocalValue() {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60000;
@@ -21408,7 +21447,7 @@ async function cloudSaveOrder(order) {
   }
 }
 
-async function cloudSaveDispatch(order, dispatch) {
+async function cloudSaveDispatch(order, dispatch, onProgress = () => {}) {
   // No se cambian IDs del formulario. Se toman los valores que ya existen
   // en saveDispatch(): tractorCode, machineCode y operatorId.
   const baseDispatchBody = {
@@ -21454,6 +21493,7 @@ async function cloudSaveDispatch(order, dispatch) {
 
   let saved;
   let lastColumnError = null;
+  onProgress(10, "Guardando salida", "Creando el registro principal en Supabase...");
   for (const candidate of candidates) {
     try {
       saved = await sbFetch("/rest/v1/despachos?select=*", {
@@ -21480,6 +21520,7 @@ async function cloudSaveDispatch(order, dispatch) {
   dispatch.id = cloudDispatch.id;
   dispatch.createdAt = cloudDispatch.creado_en || cloudDispatch.created_at || dispatch.createdAt || new Date().toISOString();
   dispatch.operatorNameOrigin = cloudDispatch.aplicador_nombre_origen || dispatch.operatorNameOrigin || dispatchOperatorName(dispatch);
+  onProgress(32, "Salida creada", "Guardando el detalle de productos...");
   const products = Object.entries(dispatch.products || {}).map(([productId, quantity]) => {
     const product = getProduct(productId);
     return {
@@ -21492,6 +21533,7 @@ async function cloudSaveDispatch(order, dispatch) {
   });
   if (products.length) {
     await sbFetch("/rest/v1/despacho_productos", { method: "POST", prefer: "return=minimal", body: JSON.stringify(products) });
+    onProgress(52, "Productos guardados", "Registrando los movimientos de inventario...");
     await sbFetch("/rest/v1/movimientos_stock", {
       method: "POST",
       prefer: "return=minimal",
@@ -21509,7 +21551,9 @@ async function cloudSaveDispatch(order, dispatch) {
       })))
     });
   }
-  await updateCloudProductStocks();
+  onProgress(72, "Actualizando inventario", "Actualizando solo los productos utilizados...");
+  await updateCloudProductStocks(products.map((item) => item.producto_id));
+  onProgress(88, "Finalizando", "Actualizando el avance de la orden...");
   try {
     await sbFetch(`/rest/v1/ordenes_aplicacion?id=eq.${order.id}`, {
       method: "PATCH",
@@ -21528,6 +21572,7 @@ async function cloudSaveDispatch(order, dispatch) {
       console.warn("Salida guardada; la orden se recalculara al sincronizar.");
     }
   }
+  onProgress(100, "Salida guardada", "La información quedó registrada correctamente.");
 }
 
 async function cloudSavePurchase(product, movement) {
@@ -21706,7 +21751,7 @@ async function cloudDeleteDispatch(order, dispatch) {
     prefer: "return=minimal"
   });
 
-  await updateCloudProductStocks();
+  await updateCloudProductStocks(Object.keys(dispatch.products || {}));
   try {
     await sbFetch(`/rest/v1/ordenes_aplicacion?id=eq.${order.id}`, {
       method: "PATCH",
@@ -21716,8 +21761,12 @@ async function cloudDeleteDispatch(order, dispatch) {
   } catch (_) {}
 }
 
-async function updateCloudProductStocks() {
-  const patches = state.products.map((product) => sbFetch(`/rest/v1/productos?id=eq.${product.id}`, {
+async function updateCloudProductStocks(productIds = null) {
+  const requestedIds = Array.isArray(productIds) ? new Set(productIds.map(String)) : null;
+  const productsToUpdate = requestedIds
+    ? state.products.filter((product) => requestedIds.has(String(product.id)))
+    : state.products;
+  const patches = productsToUpdate.filter((product) => isUuid(product.id)).map((product) => sbFetch(`/rest/v1/productos?id=eq.${encodeURIComponent(product.id)}`, {
     method: "PATCH",
     prefer: "return=minimal",
     body: JSON.stringify({ stock_actual: product.stock || 0 })
@@ -24851,7 +24900,7 @@ function bindDispatchProductCalculator(orderId, form, preserveValues = false) {
 }
 
 async function openEditDispatchDialog(orderId, dispatchId) {
-  if (supabaseSession) {
+  if (supabaseSession && !(state.operators || []).length) {
     try {
       await loadApplicationOperatorsFromSupabase();
     } catch (error) {
@@ -24865,7 +24914,7 @@ async function openEditDispatchDialog(orderId, dispatchId) {
 
   const dialog = document.getElementById(dispatch.type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body" id="editDispatchForm" data-dispatch-type="${dispatch.type}">
+    <form method="dialog" class="modal-body dispatch-form-shell" id="editDispatchForm" data-dispatch-type="${dispatch.type}">
       <div class="modal-head">
         <h2>Modificar ${dispatch.type === "devolucion" ? "devolucion" : "salida"} - Orden #${order.number}</h2>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
@@ -24873,8 +24922,8 @@ async function openEditDispatchDialog(orderId, dispatchId) {
       <div class="form-grid">
         <label>Numero de folio<input name="folio" value="${htmlAttr(dispatch.folio || dispatch.folioOrigin || "")}" placeholder="Ej. 82015" ${dispatch.type === "salida" ? "required" : ""}></label>
         <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Hora de inicio<input name="time" type="time" value="${dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue()}" required></label>
-        <label>Hora de termino<input name="endTime" type="time" value="${dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : ""}"></label>
+        ${dispatchTimeField("time", "Hora de inicio", dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue(), true)}
+        ${dispatchTimeField("endTime", "Hora de termino", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
         <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
@@ -24902,9 +24951,13 @@ async function openEditDispatchDialog(orderId, dispatchId) {
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
         <button class="primary-button" type="button" id="updateDispatch">Guardar modificacion</button>
       </div>
+      ${dispatchSaveProgressMarkup()}
     </form>
   `;
   dialog.showModal();
+  dialog.oncancel = (event) => {
+    if (document.getElementById("editDispatchForm")?.dataset.saving === "true") event.preventDefault();
+  };
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), dispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), dispatch.machineCode || "", "machine");
   bindDispatchNozzlePicker(document.getElementById("editDispatchForm"), order, dispatchNozzleSelection(order, dispatch).spec);
@@ -25009,13 +25062,18 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   syncOrderStatus(order);
 
   if (supabaseSession) {
+    setDispatchSaveProgress(form, 8, "Guardando modificación", "Actualizando la salida en Supabase...");
     try {
       await cloudUpdateDispatch(order, dispatch);
+      setDispatchSaveProgress(form, 68, "Salida actualizada", "Sincronizando inventario y órdenes...");
+      await updateCloudProductStocks(Object.keys(dispatch.products || {}));
       await reloadCurrentCloudModules();
+      setDispatchSaveProgress(form, 100, "Modificación guardada", "La información quedó actualizada.");
       dialog.close();
       render();
       showToast("Salida modificada en Supabase");
     } catch (error) {
+      setDispatchSaveProgress(form);
       Object.assign(dispatch, previous);
       previousProductStocks.forEach((stock, productId) => {
         const product = getProduct(productId);
@@ -25086,8 +25144,8 @@ async function deleteDispatch(orderId, dispatchId) {
 
 async function openDispatchDialog(orderId, type = "salida") {
   await Promise.all([
-    ensureVehicleCodesLoaded(),
-    supabaseSession ? loadApplicationOperatorsFromSupabase().catch((error) => {
+    (state.vehicles || []).length ? Promise.resolve() : ensureVehicleCodesLoaded(),
+    supabaseSession && !(state.operators || []).length ? loadApplicationOperatorsFromSupabase().catch((error) => {
       console.warn("No se pudieron refrescar aplicadores antes de crear salida", error);
       showToast("No se pudieron cargar aplicadores desde Supabase");
       return [];
@@ -25100,7 +25158,7 @@ async function openDispatchDialog(orderId, type = "salida") {
   const lastDispatch = [...order.dispatches].reverse().find((item) => item.type === "salida") || {};
   const dialog = document.getElementById(type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body" id="dispatchForm" data-dispatch-type="${type}">
+    <form method="dialog" class="modal-body dispatch-form-shell" id="dispatchForm" data-dispatch-type="${type}">
       <div class="modal-head">
         <h2>${type === "devolucion" ? "Devolucion de sobrante" : "Orden de salida"} - #${order.number}</h2>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
@@ -25108,8 +25166,8 @@ async function openDispatchDialog(orderId, type = "salida") {
       <div class="form-grid">
         <label>Numero de folio<input name="folio" placeholder="Ej. 82015" ${type === "salida" ? "required" : ""}></label>
         <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Hora de inicio<input name="time" type="time" value="${currentTimeValue()}" required></label>
-        <label>Hora de termino<input name="endTime" type="time"></label>
+        ${dispatchTimeField("time", "Hora de inicio", currentTimeValue(), true)}
+        ${dispatchTimeField("endTime", "Hora de termino")}
         <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
         <label class="locked-field">Potrero<input value="${htmlAttr(potreroListLabel(order.potrero))}" disabled><small>No editable por bodega</small></label>
         <label class="locked-field">Bloques<input value="${htmlAttr(orderBlocksLabel(order))}" disabled><small>No editable por bodega</small></label>
@@ -25138,9 +25196,13 @@ async function openDispatchDialog(orderId, type = "salida") {
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
         <button class="primary-button" type="button" id="saveDispatch">${type === "devolucion" ? "Guardar devolucion" : "Guardar salida"}</button>
       </div>
+      ${dispatchSaveProgressMarkup()}
     </form>
   `;
   dialog.showModal();
+  dialog.oncancel = (event) => {
+    if (document.getElementById("dispatchForm")?.dataset.saving === "true") event.preventDefault();
+  };
   refreshVehicleCodeSelect(dialog.querySelector('[name="tractorCode"]'), lastDispatch.tractorCode || "", "tractor");
   refreshVehicleCodeSelect(dialog.querySelector('[name="machineCode"]'), lastDispatch.machineCode || "", "machine");
   bindDispatchNozzlePicker(document.getElementById("dispatchForm"), order, dispatchNozzleSelection(order, lastDispatch).spec);
@@ -25242,13 +25304,19 @@ async function saveDispatch(orderId, type, dialog) {
       showToast("Esta orden no esta sincronizada con Supabase. Vuelve a crear/guardar la orden antes de despachar.");
       return;
     }
+    const startedAt = performance.now();
+    setDispatchSaveProgress(form, 3, type === "devolucion" ? "Guardando devolución" : "Guardando salida", "Validando la conexión con Supabase...");
     try {
-      await cloudSaveDispatch(order, dispatch);
-      await reloadCurrentCloudModules();
+      await cloudSaveDispatch(order, dispatch, (percent, title, detail) => setDispatchSaveProgress(form, percent, title, detail));
+      state.inventoryMovements.forEach((movement) => {
+        if (newMovementIds.includes(movement.id)) movement.dispatchId = dispatch.id;
+      });
       dialog.close();
       render();
-      showToast(type === "devolucion" ? "Devolucion guardada en Supabase" : "Salida guardada en Supabase");
+      const elapsedSeconds = Math.max(0.1, (performance.now() - startedAt) / 1000);
+      showToast(`${type === "devolucion" ? "Devolucion" : "Salida"} guardada en Supabase en ${elapsedSeconds.toFixed(1)} s`);
     } catch (error) {
+      setDispatchSaveProgress(form);
       order.dispatches = order.dispatches.filter((item) => item !== dispatch);
       previousProductStocks.forEach((stock, productId) => {
         const product = getProduct(productId);
@@ -26895,7 +26963,7 @@ async function undoLastStockIngress() {
       } else {
         await sbFetch(`/rest/v1/movimientos_stock?${stockMovementMatchQuery(movement)}`, { method: "DELETE", prefer: "return=minimal" });
       }
-      await updateCloudProductStocks();
+      await updateCloudProductStocks([product.id]);
       await reloadCurrentCloudModules();
     } catch (error) {
       showToast(`No se pudo deshacer en Supabase: ${error.message}`);
@@ -27009,7 +27077,7 @@ async function saveMovement() {
       }])
     });
     if (saved?.[0]?.id) movement.id = saved[0].id;
-    await updateCloudProductStocks();
+    await updateCloudProductStocks([product.id]);
     await reloadCurrentCloudModules();
     document.getElementById("movementDialog").close();
     render();
@@ -28747,7 +28815,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=431-wiseconn-persisted-irrigation", { updateViaCache: "none" })
+    .register("./sw.js?v=432-dispatch-save-performance", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }

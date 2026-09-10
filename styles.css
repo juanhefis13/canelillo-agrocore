@@ -20696,6 +20696,88 @@ body {
   }
 }
 
+/* Salidas de bodega: selector horario y progreso de persistencia. */
+.dispatch-form-shell {
+  position: relative;
+}
+
+.dispatch-time-field input[type="time"] {
+  min-height: 44px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.dispatch-time-field input[type="time"]::-webkit-calendar-picker-indicator {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.dispatch-save-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(12, 34, 27, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.dispatch-save-overlay[hidden] {
+  display: none;
+}
+
+.dispatch-save-status {
+  display: grid;
+  width: min(390px, calc(100vw - 36px));
+  gap: 10px;
+  justify-items: center;
+  padding: 24px;
+  border: 1px solid #b8d8cc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(5, 25, 18, 0.3);
+  color: #183b31;
+  text-align: center;
+}
+
+.dispatch-save-status strong {
+  font-size: 1.05rem;
+}
+
+.dispatch-save-status > span:not(.loading-spinner) {
+  min-height: 2.6em;
+  color: #62746e;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.dispatch-save-progress {
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #e4eee9;
+}
+
+.dispatch-save-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #147a5b;
+  transition: width 180ms ease;
+}
+
+.dispatch-save-status b {
+  color: #0d694e;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .irrigation-current-species {
   position: absolute;
   top: 4px;
