@@ -236,6 +236,10 @@ const IRRIGATION_PLANET_PROXY_SUPABASE = "/api/planet";
 const IRRIGATION_SATELLITE_PROXY_REMOTE = "https://canelillo-agrocore.netlify.app/api/sentinel-hub";
 const IRRIGATION_SATELLITE_AOI_URL = "data/canelillo_limites.geojson";
 const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const WISECONN_PROXY_BASE = "/api/wiseconn";
+const WISECONN_FARM_ID = 4212;
+const WISECONN_TIME_ZONE = "America/Santiago";
+const WISECONN_REFRESH_TTL_MS = 5 * 60 * 1000;
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
   native: {
     name: "Estándar",
@@ -386,6 +390,12 @@ let calicataSpeciesFilter = "Todas";
 let calicataPotreroFilter = "Todos";
 let irrigationHours = loadIrrigationHours();
 let irrigationProgramHours = loadIrrigationProgramHours();
+let wiseconnZoneMappings = [];
+let wiseconnIrrigationEvents = [];
+let wiseconnIrrigationHours = {};
+let wiseconnIrrigationMeta = new Map();
+let wiseconnSyncState = { loading: false, available: false, cached: false, eventCount: 0, mappedEventCount: 0, calculatedDays: 0, totalVolumeM3: 0, missingFlowCount: 0, syncedAt: "", error: "" };
+let wiseconnMonthRefresh = new Map();
 let irrigationAudit = loadJsonMap(IRRIGATION_AUDIT_KEY);
 let irrigationProgramAudit = loadJsonMap(IRRIGATION_PROGRAM_AUDIT_KEY);
 let irrigationObservations = loadJsonMap(IRRIGATION_OBSERVATIONS_KEY);
@@ -842,7 +852,7 @@ function cloudModuleHasUsableState(module) {
   if (module === "weather") return Boolean(state.weatherStationDaily?.length || state.weatherStationLatest);
   if (module === "fields") return Boolean(state.blocks?.length);
   if (module === "applications") return Boolean(state.orders?.length || state.products?.length || state.programs?.length);
-  if (module === "irrigation") return Boolean(Object.keys(irrigationHours || {}).length || Object.keys(irrigationProgramHours || {}).length || state.irrigationEvaporation?.length || state.irrigationEvents?.length);
+  if (module === "irrigation") return Boolean(Object.keys(irrigationHours || {}).length || Object.keys(wiseconnIrrigationHours || {}).length || Object.keys(irrigationProgramHours || {}).length || state.irrigationEvaporation?.length || state.irrigationEvents?.length);
   if (module === "calicatas") return Boolean(state.calicatas?.length);
   if (module === "harvest") return Boolean(state.harvestRecords?.length || state.harvestCrewSchedule?.length || state.harvestJornales?.length || state.harvestWorkforce?.length);
   if (module === "harvestAnalysis") return Boolean(state.harvestAnalysisRecords?.length && (state.harvestFields?.length || state.blocks?.length));
@@ -1961,6 +1971,281 @@ function irrigationMonthFilterQuery(monthPrefix = "") {
   return range ? `&fecha=gte.${range.start}&fecha=lt.${range.end}` : "";
 }
 
+const wiseconnLocalDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: WISECONN_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
+
+function wiseconnLocalDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const parts = Object.fromEntries(wiseconnLocalDateFormatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function wiseconnShiftDate(value, days) {
+  const date = new Date(`${value}T12:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return value;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function wiseconnNextLocalDateBoundary(startMs, endMs, localDate) {
+  let low = startMs + 1;
+  let high = endMs;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (wiseconnLocalDate(new Date(middle)) === localDate) low = middle + 1;
+    else high = middle;
+  }
+  return Math.min(endMs, low);
+}
+
+function wiseconnEventDailyVolumes(event) {
+  const volume = Number(event.volumeM3);
+  if (!Number.isFinite(volume) || volume <= 0) return [];
+  const startMs = new Date(event.initTime).getTime();
+  const endMs = new Date(event.endTime).getTime();
+  if (!Number.isFinite(startMs)) return [];
+  if (!Number.isFinite(endMs) || endMs <= startMs) {
+    const date = wiseconnLocalDate(new Date(startMs));
+    return date ? [{ date, volume }] : [];
+  }
+  const totalMs = endMs - startMs;
+  const output = [];
+  let cursor = startMs;
+  while (cursor < endMs) {
+    const date = wiseconnLocalDate(new Date(cursor));
+    if (!date) break;
+    const endDate = wiseconnLocalDate(new Date(endMs - 1));
+    const boundary = date === endDate ? endMs : wiseconnNextLocalDateBoundary(cursor, endMs, date);
+    if (boundary <= cursor) break;
+    output.push({ date, volume: volume * ((boundary - cursor) / totalMs) });
+    cursor = boundary;
+  }
+  return output;
+}
+
+function wiseconnMapEventRow(item = {}) {
+  const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  return {
+    id: Number(item.event_id ?? item.id),
+    farmId: Number(item.farm_id ?? WISECONN_FARM_ID),
+    zoneId: Number(item.zone_id ?? item.zoneId),
+    pumpSystemId: numeric(item.pump_system_id ?? item.pumpSystemId),
+    initTime: item.inicio || item.initTime || "",
+    endTime: item.termino || item.endTime || "",
+    status: item.estado || item.status || "",
+    type: item.tipo || item.type || "",
+    volumeM3: numeric(item.volumen_m3 ?? item.volumeM3),
+    precipitationMm: numeric(item.precipitacion_mm ?? item.precipitationMm),
+    flowM3H: numeric(item.caudal_m3_h ?? item.flowM3H)
+  };
+}
+
+function wiseconnDbPayload(event) {
+  return {
+    event_id: event.id,
+    farm_id: event.farmId || WISECONN_FARM_ID,
+    zone_id: event.zoneId,
+    inicio: event.initTime,
+    termino: event.endTime,
+    estado: event.status || null,
+    tipo: event.type || null,
+    pump_system_id: event.pumpSystemId,
+    volumen_m3: event.volumeM3,
+    precipitacion_mm: event.precipitationMm,
+    caudal_m3_h: event.flowM3H,
+    sincronizado_en: new Date().toISOString()
+  };
+}
+
+function wiseconnHasManualOverride(key) {
+  return Object.prototype.hasOwnProperty.call(irrigationHours, key) && Number(irrigationHours[key]) > 0;
+}
+
+function irrigationRealHoursValue(blockId, date) {
+  const key = irrigationKey(blockId, date);
+  if (wiseconnHasManualOverride(key)) return irrigationHours[key];
+  return wiseconnIrrigationHours[key] ?? "";
+}
+
+function irrigationRealHoursSource() {
+  return { ...wiseconnIrrigationHours, ...irrigationHours };
+}
+
+function irrigationRealSourceInfo(blockId, date) {
+  const key = irrigationKey(blockId, date);
+  if (wiseconnHasManualOverride(key)) return { source: "manual", meta: null };
+  const meta = wiseconnIrrigationMeta.get(key) || null;
+  return { source: meta ? "wiseconn" : "", meta };
+}
+
+function rebuildWiseconnIrrigationHours(monthPrefix = "") {
+  const mappingByZone = new Map(wiseconnZoneMappings
+    .filter((item) => item.sync && item.fieldId)
+    .map((item) => [Number(item.zoneId), item]));
+  const fieldsById = new Map((state.blocks || []).map((block) => [String(block.id), block]));
+  const buckets = new Map();
+  let mappedEventCount = 0;
+  wiseconnIrrigationEvents.forEach((event) => {
+    const mapping = mappingByZone.get(Number(event.zoneId));
+    if (!mapping || !(Number(event.volumeM3) > 0)) return;
+    mappedEventCount += 1;
+    wiseconnEventDailyVolumes(event).forEach((part) => {
+      if (monthPrefix && !part.date.startsWith(monthPrefix)) return;
+      const key = irrigationKey(mapping.fieldId, part.date);
+      const bucket = buckets.get(key) || { volumeM3: 0, eventIds: new Set(), statuses: new Set(), fieldId: mapping.fieldId, date: part.date, zoneName: mapping.zoneName };
+      bucket.volumeM3 += part.volume;
+      bucket.eventIds.add(event.id);
+      if (event.status) bucket.statuses.add(event.status);
+      buckets.set(key, bucket);
+    });
+  });
+  const hours = {};
+  const meta = new Map();
+  let missingFlowCount = 0;
+  let totalVolumeM3 = 0;
+  buckets.forEach((bucket, key) => {
+    totalVolumeM3 += bucket.volumeM3;
+    const block = fieldsById.get(String(bucket.fieldId));
+    const flow = Number(block?.flow);
+    const hasFlow = Number.isFinite(flow) && flow > 0;
+    if (hasFlow) hours[key] = Number((bucket.volumeM3 / flow).toFixed(2));
+    else missingFlowCount += 1;
+    meta.set(key, {
+      volumeM3: bucket.volumeM3,
+      flowM3H: hasFlow ? flow : null,
+      hours: hasFlow ? bucket.volumeM3 / flow : null,
+      eventCount: bucket.eventIds.size,
+      statuses: [...bucket.statuses],
+      zoneName: bucket.zoneName,
+      missingFlow: !hasFlow
+    });
+  });
+  wiseconnIrrigationHours = hours;
+  wiseconnIrrigationMeta = meta;
+  wiseconnSyncState.mappedEventCount = mappedEventCount;
+  wiseconnSyncState.calculatedDays = Object.keys(hours).length;
+  wiseconnSyncState.totalVolumeM3 = totalVolumeM3;
+  wiseconnSyncState.missingFlowCount = missingFlowCount;
+}
+
+async function persistWiseconnEvents(events) {
+  const rows = events.map(wiseconnDbPayload).filter((item) => item.event_id && item.zone_id && item.inicio && item.termino);
+  for (let index = 0; index < rows.length; index += 400) {
+    await sbFetch("/rest/v1/wiseconn_riegos_reales?on_conflict=event_id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: JSON.stringify(rows.slice(index, index + 400))
+    });
+  }
+}
+
+async function fetchWiseconnEvents(range) {
+  const response = await fetch(`${WISECONN_PROXY_BASE}/real-irrigations?from=${encodeURIComponent(wiseconnShiftDate(range.start, -1))}&to=${encodeURIComponent(range.end)}`, {
+    headers: { Authorization: `Bearer ${supabaseSession?.access_token || ""}` },
+    cache: "no-store"
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) throw new Error(payload?.message || text || `WiseConn HTTP ${response.status}`);
+  return {
+    events: (payload?.events || []).map(wiseconnMapEventRow),
+    syncedAt: payload?.syncedAt || new Date().toISOString(),
+    cached: payload?.cache === "HIT"
+  };
+}
+
+async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
+  const range = irrigationMonthDateRange(monthPrefix);
+  if (!range || !supabaseSession) return;
+  wiseconnSyncState = { ...wiseconnSyncState, loading: true, error: "" };
+  try {
+    const mappingRows = await sbSelectAll(
+      "wiseconn_zona_campos",
+      `select=farm_id,zone_id,pump_system_id,nombre_zona,campo_id,potrero_agrocore,bloque_agrocore,sincronizar&farm_id=eq.${WISECONN_FARM_ID}&sincronizar=eq.true&order=zone_id.asc`
+    );
+    wiseconnZoneMappings = (mappingRows || []).map((item) => ({
+      farmId: Number(item.farm_id),
+      zoneId: Number(item.zone_id),
+      pumpSystemId: Number(item.pump_system_id) || null,
+      zoneName: item.nombre_zona || "",
+      fieldId: item.campo_id || "",
+      potrero: item.potrero_agrocore || "",
+      block: item.bloque_agrocore || "",
+      sync: item.sincronizar !== false
+    }));
+    const queryStart = `${wiseconnShiftDate(range.start, -1)}T00:00:00Z`;
+    const queryEnd = `${wiseconnShiftDate(range.end, 1)}T00:00:00Z`;
+    const cachedRows = await sbSelectAll(
+      "wiseconn_riegos_reales",
+      `select=event_id,farm_id,zone_id,inicio,termino,estado,tipo,pump_system_id,volumen_m3,precipitacion_mm,caudal_m3_h&farm_id=eq.${WISECONN_FARM_ID}&inicio=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
+    );
+    let events = (cachedRows || []).map(wiseconnMapEventRow);
+    const lastRefresh = wiseconnMonthRefresh.get(monthPrefix) || 0;
+    const shouldRefresh = options.force || Date.now() - lastRefresh > WISECONN_REFRESH_TTL_MS;
+    if (shouldRefresh) {
+      try {
+        const remote = await fetchWiseconnEvents(range);
+        const byId = new Map(events.map((event) => [event.id, event]));
+        remote.events.forEach((event) => byId.set(event.id, event));
+        events = [...byId.values()];
+        await persistWiseconnEvents(remote.events);
+        wiseconnMonthRefresh.set(monthPrefix, Date.now());
+        wiseconnSyncState.cached = remote.cached;
+        wiseconnSyncState.syncedAt = remote.syncedAt;
+      } catch (error) {
+        wiseconnSyncState.error = error.message || "No se pudo actualizar WiseConn";
+      }
+    }
+    wiseconnIrrigationEvents = events;
+    wiseconnSyncState.available = wiseconnZoneMappings.length > 0;
+    wiseconnSyncState.eventCount = events.length;
+    rebuildWiseconnIrrigationHours(monthPrefix);
+  } catch (error) {
+    wiseconnZoneMappings = [];
+    wiseconnIrrigationEvents = [];
+    wiseconnIrrigationHours = {};
+    wiseconnIrrigationMeta = new Map();
+    wiseconnSyncState = {
+      ...wiseconnSyncState,
+      available: false,
+      cached: false,
+      eventCount: 0,
+      mappedEventCount: 0,
+      calculatedDays: 0,
+      totalVolumeM3: 0,
+      missingFlowCount: 0,
+      syncedAt: "",
+      error: isMissingSupabaseRelation(error, ["wiseconn_zona_campos", "wiseconn_riegos_reales"])
+      ? "Ejecuta supabase_wiseconn_riego.sql en Supabase"
+      : (error.message || "No se pudo cargar WiseConn")
+    };
+  } finally {
+    wiseconnSyncState.loading = false;
+  }
+}
+
+function wiseconnSyncLabel() {
+  if (wiseconnSyncState.loading) return "WiseConn: actualizando...";
+  if (!wiseconnSyncState.available) return wiseconnSyncState.error || "WiseConn sin configurar";
+  const parts = [
+    `WiseConn ${number(wiseconnSyncState.totalVolumeM3, 1)} m3`,
+    `${wiseconnSyncState.calculatedDays} bloque-dia calculados`
+  ];
+  if (wiseconnSyncState.missingFlowCount) parts.push(`${wiseconnSyncState.missingFlowCount} sin caudal`);
+  if (wiseconnSyncState.error) parts.push("usando cache local");
+  return parts.join(" · ");
+}
+
 function pruneEmptyIrrigationAudits() {
   let changedReal = false;
   let changedProgram = false;
@@ -2097,7 +2382,10 @@ function irrigationCellEvents(blockId, date) {
 function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) {
   const key = irrigationKey(block.id, date);
   const audit = kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
+  const sourceInfo = kind === "real" ? irrigationRealSourceInfo(block.id, date) : { source: "", meta: null };
   const auditClass = Number(value) > 0 && audit ? "has-audit" : "";
+  const wiseconnClass = sourceInfo.source === "wiseconn" ? "has-wiseconn" : "";
+  const manualClass = sourceInfo.source === "manual" ? "has-manual-override" : "";
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const cellEvents = irrigationCellEvents(block.id, date);
   const eventClass = cellEvents.length ? "has-event" : "";
@@ -2106,7 +2394,7 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
   const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${cellEvents.length ? `, ${cellEvents.length} evento${cellEvents.length === 1 ? "" : "s"}` : ""}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
-  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${cellEvents.length}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${cellEvents.length}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = [], options = {}) {
@@ -2450,7 +2738,7 @@ function isIrrigationCellEditor(cell) {
 function irrigationCellClassForValue(cell, value, context = irrigationInputContext(cell)) {
   if (!cell || !context) return;
   const key = irrigationKey(context.blockId, context.date);
-  const source = context.kind === "program" ? irrigationProgramHours : irrigationHours;
+  const source = context.kind === "program" ? irrigationProgramHours : irrigationRealHoursSource();
   const audit = context.kind === "program" ? irrigationProgramAudit : irrigationAudit;
   cell.classList.toggle("has-hours", Boolean(source[key]));
   cell.classList.toggle("has-audit", Boolean(audit[key]));
@@ -2472,6 +2760,7 @@ function createIrrigationEditorFromCell(cell) {
   editor.dataset.dayIndex = cell.dataset.dayIndex;
   editor.dataset.date = cell.dataset.date;
   editor.dataset.value = irrigationCellValue(cell);
+  if (cell.dataset.source) editor.dataset.source = cell.dataset.source;
   if (cell.dataset.blockId) editor.dataset.blockId = cell.dataset.blockId;
   if (cell.dataset.programBlockId) editor.dataset.programBlockId = cell.dataset.programBlockId;
   if (cell.dataset.titleSignature) editor.dataset.titleSignature = cell.dataset.titleSignature;
@@ -2493,6 +2782,7 @@ function createIrrigationCellFromEditor(editor) {
   cell.dataset.rowIndex = editor.dataset.rowIndex;
   cell.dataset.dayIndex = editor.dataset.dayIndex;
   cell.dataset.date = editor.dataset.date;
+  if (editor.dataset.source) cell.dataset.source = editor.dataset.source;
   if (editor.dataset.blockId) cell.dataset.blockId = editor.dataset.blockId;
   if (editor.dataset.programBlockId) cell.dataset.programBlockId = editor.dataset.programBlockId;
   if (editor.dataset.titleSignature) cell.dataset.titleSignature = editor.dataset.titleSignature;
@@ -2529,6 +2819,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
   const audit = context.kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
   const observation = irrigationCellObservation(context.kind, context.blockId, context.date);
   const cellEvents = irrigationCellEvents(context.blockId, context.date);
+  const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
   const value = irrigationCellValue(input);
   const signature = [
     context.kind,
@@ -2538,6 +2829,10 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     audit?.updatedAt || "",
     observation?.updatedAt || "",
     observation?.text ? "obs" : "",
+    sourceInfo.source,
+    sourceInfo.meta?.volumeM3 ?? "",
+    sourceInfo.meta?.flowM3H ?? "",
+    sourceInfo.meta?.eventCount ?? "",
     cellEvents.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join(",")
   ].join("|");
   if (input.dataset.titleSignature === signature) return;
@@ -2552,9 +2847,12 @@ function irrigationCellPopoverHtml(context, block) {
   const audit = context.kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
   const observation = irrigationCellObservation(context.kind, context.blockId, context.date);
   const events = irrigationCellEvents(context.blockId, context.date);
-  const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationHours[key];
-  const lastUser = audit?.userName || audit?.userEmail || "Sin modificación";
-  const lastDate = audit?.updatedAt ? new Date(audit.updatedAt).toLocaleString("es-CL") : "Sin registro";
+  const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
+  const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
+  const lastUser = sourceInfo.source === "wiseconn" ? "WiseConn" : (audit?.userName || audit?.userEmail || "Sin modificación");
+  const lastDate = sourceInfo.source === "wiseconn" && wiseconnSyncState.syncedAt
+    ? new Date(wiseconnSyncState.syncedAt).toLocaleString("es-CL")
+    : (audit?.updatedAt ? new Date(audit.updatedAt).toLocaleString("es-CL") : "Sin registro");
   return `
     <div class="irrigation-cell-popover-head">
       <span>${context.kind === "program" ? "Programa" : "Riego real"}</span>
@@ -2564,6 +2862,11 @@ function irrigationCellPopoverHtml(context, block) {
       <span><small>Fecha</small><strong>${escapeHtml(irrigationEventDateLabel(context.date))}</strong></span>
       <span><small>Horas</small><strong>${value === "" || value === undefined ? "-" : `${escapeHtml(value)} h`}</strong></span>
     </div>
+    ${sourceInfo.source === "wiseconn" ? `<div class="irrigation-cell-popover-wiseconn">
+      <strong>Calculado desde WiseConn</strong>
+      <span>${number(sourceInfo.meta?.volumeM3, 2)} m3 / ${number(sourceInfo.meta?.flowM3H, 2)} m3/h</span>
+      <small>${number(sourceInfo.meta?.hours, 2)} h · ${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"}</small>
+    </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
     ${events.length ? `<div class="irrigation-cell-popover-events">
       ${events.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b aria-hidden="true">!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
     </div>` : ""}
@@ -2728,7 +3031,7 @@ function openIrrigationObservationDialog() {
   const existing = observationEntry?.text || "";
   const key = irrigationKey(context.blockId, context.date);
   const hourAudit = context.kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
-  const hours = context.kind === "program" ? irrigationProgramHours[key] : irrigationHours[key];
+  const hours = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
   const lastUser = observationEntry?.updatedByName || hourAudit?.userName || hourAudit?.userEmail || "Sin registro";
   const lastDateValue = observationEntry?.updatedAt || hourAudit?.updatedAt || "";
   const lastDate = lastDateValue ? new Date(lastDateValue).toLocaleString("es-CL") : "Sin registro";
@@ -3128,7 +3431,7 @@ function irrigationSourceHours(source, blockId, date) {
 
 function irrigationBlockDayBalance(block, date) {
   const programHours = irrigationSourceHours(irrigationProgramHours, block.id, date);
-  const realHours = irrigationSourceHours(irrigationHours, block.id, date);
+  const realHours = Number(irrigationRealHoursValue(block.id, date)) || 0;
   const programVolume = irrigationVolume(programHours, block.flow);
   const realVolume = irrigationVolume(realHours, block.flow);
   return {
@@ -3325,7 +3628,7 @@ function updateIrrigationComparisonCells(
     : irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth);
   const realTotal = Number.isFinite(knownRealTotal)
     ? knownRealTotal
-    : irrigationBlockMonthTotal(irrigationHours, blockId, monthPrefix, daysInMonth);
+    : irrigationBlockMonthTotal(irrigationRealHoursSource(), blockId, monthPrefix, daysInMonth);
   const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
   const realReposition = irrigationReposicion(realTotal, block.precipitation, monthEvaporationTotal);
   const hoursDiff = irrigationDifferencePercent(realTotal, programTotal);
@@ -10558,7 +10861,8 @@ function renderIrrigation() {
   const blockRowIndexMap = new Map(filteredBlocks.map((block, index) => [block.id, index]));
   const calicataIndex = buildIrrigationGanttCalicataIndex(filteredBlocks, monthPrefix);
   const programMonthTotals = irrigationMonthTotals(irrigationProgramHours, filteredBlocks, monthPrefix, daysInMonth);
-  const realMonthTotals = irrigationMonthTotals(irrigationHours, filteredBlocks, monthPrefix, daysInMonth);
+  const realHoursSource = irrigationRealHoursSource();
+  const realMonthTotals = irrigationMonthTotals(realHoursSource, filteredBlocks, monthPrefix, daysInMonth);
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
   const showIrrigationFilterDrawer = irrigationTab !== "satellite";
@@ -10593,6 +10897,7 @@ function renderIrrigation() {
       ${irrigationTab === "gantt" ? `
         <button class="secondary-button" type="button" data-action="open-irrigation-base-hours-dialog">Horas base</button>
         <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
+        <button class="secondary-button irrigation-wiseconn-refresh" type="button" data-action="refresh-wiseconn-irrigation" ${wiseconnSyncState.loading ? "disabled" : ""}>${wiseconnSyncState.loading ? "Actualizando..." : "Actualizar WiseConn"}</button>
         <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>
         <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>` : ""}
     </div>`;
@@ -10726,7 +11031,7 @@ function renderIrrigation() {
         </div>
       <div class="irrigation-section-title">
         <strong>Riegos reales</strong>
-        <span>Bandeja registrada ${monthLabel.toLowerCase()} ${irrigationYear} · total ${irrigationBandejaLabel(monthEvaporationTotal)}</span>
+        <span>Bandeja ${irrigationBandejaLabel(monthEvaporationTotal)} · ${escapeHtml(wiseconnSyncLabel())}</span>
       </div>
       <div class="irrigation-gantt irrigation-gantt-real" style="--days:${daysInMonth}">
         <div class="irrigation-row irrigation-row-head">
@@ -10784,7 +11089,7 @@ function renderIrrigation() {
                 const day = String(index + 1).padStart(2, "0");
                 const date = `${monthPrefix}-${day}`;
                 const key = irrigationKey(block.id, date);
-                const value = irrigationHours[key] ?? "";
+                const value = irrigationRealHoursValue(block.id, date);
                 return renderIrrigationHourCell("real", block, date, value, rowIndex, index);
                 }).join("")}
               </div>
@@ -10958,11 +11263,12 @@ function renderIrrigation() {
     const context = irrigationInputContext(target);
     if (!context) return;
     const block = blocksById.get(context.blockId) || state.blocks.find((item) => item.id === context.blockId);
-    const value = Number(irrigationCellValue(target));
+    const requestedValue = irrigationCellValue(target);
+    const value = Number(requestedValue);
     const key = irrigationKey(context.blockId, context.date);
     if (context.kind === "program") {
       const previousValue = Number(irrigationProgramHours[key]) || 0;
-      if (irrigationCellValue(target) === "" || value <= 0) {
+      if (requestedValue === "" || value <= 0) {
         delete irrigationProgramHours[key];
         clearIrrigationCellAudit("program", context.blockId, context.date);
       } else {
@@ -10992,24 +11298,29 @@ function renderIrrigation() {
         realMonthTotals.get(context.blockId) || 0
       );
       if (irrigationCellPopoverTarget === target) showIrrigationCellPopover(target, context, block);
-      scheduleIrrigationProgramCellSave(context.blockId, context.date, irrigationCellValue(target));
+      scheduleIrrigationProgramCellSave(context.blockId, context.date, requestedValue);
       return;
     }
-    const previousValue = Number(irrigationHours[key]) || 0;
-    if (irrigationCellValue(target) === "" || value <= 0) {
+    const previousValue = Number(irrigationRealHoursValue(context.blockId, context.date)) || 0;
+    if (requestedValue === "" || value <= 0) {
       delete irrigationHours[key];
       clearIrrigationCellAudit("real", context.blockId, context.date);
     } else {
       irrigationHours[key] = value;
       setIrrigationCellAudit("real", context.blockId, context.date);
     }
+    const currentSourceInfo = irrigationRealSourceInfo(context.blockId, context.date);
+    const nextValue = Number(irrigationRealHoursValue(context.blockId, context.date)) || 0;
+    if (!wiseconnHasManualOverride(key) && currentSourceInfo.source === "wiseconn") setIrrigationCellValue(target, nextValue);
+    target.dataset.source = currentSourceInfo.source;
+    target.classList.toggle("has-hours", nextValue > 0);
+    target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
+    target.classList.toggle("has-wiseconn", currentSourceInfo.source === "wiseconn");
+    target.classList.toggle("has-manual-override", currentSourceInfo.source === "manual");
     delete target.dataset.titleSignature;
     hydrateIrrigationInputTitle(target, context, block);
-    target.classList.toggle("has-hours", Boolean(irrigationHours[key]));
-    target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
     scheduleIrrigationLocalSave("real");
-    scheduleIrrigationCellSave(context.blockId, context.date, irrigationCellValue(target));
-    const nextValue = Number(irrigationHours[key]) || 0;
+    scheduleIrrigationCellSave(context.blockId, context.date, requestedValue);
     const blockTotal = Math.max(0, (realMonthTotals.get(context.blockId) || 0) - previousValue + nextValue);
     realMonthTotals.set(context.blockId, blockTotal);
     const totalCell = views.irrigation.querySelector(`[data-block-total="${CSS.escape(context.blockId)}"]`);
@@ -20024,8 +20335,7 @@ async function loadCloudData(options = {}) {
   const requestedModules = new Set(options.modules || ["all"]);
   const loadAll = requestedModules.has("all");
   const wantsModule = (...modules) => loadAll || modules.some((module) => requestedModules.has(module));
-  const loadFields = wantsModule("fields", "applications", "calicatas", "pestMonitoring", "harvest")
-    || (wantsModule("irrigation") && !(state.blocks || []).length);
+  const loadFields = wantsModule("fields", "applications", "calicatas", "pestMonitoring", "harvest", "irrigation");
   const loadApplications = wantsModule("applications");
   const loadPlanning = canSeePlanning && loadApplications;
   const loadIrrigation = wantsModule("irrigation");
@@ -20304,6 +20614,9 @@ async function loadCloudData(options = {}) {
       ? (state.irrigationEvents || []).filter((item) => !String(item.date || "").startsWith(irrigationMonthPrefix))
       : [];
     state.irrigationEvents = [...previous, ...irrigationEventRows.map(mapIrrigationEventRow)];
+  }
+  if (loadIrrigation && irrigationMonthPrefix) {
+    await loadWiseconnIrrigationMonth(irrigationMonthPrefix, { force: Boolean(options.force) });
   }
   if (Array.isArray(evaporationRows)) state.irrigationEvaporation = mapEvaporationRows(evaporationRows);
   if (Array.isArray(weatherDailyRows)) {
@@ -27959,8 +28272,18 @@ document.addEventListener("click", async (event) => {
     views.pestMonitoring.innerHTML = "";
     renderPestMonitoring();
   }
+  if (action === "refresh-wiseconn-irrigation") {
+    const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
+    wiseconnSyncState = { ...wiseconnSyncState, loading: true, error: "" };
+    renderIrrigation();
+    await loadWiseconnIrrigationMonth(monthPrefix, { force: true });
+    renderIrrigation();
+    showToast(wiseconnSyncState.error
+      ? `WiseConn: ${wiseconnSyncState.error}`
+      : `WiseConn actualizado: ${number(wiseconnSyncState.totalVolumeM3, 1)} m3 procesados`);
+  }
   if (action === "clear-irrigation-hours") {
-    if (!confirm(`Limpiar las horas de riego visibles para ${irrigationMonth}/${irrigationYear}?`)) return;
+    if (!confirm(`Limpiar los ajustes manuales de riego visibles para ${irrigationMonth}/${irrigationYear}? Los valores calculados desde WiseConn se mantendran.`)) return;
     const allBlocks = [...state.blocks].filter((block) => block.active !== false).sort(blockSort);
     const visibleBlocks = allBlocks
       .filter((block) => irrigationSpeciesFilter === "Todas" || block.crop === irrigationSpeciesFilter)
@@ -27976,7 +28299,7 @@ document.addEventListener("click", async (event) => {
     saveIrrigationHours();
     deleteCloudIrrigationMonth(visibleBlocks, irrigationYear, irrigationMonth);
     renderIrrigation();
-    showToast("Horas de riego limpiadas");
+    showToast("Ajustes manuales limpiados; los datos WiseConn se mantienen");
   }
   if (action === "toggle-irrigation-filters") {
     setIrrigationFiltersOpen(!irrigationFiltersOpen);
@@ -28319,7 +28642,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=418-order-field-picker", { updateViaCache: "none" })
+    .register("./sw.js?v=430-wiseconn-irrigation", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }

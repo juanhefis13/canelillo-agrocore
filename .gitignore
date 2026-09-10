@@ -8,3 +8,6 @@ Thumbs.db
 .tmp/
 *.inspect.ndjson
 ~$*.xlsx
+.env
+.env.*
+!.env.example

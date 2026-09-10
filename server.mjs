@@ -15,6 +15,11 @@ const sentinelHubClientSecret = process.env.SENTINEL_HUB_CLIENT_SECRET || "";
 const planetApiKey = process.env.PLANET_API_KEY || process.env.PL_API_KEY || "";
 const planetBasemapsUrl = process.env.PLANET_BASEMAPS_URL || "https://api.planet.com/basemaps/v1";
 const planetTileBaseUrl = process.env.PLANET_TILE_BASE_URL || "https://tiles0.planet.com/basemaps/v1/planet-tiles";
+const wiseconnApiKey = process.env.WISECONN_API_KEY || "";
+const wiseconnFarmId = Number(process.env.WISECONN_FARM_ID || 4212);
+const wiseconnApiBase = "https://api.wiseconn.com";
+const wiseconnResponseCache = new Map();
+const wiseconnCacheTtlMs = 5 * 60 * 1000;
 let sentinelHubToken = { value: "", expiresAt: 0 };
 const satelliteTileCache = new Map();
 const satelliteAvailabilityCache = new Map();
@@ -821,6 +826,158 @@ async function handleSentinelHub(req, res, url) {
   }
 }
 
+function wiseconnDateOnly(value) {
+  const match = String(value || "").match(/^\d{4}-\d{2}-\d{2}$/);
+  return match ? match[0] : "";
+}
+
+function wiseconnDateParts(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function wiseconnAddDays(value, days) {
+  const date = wiseconnDateParts(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function wiseconnRangeSegments(from, to) {
+  const segments = [];
+  let cursor = from;
+  while (cursor <= to) {
+    const candidate = wiseconnAddDays(cursor, 28);
+    const end = candidate < to ? candidate : to;
+    segments.push({ from: cursor, to: end });
+    cursor = wiseconnAddDays(end, 1);
+  }
+  return segments;
+}
+
+async function wiseconnGet(path, params = {}) {
+  if (!wiseconnApiKey) throw new Error("Falta WISECONN_API_KEY en el servidor local");
+  const target = new URL(`${wiseconnApiBase}${path}`);
+  Object.entries(params).forEach(([key, value]) => target.searchParams.set(key, String(value)));
+  const response = await fetch(target, {
+    headers: { api_key: wiseconnApiKey, Accept: "application/json" },
+    signal: AbortSignal.timeout(25000)
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300);
+    throw new Error(`WiseConn ${response.status}: ${detail || response.statusText}`);
+  }
+  return response.json();
+}
+
+function wiseconnMinimalEvent(event = {}) {
+  const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  return {
+    id: Number(event.id),
+    zoneId: Number(event.zoneId),
+    pumpSystemId: numeric(event.pumpSystemId),
+    initTime: event.initTime || "",
+    endTime: event.endTime || "",
+    status: event.status || "",
+    type: event.type?.description || event.type || "",
+    volumeM3: numeric(event.volume?.value),
+    precipitationMm: numeric(event.precipitation?.value),
+    flowM3H: numeric(event.flow?.value)
+  };
+}
+
+async function wiseconnCached(key, loader) {
+  const previous = wiseconnResponseCache.get(key);
+  if (previous && previous.expiresAt > Date.now()) return { value: previous.value, cache: "HIT" };
+  const value = await loader();
+  wiseconnResponseCache.set(key, { value, expiresAt: Date.now() + wiseconnCacheTtlMs });
+  return { value, cache: "MISS" };
+}
+
+async function wiseconnRealIrrigations(from, to) {
+  const events = [];
+  for (const segment of wiseconnRangeSegments(from, to)) {
+    const rows = await wiseconnGet(`/farms/${wiseconnFarmId}/realIrrigations`, {
+      initTime: `${segment.from}T00:00:00`,
+      endTime: `${segment.to}T23:59:59`
+    });
+    events.push(...(Array.isArray(rows) ? rows : []));
+    if (segment.to !== to) await new Promise((resolve) => setTimeout(resolve, 375));
+  }
+  return [...new Map(events.map((event) => [Number(event.id), wiseconnMinimalEvent(event)])).values()]
+    .filter((event) => Number.isFinite(event.id) && Number.isFinite(event.zoneId));
+}
+
+async function handleWiseconn(req, res, url) {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,OPTIONS",
+      "Access-Control-Allow-Headers": "authorization,content-type"
+    });
+    res.end();
+    return true;
+  }
+  if (req.method !== "GET") {
+    sendJson(res, 405, { message: "Metodo no permitido" });
+    return true;
+  }
+  if (url.pathname === "/api/wiseconn/status") {
+    sendJson(res, 200, {
+      configured: Boolean(wiseconnApiKey),
+      farmId: wiseconnFarmId,
+      provider: "WiseConn API",
+      calculation: "horas = volumen_m3 / caudal_agrocore_m3_h"
+    });
+    return true;
+  }
+  if (url.pathname === "/api/wiseconn/zones") {
+    try {
+      const result = await wiseconnCached(`zones:${wiseconnFarmId}`, async () => {
+        const rows = await wiseconnGet(`/farms/${wiseconnFarmId}/zones`);
+        return (Array.isArray(rows) ? rows : []).map((zone) => ({
+          id: Number(zone.id),
+          name: zone.name || "",
+          pumpSystemId: Number(zone.pumpSystemId) || null,
+          theoreticalFlow: Number(zone.theoreticalFlow) || null,
+          area: Number(zone.area) || null,
+          areaUnit: zone.areaUnit || "",
+          onlyMonitoring: Boolean(zone.onlyMonitoring)
+        }));
+      });
+      sendJson(res, 200, { farmId: wiseconnFarmId, cache: result.cache, zones: result.value });
+    } catch (error) {
+      sendJson(res, 502, { message: error.message || "No se pudo consultar WiseConn" });
+    }
+    return true;
+  }
+  if (url.pathname !== "/api/wiseconn/real-irrigations") return false;
+  const from = wiseconnDateOnly(url.searchParams.get("from"));
+  const to = wiseconnDateOnly(url.searchParams.get("to"));
+  if (!from || !to || from > to) {
+    sendJson(res, 400, { message: "Rango de fechas invalido" });
+    return true;
+  }
+  const days = Math.round((wiseconnDateParts(to) - wiseconnDateParts(from)) / 86400000) + 1;
+  if (days > 62) {
+    sendJson(res, 400, { message: "El rango maximo permitido es de 62 dias" });
+    return true;
+  }
+  try {
+    const result = await wiseconnCached(`events:${wiseconnFarmId}:${from}:${to}`, () => wiseconnRealIrrigations(from, to));
+    sendJson(res, 200, {
+      farmId: wiseconnFarmId,
+      from,
+      to,
+      cache: result.cache,
+      syncedAt: new Date().toISOString(),
+      events: result.value
+    });
+  } catch (error) {
+    sendJson(res, 502, { message: error.message || "No se pudo consultar WiseConn" });
+  }
+  return true;
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   if (url.pathname.startsWith("/api/planet")) {
@@ -828,6 +985,9 @@ createServer(async (req, res) => {
   }
   if (url.pathname.startsWith("/api/sentinel-hub")) {
     if (await handleSentinelHub(req, res, url)) return;
+  }
+  if (url.pathname.startsWith("/api/wiseconn")) {
+    if (await handleWiseconn(req, res, url)) return;
   }
   const requested = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
   const filePath = normalize(join(root, requested));

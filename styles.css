@@ -6323,6 +6323,26 @@ td span,
   color: var(--brand);
 }
 
+.irrigation-hour-input.has-wiseconn {
+  border-color: #3182a8;
+  background: #e8f5fb;
+  color: #174f69;
+  box-shadow: inset 0 -3px 0 #3182a8;
+}
+
+.irrigation-hour-input.has-wiseconn.is-weekend {
+  background: linear-gradient(0deg, rgba(49, 130, 168, 0.12), rgba(49, 130, 168, 0.12)), #fff7e6;
+}
+
+.irrigation-hour-input.has-wiseconn.is-holiday {
+  background: linear-gradient(0deg, rgba(49, 130, 168, 0.12), rgba(49, 130, 168, 0.12)), #fdecec;
+}
+
+.irrigation-hour-input.has-manual-override {
+  border-color: #d97706;
+  box-shadow: inset 0 -3px 0 #d97706;
+}
+
 .irrigation-hour-input.has-hours.is-weekend {
   background: linear-gradient(0deg, rgba(31, 111, 74, 0.10), rgba(31, 111, 74, 0.10)), #fff7e6;
 }
@@ -7609,6 +7629,44 @@ td span,
   font-size: 0.68rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.irrigation-cell-popover-wiseconn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid #b7dbea;
+  border-left: 3px solid #3182a8;
+  border-radius: 6px;
+  background: #eff8fc;
+}
+
+.irrigation-cell-popover-wiseconn strong {
+  color: #174f69;
+  font-size: 0.66rem;
+}
+
+.irrigation-cell-popover-wiseconn span {
+  color: #174f69;
+  font-size: 0.64rem;
+  font-weight: 850;
+  text-align: right;
+}
+
+.irrigation-cell-popover-wiseconn small {
+  grid-column: 1 / -1;
+}
+
+.irrigation-cell-popover-wiseconn.is-manual {
+  border-color: #f0c57d;
+  border-left-color: #d97706;
+  background: #fff8e8;
+}
+
+.irrigation-cell-popover-wiseconn.is-manual strong {
+  color: #8a4b08;
 }
 
 .irrigation-cell-popover-events {
