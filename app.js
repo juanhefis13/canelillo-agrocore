@@ -19,7 +19,12 @@ const IRRIGATION_OPTIONAL_COLUMNS = [
   "variedad",
   "hectareas",
   "precipitacion",
-  "caudal"
+  "caudal",
+  "origen",
+  "wiseconn_volumen_m3",
+  "wiseconn_horas_calculadas",
+  "wiseconn_eventos",
+  "wiseconn_sincronizado_en"
 ];
 const SUPABASE_URL = "https://lhmifnsdydullldhmcsd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxobWlmbnNkeWR1bGxsZGhtY3NkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMzg4NTUsImV4cCI6MjA5MjgxNDg1NX0.TaFzWd_OQTdQMMnf3cMd3WejqGpHmWkJLwGRFS8ITtM";
@@ -240,6 +245,7 @@ const WISECONN_PROXY_BASE = "/api/wiseconn";
 const WISECONN_FARM_ID = 4212;
 const WISECONN_TIME_ZONE = "America/Santiago";
 const WISECONN_REFRESH_TTL_MS = 5 * 60 * 1000;
+const WISECONN_IRRIGATION_START_DATE = "2026-01-01";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
   native: {
     name: "Estándar",
@@ -394,7 +400,9 @@ let wiseconnZoneMappings = [];
 let wiseconnIrrigationEvents = [];
 let wiseconnIrrigationHours = {};
 let wiseconnIrrigationMeta = new Map();
-let wiseconnSyncState = { loading: false, available: false, cached: false, eventCount: 0, mappedEventCount: 0, calculatedDays: 0, totalVolumeM3: 0, missingFlowCount: 0, syncedAt: "", error: "" };
+let wiseconnPersistedHours = {};
+let wiseconnPersistedMeta = new Map();
+let wiseconnSyncState = { loading: false, available: false, cached: false, eventCount: 0, mappedEventCount: 0, calculatedDays: 0, persistedDays: 0, manualOverrides: 0, totalVolumeM3: 0, missingFlowCount: 0, syncedAt: "", persistenceError: "", error: "" };
 let wiseconnMonthRefresh = new Map();
 let irrigationAudit = loadJsonMap(IRRIGATION_AUDIT_KEY);
 let irrigationProgramAudit = loadJsonMap(IRRIGATION_PROGRAM_AUDIT_KEY);
@@ -2069,17 +2077,17 @@ function wiseconnHasManualOverride(key) {
 function irrigationRealHoursValue(blockId, date) {
   const key = irrigationKey(blockId, date);
   if (wiseconnHasManualOverride(key)) return irrigationHours[key];
-  return wiseconnIrrigationHours[key] ?? "";
+  return wiseconnIrrigationHours[key] ?? wiseconnPersistedHours[key] ?? "";
 }
 
 function irrigationRealHoursSource() {
-  return { ...wiseconnIrrigationHours, ...irrigationHours };
+  return { ...wiseconnPersistedHours, ...wiseconnIrrigationHours, ...irrigationHours };
 }
 
 function irrigationRealSourceInfo(blockId, date) {
   const key = irrigationKey(blockId, date);
   if (wiseconnHasManualOverride(key)) return { source: "manual", meta: null };
-  const meta = wiseconnIrrigationMeta.get(key) || null;
+  const meta = wiseconnIrrigationMeta.get(key) || wiseconnPersistedMeta.get(key) || null;
   return { source: meta ? "wiseconn" : "", meta };
 }
 
@@ -2131,6 +2139,15 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
   wiseconnSyncState.calculatedDays = Object.keys(hours).length;
   wiseconnSyncState.totalVolumeM3 = totalVolumeM3;
   wiseconnSyncState.missingFlowCount = missingFlowCount;
+  return [...meta.entries()]
+    .filter(([key, item]) => key && item && !item.missingFlow && irrigationKeyDate(key) >= WISECONN_IRRIGATION_START_DATE)
+    .map(([key, item]) => ({
+      campo_id: key.slice(0, key.lastIndexOf("__")),
+      fecha: irrigationKeyDate(key),
+      horas: Number(Number(item.hours).toFixed(2)),
+      volumen_m3: Number(Number(item.volumeM3).toFixed(3)),
+      eventos: Number(item.eventCount) || 0
+    }));
 }
 
 async function persistWiseconnEvents(events) {
@@ -2142,6 +2159,21 @@ async function persistWiseconnEvents(events) {
       body: JSON.stringify(rows.slice(index, index + 400))
     });
   }
+}
+
+async function persistWiseconnIrrigationDays(rows = []) {
+  const eligible = rows.filter((item) => item.campo_id && item.fecha >= WISECONN_IRRIGATION_START_DATE && Number(item.volumen_m3) > 0);
+  let processed = 0;
+  let manualOverrides = 0;
+  for (let index = 0; index < eligible.length; index += 400) {
+    const result = await sbFetch("/rest/v1/rpc/sincronizar_riego_wiseconn", {
+      method: "POST",
+      body: JSON.stringify({ p_registros: eligible.slice(index, index + 400) })
+    });
+    processed += Number(result?.procesados) || 0;
+    manualOverrides += Number(result?.manuales_preservados) || 0;
+  }
+  return { processed, manualOverrides };
 }
 
 async function fetchWiseconnEvents(range) {
@@ -2209,7 +2241,19 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     wiseconnIrrigationEvents = events;
     wiseconnSyncState.available = wiseconnZoneMappings.length > 0;
     wiseconnSyncState.eventCount = events.length;
-    rebuildWiseconnIrrigationHours(monthPrefix);
+    const dailyRows = rebuildWiseconnIrrigationHours(monthPrefix);
+    try {
+      const persisted = await persistWiseconnIrrigationDays(dailyRows);
+      wiseconnSyncState.persistedDays = persisted.processed;
+      wiseconnSyncState.manualOverrides = persisted.manualOverrides;
+      wiseconnSyncState.persistenceError = "";
+    } catch (error) {
+      wiseconnSyncState.persistedDays = 0;
+      wiseconnSyncState.manualOverrides = 0;
+      wiseconnSyncState.persistenceError = isMissingSupabaseRelation(error, ["sincronizar_riego_wiseconn"])
+        ? "Ejecuta nuevamente supabase_wiseconn_riego.sql para guardar en riego"
+        : (error.message || "No se pudo guardar el resumen en riego");
+    }
   } catch (error) {
     wiseconnZoneMappings = [];
     wiseconnIrrigationEvents = [];
@@ -2222,9 +2266,12 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
       eventCount: 0,
       mappedEventCount: 0,
       calculatedDays: 0,
+      persistedDays: 0,
+      manualOverrides: 0,
       totalVolumeM3: 0,
       missingFlowCount: 0,
       syncedAt: "",
+      persistenceError: "",
       error: isMissingSupabaseRelation(error, ["wiseconn_zona_campos", "wiseconn_riegos_reales"])
       ? "Ejecuta supabase_wiseconn_riego.sql en Supabase"
       : (error.message || "No se pudo cargar WiseConn")
@@ -2241,7 +2288,10 @@ function wiseconnSyncLabel() {
     `WiseConn ${number(wiseconnSyncState.totalVolumeM3, 1)} m3`,
     `${wiseconnSyncState.calculatedDays} bloque-dia calculados`
   ];
+  if (wiseconnSyncState.persistedDays) parts.push(`${wiseconnSyncState.persistedDays} guardados en riego`);
+  if (wiseconnSyncState.manualOverrides) parts.push(`${wiseconnSyncState.manualOverrides} ajustes manuales conservados`);
   if (wiseconnSyncState.missingFlowCount) parts.push(`${wiseconnSyncState.missingFlowCount} sin caudal`);
+  if (wiseconnSyncState.persistenceError) parts.push(wiseconnSyncState.persistenceError);
   if (wiseconnSyncState.error) parts.push("usando cache local");
   return parts.join(" · ");
 }
@@ -2543,6 +2593,11 @@ function applyIrrigationRecords(rows = [], options = {}) {
     date: String(item.fecha || "").slice(0, 10),
     hours: Number(item.horas_riego) || 0,
     volume: Number(item.volumen) || 0,
+    origin: item.origen || "manual",
+    wiseconnHours: item.wiseconn_horas_calculadas === null || item.wiseconn_horas_calculadas === undefined ? null : Number(item.wiseconn_horas_calculadas),
+    wiseconnVolume: item.wiseconn_volumen_m3 === null || item.wiseconn_volumen_m3 === undefined ? null : Number(item.wiseconn_volumen_m3),
+    wiseconnEvents: Number(item.wiseconn_eventos) || 0,
+    wiseconnSyncedAt: item.wiseconn_sincronizado_en || "",
     modifiedByName: item.modificado_por_nombre || item.creado_por_nombre || "",
     modifiedAt: item.modificado_en || item.actualizado_en || item.updated_at || ""
   })).filter((item) => item.blockId && item.date);
@@ -2551,11 +2606,29 @@ function applyIrrigationRecords(rows = [], options = {}) {
     : records;
   const cloudHours = {};
   const cloudAudit = {};
+  const cloudWiseconnHours = {};
+  const cloudWiseconnMeta = new Map();
   records.forEach((item) => {
     const key = irrigationKey(item.blockId, item.date);
-    if (item.hours > 0) cloudHours[key] = item.hours;
-    if (item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
+    const isWiseconn = item.origin === "wiseconn";
+    if (!isWiseconn && item.hours > 0) cloudHours[key] = item.hours;
+    if (!isWiseconn && item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
       cloudAudit[key] = { userName: item.modifiedByName, updatedAt: item.modifiedAt };
+    }
+    const automaticHours = Number.isFinite(item.wiseconnHours) ? item.wiseconnHours : (isWiseconn ? item.hours : null);
+    const automaticVolume = Number.isFinite(item.wiseconnVolume) ? item.wiseconnVolume : (isWiseconn ? item.volume : null);
+    if (Number.isFinite(automaticHours) && automaticHours >= 0 && Number(automaticVolume) > 0) {
+      cloudWiseconnHours[key] = automaticHours;
+      cloudWiseconnMeta.set(key, {
+        volumeM3: automaticVolume,
+        flowM3H: automaticHours > 0 ? automaticVolume / automaticHours : null,
+        hours: automaticHours,
+        eventCount: item.wiseconnEvents,
+        statuses: [],
+        zoneName: "WiseConn guardado",
+        syncedAt: item.wiseconnSyncedAt,
+        missingFlow: false
+      });
     }
   });
   const previousHours = monthPrefix
@@ -2564,8 +2637,16 @@ function applyIrrigationRecords(rows = [], options = {}) {
   const previousAudit = monthPrefix
     ? Object.fromEntries(Object.entries(irrigationAudit).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
     : {};
+  const previousWiseconnHours = monthPrefix
+    ? Object.fromEntries(Object.entries(wiseconnPersistedHours).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : {};
+  const previousWiseconnMeta = monthPrefix
+    ? new Map([...wiseconnPersistedMeta.entries()].filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : new Map();
   irrigationHours = { ...previousHours, ...cloudHours, ...pendingHours };
   irrigationAudit = { ...previousAudit, ...cloudAudit, ...pendingAudit };
+  wiseconnPersistedHours = { ...previousWiseconnHours, ...cloudWiseconnHours };
+  wiseconnPersistedMeta = new Map([...previousWiseconnMeta, ...cloudWiseconnMeta]);
   saveIrrigationHours();
   saveIrrigationAudit();
 }
@@ -2622,10 +2703,27 @@ async function saveIrrigationCell(blockId, date, hours) {
   const audit = irrigationAudit[irrigationKey(blockId, date)] || irrigationAuditEntry();
   try {
     if (!Number.isFinite(value) || value <= 0) {
-      await sbFetch(`/rest/v1/riego?campo_id=eq.${encodeURIComponent(blockId)}&fecha=eq.${encodeURIComponent(date)}`, {
-        method: "DELETE",
-        prefer: "return=minimal"
-      });
+      const sourceMeta = wiseconnIrrigationMeta.get(irrigationKey(blockId, date))
+        || wiseconnPersistedMeta.get(irrigationKey(blockId, date));
+      if (date >= WISECONN_IRRIGATION_START_DATE && sourceMeta && Number(sourceMeta.volumeM3) > 0 && Number.isFinite(Number(sourceMeta.hours))) {
+        const automaticPayload = {
+          campo_id: blockId,
+          fecha: date,
+          horas_riego: Number(Number(sourceMeta.hours).toFixed(2)),
+          volumen: Number(Number(sourceMeta.volumeM3).toFixed(3)),
+          origen: "wiseconn",
+          wiseconn_volumen_m3: Number(Number(sourceMeta.volumeM3).toFixed(3)),
+          wiseconn_horas_calculadas: Number(Number(sourceMeta.hours).toFixed(2)),
+          wiseconn_eventos: Number(sourceMeta.eventCount) || 0,
+          wiseconn_sincronizado_en: new Date().toISOString()
+        };
+        await upsertSupabaseRowWithOptionalColumns(`/rest/v1/riego?on_conflict=campo_id,fecha`, automaticPayload, IRRIGATION_OPTIONAL_COLUMNS);
+      } else {
+        await sbFetch(`/rest/v1/riego?campo_id=eq.${encodeURIComponent(blockId)}&fecha=eq.${encodeURIComponent(date)}`, {
+          method: "DELETE",
+          prefer: "return=minimal"
+        });
+      }
       irrigationCloudAvailable = true;
       return true;
     }
@@ -2634,6 +2732,7 @@ async function saveIrrigationCell(blockId, date, hours) {
       fecha: date,
       horas_riego: value,
       volumen: irrigationVolume(value, block.flow),
+      origen: "manual",
       creado_por: audit.userId,
       ...irrigationAuditPayload(audit),
       ...irrigationBlockSnapshot(block)
@@ -2850,8 +2949,9 @@ function irrigationCellPopoverHtml(context, block) {
   const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
   const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
   const lastUser = sourceInfo.source === "wiseconn" ? "WiseConn" : (audit?.userName || audit?.userEmail || "Sin modificación");
-  const lastDate = sourceInfo.source === "wiseconn" && wiseconnSyncState.syncedAt
-    ? new Date(wiseconnSyncState.syncedAt).toLocaleString("es-CL")
+  const wiseconnSyncedAt = wiseconnSyncState.syncedAt || sourceInfo.meta?.syncedAt || "";
+  const lastDate = sourceInfo.source === "wiseconn" && wiseconnSyncedAt
+    ? new Date(wiseconnSyncedAt).toLocaleString("es-CL")
     : (audit?.updatedAt ? new Date(audit.updatedAt).toLocaleString("es-CL") : "Sin registro");
   return `
     <div class="irrigation-cell-popover-head">
@@ -3085,12 +3185,17 @@ async function deleteCloudIrrigationMonth(blocks, year, month) {
   const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
   const deletes = blocks.flatMap((block) => Array.from({ length: daysInMonth }, (_, index) => {
     const date = `${year}-${month}-${String(index + 1).padStart(2, "0")}`;
-    return sbFetch(`/rest/v1/riego?campo_id=eq.${encodeURIComponent(block.id)}&fecha=eq.${encodeURIComponent(date)}`, {
+    const basePath = `/rest/v1/riego?campo_id=eq.${encodeURIComponent(block.id)}&fecha=eq.${encodeURIComponent(date)}`;
+    return sbFetch(`${basePath}&or=(origen.neq.wiseconn,origen.is.null)`, {
       method: "DELETE",
       prefer: "return=minimal"
-    }).catch((error) => {
+    }).catch(async (error) => {
+      if (isMissingSupabaseColumn(error, ["origen"])) {
+        return sbFetch(basePath, { method: "DELETE", prefer: "return=minimal" });
+      }
       irrigationCloudAvailable = !String(error?.message || "").toLowerCase().includes("could not find the table");
       console.warn("No se pudo eliminar riego en Supabase", error);
+      return null;
     });
   }));
   await Promise.all(deletes);
@@ -20390,9 +20495,9 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar calicatas", error);
       return [];
     }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
+    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
       .catch((error) => {
-        if (!isMissingSupabaseColumn(error, ["creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
+        if (!isMissingSupabaseColumn(error, ["origen", "wiseconn_volumen_m3", "wiseconn_horas_calculadas", "wiseconn_eventos", "wiseconn_sincronizado_en", "creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
         return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
       })
       .then((rows) => {
@@ -28278,8 +28383,8 @@ document.addEventListener("click", async (event) => {
     renderIrrigation();
     await loadWiseconnIrrigationMonth(monthPrefix, { force: true });
     renderIrrigation();
-    showToast(wiseconnSyncState.error
-      ? `WiseConn: ${wiseconnSyncState.error}`
+    showToast(wiseconnSyncState.error || wiseconnSyncState.persistenceError
+      ? `WiseConn: ${wiseconnSyncState.error || wiseconnSyncState.persistenceError}`
       : `WiseConn actualizado: ${number(wiseconnSyncState.totalVolumeM3, 1)} m3 procesados`);
   }
   if (action === "clear-irrigation-hours") {
@@ -28642,7 +28747,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=430-wiseconn-irrigation", { updateViaCache: "none" })
+    .register("./sw.js?v=431-wiseconn-persisted-irrigation", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }

@@ -62,6 +62,25 @@ create index if not exists wiseconn_riegos_reales_zone_inicio_idx
 create index if not exists wiseconn_riegos_reales_inicio_idx
   on public.wiseconn_riegos_reales (inicio);
 
+-- Copia operativa en la tabla principal de riego. Los campos auxiliares
+-- permiten conservar el valor WiseConn aunque exista una correccion manual.
+alter table public.riego
+  add column if not exists potrero text,
+  add column if not exists bloque text,
+  add column if not exists especie text,
+  add column if not exists variedad text,
+  add column if not exists hectareas numeric(12, 3),
+  add column if not exists precipitacion numeric,
+  add column if not exists caudal numeric,
+  add column if not exists origen text not null default 'manual',
+  add column if not exists wiseconn_volumen_m3 numeric(16, 3),
+  add column if not exists wiseconn_horas_calculadas numeric(8, 2),
+  add column if not exists wiseconn_eventos integer,
+  add column if not exists wiseconn_sincronizado_en timestamptz;
+
+create index if not exists riego_origen_fecha_idx
+  on public.riego (origen, fecha);
+
 insert into public.wiseconn_campos (farm_id, nombre_wiseconn, nombre_agrocore, zona_horaria, activo, actualizado_en)
 values (4212, 'Canelillo', 'Canelillo', 'America/Santiago', true, now())
 on conflict (farm_id) do update set
@@ -205,7 +224,162 @@ grant select on public.wiseconn_zona_campos to authenticated;
 grant select, insert, update on public.wiseconn_riegos_reales to authenticated;
 grant usage, select on sequence public.wiseconn_zona_campos_id_seq to authenticated;
 
+create or replace function public.sincronizar_riego_wiseconn(p_registros jsonb)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_procesados integer := 0;
+  v_manuales_preservados integer := 0;
+begin
+  if p_registros is null or jsonb_typeof(p_registros) <> 'array' then
+    raise exception 'p_registros debe ser un arreglo JSON';
+  end if;
+
+  with entrada as (
+    select distinct on (x.campo_id, x.fecha)
+      x.campo_id,
+      x.fecha,
+      round(greatest(coalesce(x.horas, 0), 0)::numeric, 2) as horas,
+      round(greatest(coalesce(x.volumen_m3, 0), 0)::numeric, 3) as volumen_m3,
+      greatest(coalesce(x.eventos, 0), 0)::integer as eventos,
+      c.potrero,
+      c.bloque,
+      c.especie,
+      c.variedad,
+      c.hectareas,
+      c.precipitacion,
+      c.caudal
+    from jsonb_to_recordset(p_registros) as x(
+      campo_id uuid,
+      fecha date,
+      horas numeric,
+      volumen_m3 numeric,
+      eventos integer
+    )
+    join public.campos c on c.id = x.campo_id
+    where x.fecha >= date '2026-01-01'
+      and coalesce(x.volumen_m3, 0) > 0
+      and coalesce(x.horas, 0) >= 0
+    order by x.campo_id, x.fecha
+  )
+  select count(*)
+  into v_manuales_preservados
+  from entrada e
+  join public.riego r
+    on r.campo_id = e.campo_id
+   and r.fecha = e.fecha
+  where coalesce(nullif(r.origen, ''), 'manual') <> 'wiseconn';
+
+  with entrada as (
+    select distinct on (x.campo_id, x.fecha)
+      x.campo_id,
+      x.fecha,
+      round(greatest(coalesce(x.horas, 0), 0)::numeric, 2) as horas,
+      round(greatest(coalesce(x.volumen_m3, 0), 0)::numeric, 3) as volumen_m3,
+      greatest(coalesce(x.eventos, 0), 0)::integer as eventos,
+      c.potrero,
+      c.bloque,
+      c.especie,
+      c.variedad,
+      c.hectareas,
+      c.precipitacion,
+      c.caudal
+    from jsonb_to_recordset(p_registros) as x(
+      campo_id uuid,
+      fecha date,
+      horas numeric,
+      volumen_m3 numeric,
+      eventos integer
+    )
+    join public.campos c on c.id = x.campo_id
+    where x.fecha >= date '2026-01-01'
+      and coalesce(x.volumen_m3, 0) > 0
+      and coalesce(x.horas, 0) >= 0
+    order by x.campo_id, x.fecha
+  )
+  insert into public.riego (
+    campo_id,
+    fecha,
+    horas_riego,
+    volumen,
+    origen,
+    wiseconn_volumen_m3,
+    wiseconn_horas_calculadas,
+    wiseconn_eventos,
+    wiseconn_sincronizado_en,
+    potrero,
+    bloque,
+    especie,
+    variedad,
+    hectareas,
+    precipitacion,
+    caudal
+  )
+  select
+    e.campo_id,
+    e.fecha,
+    e.horas,
+    e.volumen_m3,
+    'wiseconn',
+    e.volumen_m3,
+    e.horas,
+    e.eventos,
+    now(),
+    e.potrero,
+    e.bloque,
+    e.especie,
+    e.variedad,
+    e.hectareas,
+    e.precipitacion,
+    e.caudal
+  from entrada e
+  on conflict (campo_id, fecha) do update set
+    horas_riego = case
+      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
+        then excluded.horas_riego
+      else riego.horas_riego
+    end,
+    volumen = case
+      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
+        then excluded.volumen
+      else riego.volumen
+    end,
+    origen = case
+      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
+        then 'wiseconn'
+      else coalesce(nullif(riego.origen, ''), 'manual')
+    end,
+    wiseconn_volumen_m3 = excluded.wiseconn_volumen_m3,
+    wiseconn_horas_calculadas = excluded.wiseconn_horas_calculadas,
+    wiseconn_eventos = excluded.wiseconn_eventos,
+    wiseconn_sincronizado_en = excluded.wiseconn_sincronizado_en,
+    potrero = excluded.potrero,
+    bloque = excluded.bloque,
+    especie = excluded.especie,
+    variedad = excluded.variedad,
+    hectareas = excluded.hectareas,
+    precipitacion = excluded.precipitacion,
+    caudal = excluded.caudal;
+
+  get diagnostics v_procesados = row_count;
+
+  return jsonb_build_object(
+    'procesados', v_procesados,
+    'manuales_preservados', v_manuales_preservados,
+    'desde', '2026-01-01'
+  );
+end;
+$$;
+
+revoke all on function public.sincronizar_riego_wiseconn(jsonb) from public;
+grant execute on function public.sincronizar_riego_wiseconn(jsonb) to authenticated;
+
 commit;
+
+notify pgrst, 'reload schema';
 
 -- Verificacion esperada: 89 zonas sincronizables y 1 zona excluida.
 select
