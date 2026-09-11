@@ -203,6 +203,8 @@ const seedState = {
 
 let state = normalizeState(loadState());
 let currentView = "dashboard";
+const SIDEBAR_AUTO_HIDE_DELAY = 15000;
+let sidebarAutoHideTimer = null;
 let activeRecipeProductLine = null;
 let programFilters = { seasonId: "Todas", search: "", species: "Todas", number: "Todos", type: "Todos", status: "Todos" };
 let officialProgramFallbackCache = null;
@@ -212,7 +214,6 @@ let managerYear = String(new Date().getFullYear());
 let managerMonth = String(new Date().getMonth() + 1).padStart(2, "0");
 let managerOrdersMonths = new Set([managerMonth]);
 let managerGanttMode = "month";
-let managerGanttMobileOpen = false;
 let managerGanttFiltersOpen = false;
 let irrigationYear = String(new Date().getFullYear());
 let irrigationMonth = String(new Date().getMonth() + 1).padStart(2, "0");
@@ -797,6 +798,77 @@ function setAuthGate(visible) {
     appShell.setAttribute("aria-hidden", String(Boolean(visible)));
   }
   document.body.classList.toggle("auth-locked", Boolean(visible));
+  if (visible) {
+    clearSidebarAutoHideTimer();
+    appShell?.classList.remove("sidebar-auto-hidden");
+  } else {
+    scheduleSidebarAutoHide();
+  }
+}
+
+function sidebarAutoHideEnabled() {
+  return window.matchMedia("(min-width: 981px) and (hover: hover) and (pointer: fine)").matches
+    && !document.body.classList.contains("auth-locked");
+}
+
+function clearSidebarAutoHideTimer() {
+  if (!sidebarAutoHideTimer) return;
+  window.clearTimeout(sidebarAutoHideTimer);
+  sidebarAutoHideTimer = null;
+}
+
+function scheduleSidebarAutoHide() {
+  clearSidebarAutoHideTimer();
+  if (!sidebarAutoHideEnabled()) return;
+  sidebarAutoHideTimer = window.setTimeout(() => {
+    const appShell = document.querySelector(".app-shell");
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarInUse = sidebar?.matches(":hover") || sidebar?.contains(document.activeElement);
+    if (sidebarInUse) {
+      scheduleSidebarAutoHide();
+      return;
+    }
+    appShell?.classList.add("sidebar-auto-hidden");
+    sidebarAutoHideTimer = null;
+  }, SIDEBAR_AUTO_HIDE_DELAY);
+}
+
+function showSidebarTemporarily() {
+  const appShell = document.querySelector(".app-shell");
+  if (!sidebarAutoHideEnabled()) {
+    appShell?.classList.remove("sidebar-auto-hidden");
+    return;
+  }
+  appShell?.classList.remove("sidebar-auto-hidden");
+  scheduleSidebarAutoHide();
+}
+
+function resetSidebarAutoHideForViewport() {
+  const appShell = document.querySelector(".app-shell");
+  if (!sidebarAutoHideEnabled()) {
+    clearSidebarAutoHideTimer();
+    appShell?.classList.remove("sidebar-auto-hidden");
+    return;
+  }
+  scheduleSidebarAutoHide();
+}
+
+function initSidebarAutoHide() {
+  const appShell = document.querySelector(".app-shell");
+  const sidebar = document.querySelector(".sidebar");
+  if (!appShell || !sidebar) return;
+  sidebar.addEventListener("pointerenter", clearSidebarAutoHideTimer);
+  sidebar.addEventListener("pointerleave", scheduleSidebarAutoHide);
+  sidebar.addEventListener("focusin", showSidebarTemporarily);
+  sidebar.addEventListener("focusout", scheduleSidebarAutoHide);
+  sidebar.addEventListener("click", scheduleSidebarAutoHide);
+  document.addEventListener("pointermove", (event) => {
+    if (event.clientX <= 12 && appShell.classList.contains("sidebar-auto-hidden")) {
+      showSidebarTemporarily();
+    }
+  }, { passive: true });
+  window.addEventListener("resize", resetSidebarAutoHideForViewport, { passive: true });
+  resetSidebarAutoHideForViewport();
 }
 
 async function loadCloudProfile() {
@@ -19645,14 +19717,7 @@ function renderManager() {
           <button class="primary-button" data-action="new-order">Nueva orden</button>
         </div>
       </div>
-      <div class="gantt-panel ${managerGanttMobileOpen ? "mobile-gantt-open" : ""} ${managerGanttFiltersOpen ? "gantt-filters-open" : "gantt-filters-closed"}">
-        <div class="gantt-mobile-gate">
-          <div>
-            <strong>Carta Gantt aplicaciones</strong>
-            <span>Para verla mejor en celular, toca el botón y gira el teléfono en horizontal.</span>
-          </div>
-          <button class="primary-button" type="button" data-action="toggle-mobile-gantt" aria-expanded="${managerGanttMobileOpen ? "true" : "false"}">${managerGanttMobileOpen ? "Ocultar Gantt" : "Ver Gantt"}</button>
-        </div>
+      <div class="gantt-panel mobile-gantt-open ${managerGanttFiltersOpen ? "gantt-filters-open" : "gantt-filters-closed"}">
         <div class="gantt-head">
           <div class="gantt-heading">
             <h3>CARTA GANTT APLICACIONES</h3>
@@ -19660,30 +19725,24 @@ function renderManager() {
           </div>
           <button class="icon-button gantt-filter-toggle" type="button" data-action="toggle-manager-gantt-filters" aria-expanded="${managerGanttFiltersOpen ? "true" : "false"}" title="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}" aria-label="${managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}"><span aria-hidden="true">${managerGanttFiltersOpen ? "&gt;" : "&lt;"}</span></button>
           <div class="gantt-controls" ${managerGanttFiltersOpen ? "" : "hidden"}>
-            <label>Potrero
-              <select id="managerPotreroFilter">${managerPotreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === managerPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}</select>
-            </label>
-            <fieldset class="gantt-species-filter">
-              <legend>Especie</legend>
-              ${managerSpecies.map((species) => `<label><input class="manager-species-filter" type="checkbox" value="${htmlAttr(species)}" ${managerSpeciesFilters.has(species) ? "checked" : ""}> ${species}</label>`).join("")}
-            </fieldset>
-            <label>Vista
-              <select id="managerModeFilter">
-                <option value="month" ${managerGanttMode === "month" ? "selected" : ""}>Mes detallado</option>
-                <option value="year" ${managerGanttMode === "year" ? "selected" : ""}>Año completo</option>
-              </select>
-            </label>
-            <label>Año
-              <select id="managerYearFilter">${availableYears.sort((a, b) => b.localeCompare(a)).map((year) => `<option value="${year}" ${year === managerYear ? "selected" : ""}>${year}</option>`).join("")}</select>
-            </label>
-            <label>Estado
-              <select id="managerStatusFilter">${statusFilterOptions(managerStatusFilter)}</select>
-            </label>
-            <fieldset class="manager-orders-month-checklist manager-unified-month-filter">
-              <legend>Meses</legend>
-              <label><input class="manager-orders-month-filter" type="checkbox" value="all" ${managerOrdersMonths.size ? "" : "checked"}> Todos</label>
-              ${monthOptions().map((month) => `<label><input class="manager-orders-month-filter" type="checkbox" value="${month.value}" ${managerOrdersMonths.has(month.value) ? "checked" : ""}> ${month.label.slice(0, 3)}</label>`).join("")}
-            </fieldset>
+            <div class="manager-gantt-filter-primary">
+              <label>Potrero<select id="managerPotreroFilter">${managerPotreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === managerPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}</select></label>
+              <label>Vista<select id="managerModeFilter"><option value="month" ${managerGanttMode === "month" ? "selected" : ""}>Mes detallado</option><option value="year" ${managerGanttMode === "year" ? "selected" : ""}>Año completo</option></select></label>
+              <label>Año<select id="managerYearFilter">${availableYears.sort((a, b) => b.localeCompare(a)).map((year) => `<option value="${year}" ${year === managerYear ? "selected" : ""}>${year}</option>`).join("")}</select></label>
+              <label>Estado<select id="managerStatusFilter">${statusFilterOptions(managerStatusFilter)}</select></label>
+            </div>
+            <div class="manager-gantt-filter-groups">
+              <fieldset class="gantt-species-filter">
+                <legend>Especies</legend>
+                ${managerSpecies.map((species) => `<label><input class="manager-species-filter" type="checkbox" value="${htmlAttr(species)}" ${managerSpeciesFilters.has(species) ? "checked" : ""}> ${species}</label>`).join("")}
+              </fieldset>
+              <fieldset class="manager-orders-month-checklist manager-unified-month-filter">
+                <legend>Meses visibles</legend>
+                <label><input class="manager-orders-month-filter" type="checkbox" value="all" ${managerOrdersMonths.size ? "" : "checked"}> Todos</label>
+                ${monthOptions().map((month) => `<label><input class="manager-orders-month-filter" type="checkbox" value="${month.value}" ${managerOrdersMonths.has(month.value) ? "checked" : ""}> ${month.label.slice(0, 3)}</label>`).join("")}
+              </fieldset>
+              <button class="secondary-button manager-gantt-clear" type="button" data-action="clear-manager-gantt-filters">Limpiar filtros</button>
+            </div>
           </div>
         </div>
         <p class="gantt-mobile-hint">Gira el celular en horizontal y desliza la carta hacia los lados. Toca una barra para ver el detalle.</p>
@@ -21999,10 +22058,12 @@ function warehouseCard(order) {
   return `
     <article class="order-card warehouse-order-card ${isNewOrder(order) ? "is-new-order" : ""} ${status === "closed" ? "is-complete-order" : ""}" data-order-status="${htmlAttr(status)}" data-order-number="${htmlAttr(order.number)}">
       <div class="order-card-head">
-        <div>
-          <span class="overline">Orden #${order.number}</span>
-          <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
-          <small class="warehouse-created-at">Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</small>
+        <div class="warehouse-order-identity">
+          <span class="warehouse-order-number"><small>Orden</small><strong>#${escapeHtml(order.number)}</strong></span>
+          <div>
+            <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
+            <small class="warehouse-created-at">Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</small>
+          </div>
         </div>
         <div class="order-status-stack">
           ${newOrderMark(order)}
@@ -28465,10 +28526,6 @@ document.addEventListener("click", async (event) => {
       target?.focus({ preventScroll: true });
     });
   }
-  if (action === "toggle-mobile-gantt") {
-    managerGanttMobileOpen = !managerGanttMobileOpen;
-    renderManager();
-  }
   if (action === "toggle-manager-gantt-filters") {
     managerGanttFiltersOpen = !managerGanttFiltersOpen;
     const panel = views.manager.querySelector(".gantt-panel");
@@ -28481,6 +28538,18 @@ document.addEventListener("click", async (event) => {
     actionTarget.setAttribute("title", managerGanttFiltersOpen ? "Ocultar filtros" : "Mostrar filtros");
     const icon = actionTarget.querySelector("span");
     if (icon) icon.textContent = managerGanttFiltersOpen ? ">" : "<";
+  }
+  if (action === "clear-manager-gantt-filters") {
+    const now = new Date();
+    managerYear = String(now.getFullYear());
+    managerMonth = String(now.getMonth() + 1).padStart(2, "0");
+    managerOrdersMonths = new Set([managerMonth]);
+    managerGanttMode = "month";
+    managerStatusFilter = "all";
+    managerPotreroFilter = "Todos";
+    managerSpeciesFilters = new Set(["Todas"]);
+    selectedGanttOrderId = "";
+    renderManager();
   }
   if (action === "new-order") openOrderDialog();
   if (action === "new-order-from-program") openOrderDialog(null, actionTarget.dataset.programId || "");
@@ -28957,9 +29026,11 @@ if (resetDemoButton) {
   });
 }
 
+initSidebarAutoHide();
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=434-order-dialog-autofill", { updateViaCache: "none" })
+    .register("./sw.js?v=435-applications-navigation", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }

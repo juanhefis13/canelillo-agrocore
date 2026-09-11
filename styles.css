@@ -27127,3 +27127,227 @@ dialog.informatics-staff-dialog {
     grid-template-columns: 1fr 1fr 32px;
   }
 }
+
+/* Aplicaciones V435: controles operativos compactos y navegacion lateral automatica. */
+#warehouse .warehouse-order-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+#warehouse .warehouse-order-identity > div {
+  min-width: 0;
+}
+
+#warehouse .warehouse-order-number {
+  display: grid;
+  flex: 0 0 88px;
+  min-height: 58px;
+  align-content: center;
+  justify-items: center;
+  border: 1px solid color-mix(in srgb, var(--order-status) 48%, #c8d9d3);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--order-status) 11%, #ffffff);
+  color: #163e33;
+  line-height: 1;
+}
+
+#warehouse .warehouse-order-number small {
+  color: #5f756d;
+  font-size: 0.54rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+#warehouse .warehouse-order-number strong {
+  margin-top: 3px;
+  font-size: 1.55rem;
+  font-weight: 950;
+}
+
+#manager .gantt-controls {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
+  position: static !important;
+  top: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#manager .manager-gantt-filter-primary {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.15fr) repeat(3, minmax(120px, 0.8fr));
+  gap: 7px;
+}
+
+#manager .manager-gantt-filter-primary > label {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  color: #42665b;
+  font-size: 0.59rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+#manager .manager-gantt-filter-groups {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.75fr) minmax(0, 2fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+#manager .manager-gantt-filter-groups :is(.gantt-species-filter, .manager-orders-month-checklist) {
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #c8ddd5;
+  border-radius: 6px;
+  background: #f8fcfa;
+}
+
+#manager .manager-gantt-filter-groups .manager-unified-month-filter {
+  grid-column: auto;
+  padding-top: 6px;
+}
+
+#manager .manager-gantt-clear {
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+@media (min-width: 981px) {
+  .app-shell:not(.locked) {
+    --sidebar-auto-width: 236px;
+    grid-template-columns: var(--sidebar-auto-width) minmax(0, 1fr) !important;
+    transition: grid-template-columns 220ms ease;
+  }
+
+  .app-shell:not(.locked) .sidebar {
+    width: var(--sidebar-auto-width);
+    z-index: 5400;
+    transition: transform 220ms ease, opacity 160ms ease, visibility 0s linear;
+  }
+
+  .app-shell.sidebar-auto-hidden:not(.locked) {
+    grid-template-columns: 0 minmax(0, 1fr) !important;
+  }
+
+  .app-shell.sidebar-auto-hidden:not(.locked) .sidebar {
+    visibility: hidden;
+    transform: translateX(calc(-100% - 12px));
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 220ms ease, opacity 160ms ease, visibility 0s linear 220ms;
+  }
+
+  .app-shell.sidebar-auto-hidden:not(.locked)::before {
+    content: "";
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 5390;
+    width: 8px;
+    border-right: 2px solid rgba(255, 255, 255, 0.74);
+    background: #168262;
+    opacity: 0.58;
+    pointer-events: none;
+  }
+
+  #manager.active-view > .panel {
+    overflow: visible !important;
+  }
+
+  #manager.active-view > .panel > .panel-header {
+    position: sticky !important;
+    top: 6px !important;
+    z-index: 5300 !important;
+    min-height: 42px;
+    margin: 0 0 8px !important;
+    padding: 6px 8px !important;
+    border: 1px solid #bfd8cf;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 5px 16px rgba(16, 65, 51, 0.1);
+    backdrop-filter: blur(7px);
+  }
+
+  #manager .gantt-head {
+    top: 58px !important;
+  }
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  .app-shell:not(.locked) {
+    --sidebar-auto-width: 218px;
+  }
+}
+
+@media (min-width: 1680px) {
+  .app-shell:not(.locked) {
+    --sidebar-auto-width: 248px;
+  }
+}
+
+@media (max-width: 1280px) {
+  #manager .manager-gantt-filter-primary {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  #manager .manager-gantt-filter-groups {
+    grid-template-columns: minmax(220px, 1fr) auto;
+  }
+
+  #manager .manager-gantt-filter-groups .manager-unified-month-filter {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 980px) {
+  #manager .gantt-controls {
+    display: grid !important;
+    overflow: visible !important;
+  }
+
+  #manager .manager-gantt-filter-primary {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
+  #manager .manager-gantt-filter-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #manager .manager-gantt-filter-groups .manager-unified-month-filter {
+    grid-column: auto;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  #manager .manager-gantt-clear {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 560px) {
+  #warehouse .warehouse-order-number {
+    flex-basis: 70px;
+    min-height: 48px;
+  }
+
+  #warehouse .warehouse-order-number strong {
+    font-size: 1.24rem;
+  }
+
+  #manager .manager-gantt-filter-primary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:not(.locked),
+  .app-shell:not(.locked) .sidebar {
+    transition: none !important;
+  }
+}
