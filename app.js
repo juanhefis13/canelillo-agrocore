@@ -1822,11 +1822,17 @@ function dispatchTimeField(name, label, value = "", required = false) {
   return `<label class="dispatch-time-field">${escapeHtml(label)}
     <span class="dispatch-time-control">
       <input name="${htmlAttr(name)}" type="text" inputmode="numeric" autocomplete="off" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" value="${htmlAttr(normalized)}" data-dispatch-time-text ${required ? "required" : ""} aria-label="${htmlAttr(label)} en formato de 24 horas">
-      <button type="button" class="dispatch-time-picker-button" data-dispatch-time-picker title="Seleccionar ${htmlAttr(label.toLowerCase())}" aria-label="Seleccionar ${htmlAttr(label.toLowerCase())}"><span aria-hidden="true">◷</span></button>
-      <input type="time" lang="es-CL" step="60" value="${htmlAttr(normalized)}" data-dispatch-time-native tabindex="-1" aria-hidden="true">
+      <button type="button" class="dispatch-time-picker-button" data-dispatch-time-picker data-time-name="${htmlAttr(name)}" title="Configurar horario" aria-label="Configurar hora de inicio y término"><span aria-hidden="true">◷</span></button>
     </span>
     <small>Formato 24 horas</small>
   </label>`;
+}
+
+function dispatchOvernightHintMarkup() {
+  return `<div class="dispatch-overnight-hint" data-dispatch-overnight-hint hidden>
+    <strong>Finaliza al día siguiente</strong>
+    <span>La hora de término corresponde a la fecha siguiente.</span>
+  </div>`;
 }
 
 function normalizeDispatchTimeValue(value) {
@@ -1853,17 +1859,124 @@ function normalizeDispatchTimeValue(value) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+function dispatchTimesSpanNextDay(startTime, endTime) {
+  const start = normalizeDispatchTimeValue(startTime);
+  const end = normalizeDispatchTimeValue(endTime);
+  return Boolean(start && end && end < start);
+}
+
+function updateDispatchOvernightHint(form) {
+  const hint = form?.querySelector("[data-dispatch-overnight-hint]");
+  if (!hint) return;
+  const start = normalizeDispatchTimeValue(form.elements.time?.value);
+  const end = normalizeDispatchTimeValue(form.elements.endTime?.value);
+  hint.hidden = !dispatchTimesSpanNextDay(start, end);
+}
+
+function ensureDispatchSchedulePickerDialog() {
+  let dialog = document.getElementById("dispatchSchedulePickerDialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "dispatchSchedulePickerDialog";
+  dialog.className = "modal dispatch-schedule-picker-dialog";
+  dialog.innerHTML = `
+    <form method="dialog" class="dispatch-schedule-picker-card">
+      <div class="modal-head">
+        <div><span class="section-kicker">Formato 24 horas</span><h2>Configurar horario</h2><p>Selecciona el inicio y el término de la salida.</p></div>
+        <button class="icon-button" type="button" data-dispatch-time-cancel title="Cerrar" aria-label="Cerrar">x</button>
+      </div>
+      <div class="dispatch-schedule-picker-grid">
+        <label>Hora de inicio<input name="pickerStartTime" type="time" lang="es-CL" step="60" required></label>
+        <span class="dispatch-schedule-arrow" aria-hidden="true">→</span>
+        <label>Hora de término<input name="pickerEndTime" type="time" lang="es-CL" step="60"></label>
+      </div>
+      <div class="dispatch-schedule-next-day" data-dispatch-picker-next-day hidden>
+        <strong>Termina al día siguiente</strong>
+        <span>Se guardará como una jornada que cruza medianoche.</span>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-dispatch-time-now>Usar hora actual</button>
+        <button class="secondary-button" type="button" data-dispatch-time-cancel>Cancelar</button>
+        <button class="primary-button" type="button" data-dispatch-time-done>Listo</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dialog);
+
+  const refreshStatus = () => {
+    const start = dialog.querySelector('[name="pickerStartTime"]')?.value || "";
+    const end = dialog.querySelector('[name="pickerEndTime"]')?.value || "";
+    const nextDay = dialog.querySelector("[data-dispatch-picker-next-day]");
+    if (nextDay) nextDay.hidden = !dispatchTimesSpanNextDay(start, end);
+  };
+  dialog.querySelectorAll('input[type="time"]').forEach((input) => input.addEventListener("change", refreshStatus));
+  dialog.querySelectorAll("[data-dispatch-time-cancel]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelector("[data-dispatch-time-now]")?.addEventListener("click", () => {
+    const preferredName = dialog.dataset.preferredTimeName === "endTime" ? "pickerEndTime" : "pickerStartTime";
+    const input = dialog.querySelector(`[name="${preferredName}"]`);
+    if (input) input.value = currentTimeValue();
+    refreshStatus();
+  });
+  dialog.querySelector("[data-dispatch-time-done]")?.addEventListener("click", () => {
+    const formId = dialog.dataset.dispatchFormId;
+    const targetForm = formId ? document.getElementById(formId) : null;
+    const start = normalizeDispatchTimeValue(dialog.querySelector('[name="pickerStartTime"]')?.value);
+    const end = normalizeDispatchTimeValue(dialog.querySelector('[name="pickerEndTime"]')?.value);
+    if (!targetForm || !start) {
+      dialog.querySelector('[name="pickerStartTime"]')?.reportValidity();
+      return;
+    }
+    const startInput = targetForm.elements.time;
+    const endInput = targetForm.elements.endTime;
+    if (startInput) {
+      startInput.value = start;
+      startInput.setCustomValidity("");
+      startInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (endInput) {
+      endInput.value = end;
+      endInput.setCustomValidity("");
+      endInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    updateDispatchOvernightHint(targetForm);
+    dialog.close();
+  });
+  return dialog;
+}
+
+function openDispatchSchedulePicker(form, preferredName = "time") {
+  if (!form?.id) return;
+  const dialog = ensureDispatchSchedulePickerDialog();
+  const startInput = dialog.querySelector('[name="pickerStartTime"]');
+  const endInput = dialog.querySelector('[name="pickerEndTime"]');
+  startInput.value = normalizeDispatchTimeValue(form.elements.time?.value) || currentTimeValue();
+  endInput.value = normalizeDispatchTimeValue(form.elements.endTime?.value);
+  dialog.dataset.dispatchFormId = form.id;
+  dialog.dataset.preferredTimeName = preferredName;
+  const nextDay = dialog.querySelector("[data-dispatch-picker-next-day]");
+  if (nextDay) nextDay.hidden = !dispatchTimesSpanNextDay(startInput.value, endInput.value);
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+  const preferredInput = preferredName === "endTime" ? endInput : startInput;
+  requestAnimationFrame(() => {
+    preferredInput.focus();
+    try {
+      preferredInput.showPicker?.();
+    } catch {
+      // El control queda enfocado cuando el navegador no permite abrirlo automaticamente.
+    }
+  });
+}
+
 function bindDispatchTimeFields(form) {
   form?.querySelectorAll(".dispatch-time-field").forEach((field) => {
     const textInput = field.querySelector("[data-dispatch-time-text]");
-    const nativeInput = field.querySelector("[data-dispatch-time-native]");
     const picker = field.querySelector("[data-dispatch-time-picker]");
-    if (!textInput || !nativeInput || !picker) return;
+    if (!textInput || !picker) return;
 
     const commitTextValue = () => {
       if (!textInput.value.trim()) {
         textInput.setCustomValidity("");
-        nativeInput.value = "";
+        updateDispatchOvernightHint(form);
         return;
       }
       const normalized = normalizeDispatchTimeValue(textInput.value);
@@ -1872,37 +1985,22 @@ function bindDispatchTimeFields(form) {
         return;
       }
       textInput.value = normalized;
-      nativeInput.value = normalized;
       textInput.setCustomValidity("");
+      updateDispatchOvernightHint(form);
     };
 
     textInput.addEventListener("input", () => textInput.setCustomValidity(""));
     textInput.addEventListener("blur", commitTextValue);
-    nativeInput.addEventListener("change", () => {
-      if (!nativeInput.value) return;
-      textInput.value = nativeInput.value.slice(0, 5);
-      textInput.setCustomValidity("");
-    });
-    picker.addEventListener("click", () => {
-      const current = normalizeDispatchTimeValue(textInput.value);
-      nativeInput.value = current || "00:00";
-      try {
-        if (typeof nativeInput.showPicker === "function") nativeInput.showPicker();
-        else nativeInput.click();
-      } catch {
-        nativeInput.focus();
-        nativeInput.click();
-      }
-    });
+    picker.addEventListener("click", () => openDispatchSchedulePicker(form, picker.dataset.timeName || textInput.name));
   });
+  updateDispatchOvernightHint(form);
 }
 
 function normalizeDispatchTimeFields(form) {
   let valid = true;
   form?.querySelectorAll(".dispatch-time-field").forEach((field) => {
     const textInput = field.querySelector("[data-dispatch-time-text]");
-    const nativeInput = field.querySelector("[data-dispatch-time-native]");
-    if (!textInput || !nativeInput) return;
+    if (!textInput) return;
     const rawValue = textInput.value.trim();
     const normalized = normalizeDispatchTimeValue(rawValue);
     if (rawValue && !normalized) {
@@ -1911,9 +2009,9 @@ function normalizeDispatchTimeFields(form) {
       return;
     }
     textInput.value = normalized;
-    nativeInput.value = normalized;
     textInput.setCustomValidity("");
   });
+  updateDispatchOvernightHint(form);
   return valid;
 }
 
@@ -1982,6 +2080,14 @@ function dispatchDisplayTime(dispatch) {
 
 function dispatchEndDisplayTime(dispatch) {
   return extractTimeValue(dispatch.endTime) || "-";
+}
+
+function dispatchEndDisplayLabel(dispatch) {
+  const endTime = dispatchEndDisplayTime(dispatch);
+  if (endTime === "-") return endTime;
+  return dispatchTimesSpanNextDay(dispatchDisplayTime(dispatch), endTime)
+    ? `${endTime} (+1 día)`
+    : endTime;
 }
 
 function uid(prefix) {
@@ -22138,7 +22244,7 @@ function warehouseDispatchRows(order) {
       <td data-label="Folio"><strong>${escapeHtml(dispatch.folio || dispatch.folioOrigin || "-")}</strong></td>
       <td data-label="Fecha">${dispatch.date || "-"}</td>
       <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
-      <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
+      <td data-label="Hora termino">${dispatchEndDisplayLabel(dispatch)}</td>
       <td data-label="Tipo">${dispatch.type === "devolucion" ? "Devolucion" : "Salida"}</td>
       <td data-label="Mojamiento">${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)} L</td>
       <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
@@ -24956,7 +25062,7 @@ function dispatchInfoRows(order) {
         <td data-label="Folio"><strong>${escapeHtml(dispatch.folio || dispatch.folioOrigin || "-")}</strong></td>
         <td data-label="Fecha">${dispatch.date || "-"}</td>
         <td data-label="Hora inicio">${dispatchDisplayTime(dispatch)}</td>
-        <td data-label="Hora termino">${dispatchEndDisplayTime(dispatch)}</td>
+        <td data-label="Hora termino">${dispatchEndDisplayLabel(dispatch)}</td>
         <td data-label="Tipo">${dispatch.type === "devolucion" ? "Devolución" : "Salida"}</td>
         <td data-label="Mojamiento">${number(dispatch.liters || 0, 0)} L</td>
         <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
@@ -25117,7 +25223,8 @@ async function openEditDispatchDialog(orderId, dispatchId) {
               <label>Numero de folio<input name="folio" value="${htmlAttr(dispatch.folio || dispatch.folioOrigin || "")}" placeholder="Ej. 82015" ${dispatch.type === "salida" ? "required" : ""}></label>
               <label>Fecha de entrega<input name="date" type="date" value="${dispatch.date || new Date().toISOString().slice(0, 10)}" required></label>
               ${dispatchTimeField("time", "Hora de inicio", dispatchDisplayTime(dispatch) !== "-" ? dispatchDisplayTime(dispatch) : currentTimeValue(), true)}
-              ${dispatchTimeField("endTime", "Hora de termino", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
+              ${dispatchTimeField("endTime", "Hora de término", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
+              ${dispatchOvernightHintMarkup()}
               <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
               <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>${operatorOptions(dispatch.operatorId || "")}</select></label>
               <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
@@ -25193,12 +25300,6 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
 
   const data = new FormData(form);
   const newLiters = Number(data.get("liters")) || 0;
-  const startTime = String(data.get("time") || "");
-  const endTime = String(data.get("endTime") || "");
-  if (endTime && startTime && endTime < startTime) {
-    showToast("La hora de termino no puede ser anterior a la hora de inicio");
-    return;
-  }
   const otherDispatched = (order.dispatches || [])
     .filter((item) => String(item.id) !== String(dispatchId))
     .reduce((sum, item) => sum + (item.type === "devolucion" ? -(Number(item.liters) || 0) : (Number(item.liters) || 0)), 0);
@@ -25369,7 +25470,8 @@ async function openDispatchDialog(orderId, type = "salida") {
               <label>Numero de folio<input name="folio" placeholder="Ej. 82015" ${type === "salida" ? "required" : ""}></label>
               <label>Fecha de entrega<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
               ${dispatchTimeField("time", "Hora de inicio", currentTimeValue(), true)}
-              ${dispatchTimeField("endTime", "Hora de termino")}
+              ${dispatchTimeField("endTime", "Hora de término")}
+              ${dispatchOvernightHintMarkup()}
               <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
               <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>${operatorOptions(lastDispatch.operatorId || "")}</select></label>
               <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
@@ -25443,12 +25545,6 @@ async function saveDispatch(orderId, type, dialog) {
   if (!form.reportValidity()) return;
   const data = new FormData(form);
   const liters = Number(data.get("liters")) || 0;
-  const startTime = String(data.get("time") || "");
-  const endTime = String(data.get("endTime") || "");
-  if (endTime && startTime && endTime < startTime) {
-    showToast("La hora de termino no puede ser anterior a la hora de inicio");
-    return;
-  }
   if (type === "salida" && dispatchedLiters(order) + liters > plannedLiters(order) * 1.03) {
     showToast("La salida supera el total autorizado");
     return;
@@ -26097,7 +26193,7 @@ async function downloadApplicationOrderPdf(orderId) {
         dispatch ? String(dispatch.folio || dispatch.folioOrigin || index + 1) : "", dispatch ? printDate(dispatch.date) : "",
         dispatch ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch ? `${isReturn ? "-" : ""}${number(dispatch.liters || 0, 0)}` : "",
         appliedDate ? printDate(appliedDate) : "", dispatch ? dispatchDisplayTime(dispatch) : "-",
-        dispatch ? dispatchEndDisplayTime(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
+        dispatch ? dispatchEndDisplayLabel(dispatch) : tank?.appliedAt ? extractTimeValue(tank.appliedAt) : "-",
         dispatch || tank ? `${potreroListLabel(order.potrero)} / ${blocks}` : "", dispatch || tank ? `${isReturn ? "-" : ""}${number(processLiters, 0)}` : "",
         dispatchOperatorName(dispatch), tank?.tractorCode || dispatch?.tractorCode || "-",
         tank?.machineCode || dispatch?.machineCode || "-", dispatch ? applicationOrderTemperatureLabel(dispatch, temperatureReadings) : "-"
@@ -29030,7 +29126,7 @@ initSidebarAutoHide();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=435-applications-navigation", { updateViaCache: "none" })
+    .register("./sw.js?v=436-overnight-dispatch-time", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
