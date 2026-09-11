@@ -1,6 +1,8 @@
 const STORAGE_KEY = "agroaplicaciones.state.v1";
 const CLOUD_ONLY_MODE = true;
 const SESSION_KEY = "agroaplicaciones.supabase.session.v1";
+const SESSION_REMEMBER_KEY = "agroaplicaciones.supabase.remember.v1";
+const PROFILE_CACHE_KEY = "agroaplicaciones.supabase.profile.v1";
 const IRRIGATION_DRAFT_KEY = "canelillo.irrigation.hours.v1";
 const IRRIGATION_PROGRAM_KEY = "canelillo.irrigation.program.hours.v1";
 const IRRIGATION_AUDIT_KEY = "canelillo.irrigation.audit.v1";
@@ -30,6 +32,9 @@ const SUPABASE_URL = "https://lhmifnsdydullldhmcsd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxobWlmbnNkeWR1bGxsZGhtY3NkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyMzg4NTUsImV4cCI6MjA5MjgxNDg1NX0.TaFzWd_OQTdQMMnf3cMd3WejqGpHmWkJLwGRFS8ITtM";
 const REGISTRATION_CODE = "Canelillo2026#";
 const GOOGLE_MAPS_API_KEY = "AIzaSyBFUloIJfR87F6vLQh4P7HH91LTOTYmCiM";
+const ORDER_TYPE_NORMAL = "normal";
+const ORDER_TYPE_HERBICIDE_FOLIAR = "herbicida_foliar";
+const HERBICIDE_FOLIAR_RESPONSIBLE = "Ángel Rangel";
 
 function escapeHtml(value = "") {
   return String(value ?? "")
@@ -621,9 +626,10 @@ let informaticsDialogContext = null;
 let irrigationEvaporationLoadedMonths = new Set();
 let irrigationEvaporationLoadingMonths = new Set();
 let irrigationCloudLoadedMonths = new Set();
+let sessionPersistence = safeStorageGet(localStorage, SESSION_KEY) ? "local" : safeStorageGet(sessionStorage, SESSION_KEY) ? "session" : "local";
 let supabaseSession = loadSession();
 let passwordRecoverySession = null;
-let currentProfile = null;
+let currentProfile = loadCachedProfile();
 let cloudInitialLoadInProgress = false;
 const CLOUD_MODULE_CACHE_META_KEY = "agrocore.cloud.module-cache.v1";
 const CLOUD_MODULE_TTL_MS = {
@@ -727,8 +733,32 @@ function loadState() {
   }
 }
 
+function safeStorageGet(storage, key) {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`No se pudo guardar ${key}`, error);
+    return false;
+  }
+}
+
+function safeStorageRemove(storage, key) {
+  try {
+    storage.removeItem(key);
+  } catch {}
+}
+
 function loadSession() {
-  const stored = localStorage.getItem(SESSION_KEY);
+  const stored = safeStorageGet(localStorage, SESSION_KEY) || safeStorageGet(sessionStorage, SESSION_KEY);
   if (!stored) return null;
   try {
     const session = JSON.parse(stored);
@@ -740,10 +770,60 @@ function loadSession() {
   }
 }
 
-function saveSession(session) {
+function saveSession(session, { remember } = {}) {
   supabaseSession = session;
-  if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  else localStorage.removeItem(SESSION_KEY);
+  if (!session) {
+    safeStorageRemove(localStorage, SESSION_KEY);
+    safeStorageRemove(sessionStorage, SESSION_KEY);
+    return;
+  }
+  if (typeof remember === "boolean") sessionPersistence = remember ? "local" : "session";
+  const persistent = sessionPersistence === "local";
+  safeStorageSet(localStorage, SESSION_REMEMBER_KEY, String(persistent));
+  const targetStorage = persistent ? localStorage : sessionStorage;
+  const staleStorage = persistent ? sessionStorage : localStorage;
+  if (!safeStorageSet(targetStorage, SESSION_KEY, JSON.stringify(session)) && persistent) {
+    sessionPersistence = "session";
+    safeStorageSet(sessionStorage, SESSION_KEY, JSON.stringify(session));
+    safeStorageRemove(localStorage, SESSION_KEY);
+    return;
+  }
+  safeStorageRemove(staleStorage, SESSION_KEY);
+}
+
+function loadCachedProfile() {
+  const stored = safeStorageGet(localStorage, PROFILE_CACHE_KEY) || safeStorageGet(sessionStorage, PROFILE_CACHE_KEY);
+  if (!stored) return null;
+  try {
+    const cached = JSON.parse(stored);
+    return cached?.userId && cached.userId === supabaseSession?.user?.id ? cached.profile || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedProfile(profile) {
+  if (!profile || !supabaseSession?.user?.id) return;
+  const persistent = sessionPersistence === "local";
+  const targetStorage = persistent ? localStorage : sessionStorage;
+  const staleStorage = persistent ? sessionStorage : localStorage;
+  safeStorageSet(targetStorage, PROFILE_CACHE_KEY, JSON.stringify({ userId: supabaseSession.user.id, profile }));
+  safeStorageRemove(staleStorage, PROFILE_CACHE_KEY);
+}
+
+function clearCachedProfile() {
+  safeStorageRemove(localStorage, PROFILE_CACHE_KEY);
+  safeStorageRemove(sessionStorage, PROFILE_CACHE_KEY);
+}
+
+function sessionFailureRequiresLogin(error) {
+  if (error?.authInvalid || error?.sessionBlocked) return true;
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("refresh token")
+    || message.includes("sesion expiro")
+    || message.includes("sesion de supabase expiro")
+    || message.includes("usuario esta desactivado")
+    || message.includes("usuario no existe en public.usuarios");
 }
 
 let supabaseRefreshPromise = null;
@@ -753,7 +833,11 @@ async function ensureSupabaseSession(force = false) {
   const expiresAt = Number(supabaseSession.expires_at || 0);
   const stillValid = expiresAt > Date.now() / 1000 + 60;
   if (!force && stillValid) return supabaseSession;
-  if (!supabaseSession.refresh_token) throw new Error("La sesion de Supabase expiro. Vuelve a iniciar sesion.");
+  if (!supabaseSession.refresh_token) {
+    const error = new Error("La sesion de Supabase expiro. Vuelve a iniciar sesion.");
+    error.authInvalid = true;
+    throw error;
+  }
   if (supabaseRefreshPromise) return supabaseRefreshPromise;
 
   supabaseRefreshPromise = (async () => {
@@ -767,11 +851,13 @@ async function ensureSupabaseSession(force = false) {
       body: JSON.stringify({ refresh_token: previous.refresh_token })
     });
     const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
     if (!response.ok || !data?.access_token) {
-      saveSession(null);
-      setAuthGate(true);
-      throw new Error(data?.message || data?.msg || "La sesion de Supabase expiro. Vuelve a iniciar sesion.");
+      const error = new Error(data?.message || data?.msg || "La sesion de Supabase expiro. Vuelve a iniciar sesion.");
+      error.status = response.status;
+      error.authInvalid = response.status === 400 || response.status === 401;
+      throw error;
     }
     const refreshed = {
       ...previous,
@@ -804,6 +890,34 @@ function setAuthGate(visible) {
   } else {
     scheduleSidebarAutoHide();
   }
+}
+
+let appLoadingStartedAt = performance.now();
+
+function showAppLoading(message = "Preparando AgroCore...") {
+  const screen = document.getElementById("appBootScreen");
+  const messageNode = document.getElementById("appBootMessage");
+  if (!screen) return;
+  appLoadingStartedAt = performance.now();
+  if (messageNode) messageNode.textContent = message;
+  screen.hidden = false;
+  screen.classList.remove("is-leaving");
+  screen.setAttribute("aria-busy", "true");
+  document.body.classList.add("app-is-loading");
+  requestAnimationFrame(() => screen.classList.add("is-visible"));
+}
+
+async function hideAppLoading(minimumMs = 520) {
+  const screen = document.getElementById("appBootScreen");
+  if (!screen || screen.hidden) return;
+  const remaining = Math.max(0, minimumMs - (performance.now() - appLoadingStartedAt));
+  if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
+  screen.classList.add("is-leaving");
+  screen.setAttribute("aria-busy", "false");
+  await new Promise((resolve) => setTimeout(resolve, 320));
+  screen.hidden = true;
+  screen.classList.remove("is-visible", "is-leaving");
+  document.body.classList.remove("app-is-loading");
 }
 
 function sidebarAutoHideEnabled() {
@@ -879,11 +993,15 @@ async function loadCloudProfile() {
 
   if (!profile) {
     currentProfile = null;
-    throw new Error("Tu usuario no existe en public.usuarios. Revisa que el ID sea igual al usuario de Authentication y que tenga rol admin/supervisor/bodeguero.");
+    const error = new Error("Tu usuario no existe en public.usuarios. Revisa que el ID sea igual al usuario de Authentication y que tenga rol admin/supervisor/bodeguero.");
+    error.sessionBlocked = true;
+    throw error;
   }
   if (profile.activo === false) {
     currentProfile = null;
-    throw new Error("Tu usuario esta desactivado. Solicita activacion a un administrador.");
+    const error = new Error("Tu usuario esta desactivado. Solicita activacion a un administrador.");
+    error.sessionBlocked = true;
+    throw error;
   }
 
   const normalizedProfileRole = normalizeRole(profile.rol || profile.role);
@@ -909,6 +1027,7 @@ async function loadCloudProfile() {
 
   applyRoleNavigation();
   updateAuthenticatedUserUi();
+  saveCachedProfile(currentProfile);
   return currentProfile;
 }
 
@@ -1119,6 +1238,7 @@ function normalizeState(rawState) {
   next.harvestExportRecords ||= [];
   const localEquipmentCode = (id) => next.equipment.find((item) => item.id === id)?.code || "";
   next.orders.forEach((order) => {
+    order.orderType = normalizeOrderType(order.orderType || order.tipoOrden || order.tipo_orden);
     order.seasonId ??= next.settings?.currentSeasonId || next.seasons[0]?.id || "";
     order.programNumber ??= inferProgramNumber(order);
     order.programNumbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
@@ -1196,7 +1316,8 @@ async function sbFetch(path, options = {}, retryAuth = true) {
     headers: { ...sbHeaders(options.prefer), ...(options.headers || {}) }
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
   if (!response.ok) {
     const message = data?.message || data?.msg || text || response.statusText;
     if (response.status === 401 && retryAuth && supabaseSession?.refresh_token) {
@@ -1207,7 +1328,10 @@ async function sbFetch(path, options = {}, retryAuth = true) {
       const role = normalizeRole(currentProfile?.role || currentProfile?.rol);
       throw new Error(`${message}. Sesion: ${roleLabel(role)}. Revisa que el usuario exista en public.usuarios con id = auth.uid() y rol admin/supervisor/bodeguero.`);
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.authInvalid = response.status === 401;
+    throw error;
   }
   return data;
 }
@@ -2141,6 +2265,7 @@ function normalizeProgramNumbers(values = []) {
 }
 
 function getProgramDefinition(order) {
+  if (isHerbicideFoliarOrder(order)) return null;
   if (order?.programId) {
     const direct = state.programs.find((program) => String(program.id) === String(order.programId));
     if (direct) return direct;
@@ -2155,6 +2280,7 @@ function getProgramDefinitionByNumber(seasonId, numberValue) {
 }
 
 function programLabel(order) {
+  if (isHerbicideFoliarOrder(order)) return "Sin programa · Herbicida/Foliar";
   const definition = getProgramDefinition(order);
   const numbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
   if (definition?.official) return `${definition.name} ${numbers.length ? numbers.join(", ") : definition.code || definition.number} · ${definition.crop || order.crop || ""}`.trim();
@@ -2174,8 +2300,32 @@ function officialPrograms() {
 }
 
 function programNumbersLabel(order) {
+  if (isHerbicideFoliarOrder(order)) return "No aplica";
   const numbers = normalizeProgramNumbers(order.programNumbers?.length ? order.programNumbers : [order.programNumber]);
   return numbers.length ? numbers.join(", ") : "-";
+}
+
+function normalizeOrderType(value) {
+  const normalized = normalizeCatalogText(value).replaceAll("/", "_").replaceAll(" ", "_");
+  return normalized.includes("HERBICIDA") || normalized.includes("FOLIAR")
+    ? ORDER_TYPE_HERBICIDE_FOLIAR
+    : ORDER_TYPE_NORMAL;
+}
+
+function isHerbicideFoliarOrder(order) {
+  return normalizeOrderType(order?.orderType || order?.tipoOrden || order?.tipo_orden) === ORDER_TYPE_HERBICIDE_FOLIAR;
+}
+
+function orderTypeLabel(order) {
+  return isHerbicideFoliarOrder(order) ? "Orden Herbicida/Foliar" : "Orden Normal";
+}
+
+function orderTypeOptions(selected = ORDER_TYPE_NORMAL) {
+  const value = normalizeOrderType(selected);
+  return `
+    <option value="${ORDER_TYPE_NORMAL}" ${value === ORDER_TYPE_NORMAL ? "selected" : ""}>Orden Normal</option>
+    <option value="${ORDER_TYPE_HERBICIDE_FOLIAR}" ${value === ORDER_TYPE_HERBICIDE_FOLIAR ? "selected" : ""}>Orden Herbicida/Foliar</option>
+  `;
 }
 
 function fieldSummary(potrero) {
@@ -8403,6 +8553,7 @@ function classificationOptions(selected) {
 }
 
 function plannedLiters(order) {
+  if (isHerbicideFoliarOrder(order)) return 0;
   return (Number(order.hectares) || 0) * (Number(order.waterHa) || 0);
 }
 
@@ -8422,6 +8573,7 @@ function dispatchedProduct(order, productId) {
 }
 
 function isOrderCompleteByWater(order) {
+  if (isHerbicideFoliarOrder(order)) return false;
   const total = plannedLiters(order);
   return total > 0 && dispatchedLiters(order) >= total;
 }
@@ -8643,6 +8795,7 @@ function managerSelectedMonthValues() {
   return [...managerOrdersMonths].sort((a, b) => Number(a) - Number(b));
 }
 function plannedProduct(order, recipeLine) {
+  if (isHerbicideFoliarOrder(order)) return 0;
   const hectares = Number(order.hectares) || 0;
   if (hectares > 0) return productHaFromDose(order, recipeLine) * hectares;
   return productQuantityForLine(plannedLiters(order), recipeLine, 0);
@@ -8790,35 +8943,16 @@ function enhanceAuthGate() {
     const label = field?.closest("label");
     if (label?.firstChild?.nodeType === Node.TEXT_NODE) label.firstChild.textContent = text;
   };
-  const brand = card.querySelector(".auth-brand");
-  if (brand) {
-    brand.querySelector("span") && (brand.querySelector("span").textContent = "Acceso seguro Supabase");
+  card.querySelector(".auth-brand")?.remove();
+  if (!card.querySelector(".auth-copy")) {
     const hero = document.createElement("div");
     hero.className = "auth-copy";
     hero.innerHTML = `
-      <div class="auth-module-grid" aria-label="Modulos AgroCore">
-        <span class="auth-module-chip">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16h16M6 16l2-8h8l2 8M9 8V5h6v3M8 19h.01M16 19h.01"/></svg>
-          <strong>Cosecha</strong>
-        </span>
-        <span class="auth-module-chip">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.1 6 11a6 6 0 0 1-12 0c0-4.9 6-11 6-11Z"/><path d="M9.5 15.5c1.2 1.1 3.8 1.1 5 0"/></svg>
-          <strong>Riego</strong>
-        </span>
-        <span class="auth-module-chip">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M10 4v5l-4 7a3 3 0 0 0 2.6 4.5h6.8A3 3 0 0 0 18 16l-4-7V4"/><path d="M8 16h8"/></svg>
-          <strong>Fertilizante</strong>
-        </span>
-        <span class="auth-module-chip">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>
-          <strong>Aplicaciones</strong>
-        </span>
-        <span class="auth-module-chip">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.6 6.6 8 8M16 16l1.4 1.4M17.4 6.6 16 8M8 16l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
-          <strong>Clima</strong>
-        </span>
+      <div class="auth-hero-lockup">
+        <img src="assets/canelillo-symbol.png" alt="" aria-hidden="true">
+        <div><span class="auth-kicker">Agricola El Canelillo</span><h1>AgroCore</h1></div>
       </div>`;
-    brand.after(hero);
+    card.prepend(hero);
   }
   const loginButton = document.getElementById("gateLoginButton");
   if (loginButton) loginButton.textContent = "Entrar a AgroCore";
@@ -8833,6 +8967,20 @@ function enhanceAuthGate() {
   setLabelText('#gateRegisterForm [name="registerPassword2"]', "Repetir contrasena");
   if (loginEmail) loginEmail.placeholder = "usuario@canelillo.cl";
   if (loginPassword) loginPassword.placeholder = "Tu contrasena";
+  card.querySelectorAll("[data-password-target]").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const input = document.getElementById(toggle.dataset.passwordTarget || "");
+      if (!input) return;
+      const revealing = input.type === "password";
+      input.type = revealing ? "text" : "password";
+      toggle.setAttribute("aria-pressed", String(revealing));
+      toggle.setAttribute("aria-label", revealing ? "Ocultar contrasena" : "Mostrar contrasena");
+      toggle.title = revealing ? "Ocultar contrasena" : "Mostrar contrasena";
+      input.focus({ preventScroll: true });
+    });
+  });
+  const rememberSession = document.querySelector('#gateLoginForm [name="rememberSession"]');
+  if (rememberSession) rememberSession.checked = safeStorageGet(localStorage, SESSION_REMEMBER_KEY) !== "false";
   const privacyLink = card.querySelector(".auth-privacy .link-button");
   if (privacyLink) privacyLink.textContent = "Politicas de privacidad";
   const privacyText = card.querySelector(".auth-privacy span");
@@ -9088,7 +9236,8 @@ async function loginSupabase() {
   try {
     setGateStatus("Verificando credenciales...", "info");
     const session = await sbAuthPassword(email, password);
-    saveSession(session);
+    const rememberSession = form?.elements?.rememberSession ? form.elements.rememberSession.checked : true;
+    saveSession(session, { remember: rememberSession });
     await reloadCurrentCloudModules();
     startCloudSync();
     document.getElementById("authDialog")?.close();
@@ -9319,16 +9468,21 @@ async function loginSupabase() {
   try {
     setButtonBusy(button, true, "Verificando...");
     setGateStatus("Verificando credenciales...", "info");
+    showAppLoading("Verificando tu acceso...");
     const session = await sbAuthPassword(email, password);
-    saveSession(session);
+    const rememberSession = form?.elements?.rememberSession ? form.elements.rememberSession.checked : true;
+    saveSession(session, { remember: rememberSession });
     setGateStatus("Entrando a AgroCore...", "info");
+    showAppLoading("Abriendo tu espacio de trabajo...");
     await loadCloudProfile();
     document.getElementById("authDialog")?.close();
     setGateStatus("", "info");
     showAuthenticatedShell("Cargando inicio desde Supabase...");
     loadCloudDataInBackground();
+    await hideAppLoading(650);
     showToast("Sesion Supabase iniciada");
   } catch (error) {
+    await hideAppLoading(0);
     setGateStatus(`No se pudo ingresar: ${error.message}`, "error");
     showToast(`Login fallido: ${error.message}`);
   } finally {
@@ -9564,6 +9718,7 @@ async function logoutSupabase() {
   }
 
   saveSession(null);
+  clearCachedProfile();
   currentProfile = null;
   currentView = "dashboard";
   state = normalizeState(structuredClone(seedState));
@@ -19765,6 +19920,7 @@ function renderManager() {
   const gantt = managerGantt(visibleOrders);
   const listOrders = visibleOrders;
   const rows = listOrders.map((order) => {
+    const specialOrder = isHerbicideFoliarOrder(order);
     const total = plannedLiters(order);
     const dispatched = dispatchedLiters(order);
     const pct = total ? Math.min(100, dispatched / total * 100) : 0;
@@ -19776,27 +19932,29 @@ function renderManager() {
             <span class="manager-order-number"><small>Orden</small><strong>#${escapeHtml(order.number)}</strong></span>
             <div>
               <h3>${escapeHtml(potreroListLabel(order.potrero))} <span>Bloques ${escapeHtml(orderBlocksLabel(order) || "-")}</span></h3>
-              <p>${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")} · Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</p>
+              <p>${escapeHtml(orderTypeLabel(order))} · ${escapeHtml(programLabel(order))} · ${escapeHtml(orderStartDate(order) || "-")}${specialOrder ? "" : ` al ${escapeHtml(orderEndDate(order) || "-")}`} · Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</p>
             </div>
           </div>
           <span class="badge ${statusClass(status)}">${escapeHtml(ganttState(order).label)}</span>
         </div>
         <div class="manager-order-summary">
-          <span class="manager-order-objective"><small>Objetivo</small><strong>${escapeHtml(order.objective || "Sin objetivo")}</strong></span>
+          <span class="manager-order-objective"><small>${specialOrder ? "Tipo" : "Objetivo"}</small><strong>${escapeHtml(specialOrder ? orderTypeLabel(order) : order.objective || "Sin objetivo")}</strong></span>
           <span><small>Superficie</small><strong>${number(order.hectares)} ha</strong></span>
           <span><small>Mojamiento</small><strong>${number(order.waterHa, 0)} L/ha</strong></span>
-          <span><small>Total autorizado</small><strong>${number(total, 0)} L</strong></span>
+          <span><small>${specialOrder ? "Acumulado real" : "Total autorizado"}</small><strong>${number(specialOrder ? dispatched : total, 0)} L</strong></span>
         </div>
-        <div class="progress-box">
+        ${specialOrder ? `<div class="herbicide-foliar-actual-summary"><strong>${number(dispatched, 0)} L acumulados en ${order.dispatches.filter((item) => item.type !== "devolucion").length} salidas</strong><span>Encargado: ${HERBICIDE_FOLIAR_RESPONSIBLE}. La orden se termina manualmente.</span></div>` : `<div class="progress-box">
           <div><strong>${number(dispatched, 0)} L</strong><span>salidos de ${number(total, 0)} L autorizados</span><b class="order-progress-percent">${number(pct, 0)}%</b></div>
           <div class="progress"><i style="width:${pct}%"></i></div>
-        </div>
+        </div>`}
         <details class="application-order-details manager-order-details">
           <summary><span>Productos de la orden</span><strong>${order.recipe.length}</strong></summary>
           <div class="recipe-list manager-recipe-list">
             ${order.recipe.map((line) => {
               const product = getProduct(line.productId);
-              return `<span><strong>${escapeHtml(product?.name || "Producto")}</strong>${number(productHaFromDose(order, line))} ${escapeHtml(product?.unit || "")}/ha · ${number(plannedProduct(order, line))} total</span>`;
+              return specialOrder
+                ? `<span><strong>${escapeHtml(product?.name || "Producto")}</strong>${number(dispatchedProduct(order, line.productId))} ${escapeHtml(product?.unit || "")} acumulado real</span>`
+                : `<span><strong>${escapeHtml(product?.name || "Producto")}</strong>${number(productHaFromDose(order, line))} ${escapeHtml(product?.unit || "")}/ha · ${number(plannedProduct(order, line))} total</span>`;
             }).join("")}
           </div>
         </details>
@@ -19905,6 +20063,7 @@ function renderManager() {
 
 function managerGanttTooltipHtml(order) {
   const stateInfo = ganttState(order);
+  const specialOrder = isHerbicideFoliarOrder(order);
   const total = plannedLiters(order);
   const dispatched = dispatchedLiters(order);
   const progress = total ? Math.min(100, dispatched / total * 100) : 0;
@@ -19914,7 +20073,7 @@ function managerGanttTooltipHtml(order) {
     return `
       <li>
         <strong>${escapeHtml(product?.name || "Producto sin identificar")}</strong>
-        <span>${number(productHaFromDose(order, line))} ${escapeHtml(unit)}/ha · ${number(plannedProduct(order, line))} ${escapeHtml(unit)} total</span>
+        <span>${specialOrder ? `${number(dispatchedProduct(order, line.productId))} ${escapeHtml(unit)} acumulado real` : `${number(productHaFromDose(order, line))} ${escapeHtml(unit)}/ha · ${number(plannedProduct(order, line))} ${escapeHtml(unit)} total`}</span>
       </li>
     `;
   }).join("");
@@ -19924,15 +20083,15 @@ function managerGanttTooltipHtml(order) {
       <span class="badge ${statusClass(effectiveOrderStatus(order))}">${escapeHtml(stateInfo.label)}</span>
     </div>
     <div class="manager-gantt-tooltip-facts">
-      <span><small>Avance</small><strong>${number(progress, 0)}% · ${number(dispatched, 0)} de ${number(total, 0)} L</strong></span>
-      <span><small>Fechas</small><strong>${escapeHtml(orderStartDate(order) || "-")} al ${escapeHtml(orderEndDate(order) || "-")}</strong></span>
+      <span><small>${specialOrder ? "Salidas" : "Avance"}</small><strong>${specialOrder ? `${number(dispatched, 0)} L acumulados` : `${number(progress, 0)}% · ${number(dispatched, 0)} de ${number(total, 0)} L`}</strong></span>
+      <span><small>Fechas</small><strong>${escapeHtml(orderStartDate(order) || "-")}${specialOrder ? "" : ` al ${escapeHtml(orderEndDate(order) || "-")}`}</strong></span>
       <span><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero) || "-")}</strong></span>
       <span><small>Bloques</small><strong>${escapeHtml(orderBlocksGroupedLabel(order) || "-")}</strong></span>
-      <span class="full"><small>Programa</small><strong>${escapeHtml(programLabel(order) || "-")}</strong></span>
+      <span class="full"><small>${specialOrder ? "Tipo / encargado" : "Programa"}</small><strong>${escapeHtml(specialOrder ? `${orderTypeLabel(order)} · ${HERBICIDE_FOLIAR_RESPONSIBLE}` : programLabel(order) || "-")}</strong></span>
     </div>
     <div class="manager-gantt-tooltip-section">
-      <small>Objetivo / descripcion</small>
-      <p>${escapeHtml(order.objective || "Sin objetivo informado")}</p>
+      <small>${specialOrder ? "Modalidad" : "Objetivo / descripcion"}</small>
+      <p>${escapeHtml(specialOrder ? "Cantidades reales ingresadas y acumuladas desde cada salida de bodega." : order.objective || "Sin objetivo informado")}</p>
     </div>
     ${order.notes ? `<div class="manager-gantt-tooltip-section"><small>Nota</small><p>${escapeHtml(order.notes)}</p></div>` : ""}
     <div class="manager-gantt-tooltip-section">
@@ -20284,14 +20443,17 @@ function ganttStateColor(key) {
 }
 
 function ganttMarker(order, extraStyle = "") {
-  const progress = plannedLiters(order) ? Math.min(100, dispatchedLiters(order) / plannedLiters(order) * 100) : 0;
+  const specialOrder = isHerbicideFoliarOrder(order);
+  const progress = specialOrder
+    ? (dispatchedLiters(order) > 0 ? 100 : 0)
+    : plannedLiters(order) ? Math.min(100, dispatchedLiters(order) / plannedLiters(order) * 100) : 0;
   const stateInfo = ganttState(order);
   const productLines = order.recipe.map((line) => {
     const product = getProduct(line.productId);
     if (!product) return "";
     return `- ${product.name}`;
   }).filter(Boolean);
-  const progressLabel = `${Math.round(progress)}%`;
+  const progressLabel = specialOrder ? `${number(dispatchedLiters(order), 0)} L acumulados` : `${Math.round(progress)}%`;
   const tooltip = [
     `Orden #${order.number}`,
     `Estado actual: ${stateInfo.label}`,
@@ -20745,6 +20907,16 @@ function dispatchOrderSummary(order) {
   const total = plannedLiters(order);
   const applied = dispatchedLiters(order);
   const pending = Math.max(0, total - applied);
+  if (isHerbicideFoliarOrder(order)) {
+    return `
+      <div class="dispatch-order-summary is-herbicide-foliar" aria-label="Resumen de la orden Herbicida/Foliar">
+        <span class="is-automatic"><small>Tipo</small><strong>${orderTypeLabel(order)}</strong></span>
+        <span class="is-automatic"><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero))}</strong></span>
+        <span class="dispatch-order-blocks is-automatic"><small>Bloques</small><strong>${escapeHtml(orderBlocksLabel(order) || "Sin bloques")}</strong></span>
+        <span class="is-automatic"><small>Salidas acumuladas</small><strong>${number(applied, 0)} L</strong></span>
+        <span class="is-automatic"><small>Encargado</small><strong>${HERBICIDE_FOLIAR_RESPONSIBLE}</strong></span>
+      </div>`;
+  }
   return `
     <div class="dispatch-order-summary" aria-label="Resumen de la orden">
       <span class="is-automatic"><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero))}</strong></span>
@@ -21295,6 +21467,7 @@ async function loadCloudData(options = {}) {
   if (Array.isArray(orders)) state.orders = sortOrdersNewestFirst(orders.map((order) => ({
     id: order.id,
     number: order.numero_orden,
+    orderType: normalizeOrderType(order.tipo_orden),
     seasonId: order.temporada_id,
     programId: order.programa_id || "",
     programNumber: order.numero_programa ?? "",
@@ -21641,6 +21814,7 @@ async function cloudSaveOrder(order) {
     temporada_id: order.seasonId,
     programa_id: isUuid(programDefinition?.id) ? programDefinition.id : null,
     numero_orden: order.number,
+    tipo_orden: normalizeOrderType(order.orderType),
     numero_programa: isProgramNumberValue(order.programNumber) ? Number(order.programNumber) : null,
     numeros_programa: order.programNumbers?.length ? order.programNumbers : null,
     nombre_programa: programDefinition?.name || order.program || null,
@@ -21666,7 +21840,10 @@ async function cloudSaveOrder(order) {
     observaciones: order.notes || null,
     creado_por: supabaseSession.user?.id
   };
-  const optionalColumns = ["numeros_programa", "fecha_fin_planificada", "finalizada_por_jefe", "clasificacion", "observaciones"];
+  const optionalColumns = [
+    ...(isHerbicideFoliarOrder(order) ? [] : ["tipo_orden"]),
+    "numeros_programa", "fecha_fin_planificada", "finalizada_por_jefe", "clasificacion", "observaciones"
+  ];
   const fallbackBody = { ...body };
   let saved;
   const omittedColumns = [];
@@ -22089,7 +22266,7 @@ function renderWarehouse() {
       <div class="panel-header warehouse-panel-header">
         <div>
           <h2>Ordenes de salida de bodega</h2>
-          <p>Registra salidas parciales y devoluciones. El mojamiento acumulado no debe superar lo autorizado.</p>
+          <p>Orden Normal controla el total autorizado. Herbicida/Foliar acumula lo registrado en cada salida.</p>
         </div>
         <div class="warehouse-filters">
           <label class="inline-filter">Temporada
@@ -22157,6 +22334,7 @@ function applyWarehouseOrderSearch() {
 
 function warehouseCard(order) {
   const status = effectiveOrderStatus(order);
+  const specialOrder = isHerbicideFoliarOrder(order);
   const total = plannedLiters(order);
   const dispatched = dispatchedLiters(order);
   const remaining = Math.max(0, total - dispatched);
@@ -22169,6 +22347,7 @@ function warehouseCard(order) {
           <div>
             <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
             <small class="warehouse-created-at">Creada ${escapeHtml(applicationOrderCreatedLabel(order))}</small>
+            <span class="order-type-badge ${specialOrder ? "is-herbicide-foliar" : "is-normal"}">${orderTypeLabel(order)}</span>
           </div>
         </div>
         <div class="order-status-stack">
@@ -22177,14 +22356,20 @@ function warehouseCard(order) {
         </div>
       </div>
       <dl class="metrics">
-        <div><dt>Total autorizado</dt><dd>${number(total, 0)} L</dd></div>
-        <div><dt>Acumulado salida</dt><dd>${number(dispatched, 0)} L</dd></div>
-        <div><dt>Saldo</dt><dd>${number(remaining, 0)} L</dd></div>
+        ${specialOrder ? `
+          <div><dt>Salidas registradas</dt><dd>${order.dispatches.filter((item) => item.type !== "devolucion").length}</dd></div>
+          <div><dt>Mojamiento acumulado</dt><dd>${number(dispatched, 0)} L</dd></div>
+          <div><dt>Encargado</dt><dd>${HERBICIDE_FOLIAR_RESPONSIBLE}</dd></div>
+        ` : `
+          <div><dt>Total autorizado</dt><dd>${number(total, 0)} L</dd></div>
+          <div><dt>Acumulado salida</dt><dd>${number(dispatched, 0)} L</dd></div>
+          <div><dt>Saldo</dt><dd>${number(remaining, 0)} L</dd></div>
+        `}
         <div><dt>Costo salido</dt><dd>${money(dispatchCost(order))}</dd></div>
       </dl>
-      <div class="progress"><i style="width:${pct}%"></i></div>
+      ${specialOrder ? "" : `<div class="progress"><i style="width:${pct}%"></i></div>`}
       <div class="warehouse-order-context">
-        <div><strong>N programa</strong><span>${programNumbersLabel(order)}</span></div>
+        <div><strong>${specialOrder ? "Tipo de orden" : "N programa"}</strong><span>${specialOrder ? orderTypeLabel(order) : programNumbersLabel(order)}</span></div>
         <div><strong>Potreros / bloques</strong><span>${escapeHtml(`${potreroListLabel(order.potrero)} · ${orderBlocksLabel(order) || "-"}`)}</span></div>
         <div><strong>Objetivo</strong><span>${order.objective || "-"}</span></div>
       </div>
@@ -22193,12 +22378,12 @@ function warehouseCard(order) {
           <summary><span>Productos</span><strong>${order.recipe.length}</strong></summary>
           <div class="table-wrap compact-table warehouse-product-table">
             <table>
-              <thead><tr><th>Producto</th><th>kg/L ha</th><th>Plan</th><th>Salido neto</th><th>Costo</th></tr></thead>
+              <thead><tr><th>Producto</th>${specialOrder ? "" : "<th>kg/L ha</th><th>Plan</th>"}<th>Salido neto</th><th>Costo</th></tr></thead>
               <tbody>
                 ${order.recipe.map((line) => {
                   const product = getProduct(line.productId);
                   const qty = dispatchedProduct(order, line.productId);
-                  return `<tr><td data-label="Producto">${escapeHtml(product?.name || "Producto")}</td><td data-label="kg/L ha">${number(productHaFromDose(order, line))}</td><td data-label="Plan">${number(plannedProduct(order, line))}</td><td data-label="Salido neto">${number(qty)} ${escapeHtml(product?.unit || "")}</td><td data-label="Costo">${money(qty * (product?.cost || 0))}</td></tr>`;
+                  return `<tr><td data-label="Producto">${escapeHtml(product?.name || "Producto")}</td>${specialOrder ? "" : `<td data-label="kg/L ha">${number(productHaFromDose(order, line))}</td><td data-label="Plan">${number(plannedProduct(order, line))}</td>`}<td data-label="Salido neto">${number(qty)} ${escapeHtml(product?.unit || "")}</td><td data-label="Costo">${money(qty * (product?.cost || 0))}</td></tr>`;
                 }).join("")}
               </tbody>
             </table>
@@ -22208,7 +22393,7 @@ function warehouseCard(order) {
           <summary><span>Historial de salidas</span><strong>${order.dispatches.length}</strong></summary>
           <div class="table-wrap compact-table warehouse-history-table">
             <table>
-              <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Parametros</th><th>Accion</th></tr></thead>
+              <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Responsable</th><th>Parametros</th><th>Accion</th></tr></thead>
               <tbody>
                 ${warehouseDispatchRows(order)}
               </tbody>
@@ -22249,7 +22434,7 @@ function warehouseDispatchRows(order) {
       <td data-label="Mojamiento">${dispatch.type === "devolucion" ? "-" : ""}${number(dispatch.liters || 0, 0)} L</td>
       <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
       <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
-      <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
+      <td data-label="Responsable">${escapeHtml(dispatchOperatorName(dispatch))}</td>
       <td data-label="Parametros">${dispatchTechnicalSummary(dispatch)}</td>
       <td data-label="Accion"><div class="dispatch-row-actions"><button class="secondary-button small-button" type="button" data-action="edit-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Modificar</button><button class="danger-button small-button" type="button" data-action="delete-dispatch" data-id="${order.id}" data-dispatch-id="${dispatch.id}">Borrar</button></div></td>
     </tr>
@@ -23159,6 +23344,7 @@ function renderOrders() {
 
 function orderCard(order) {
   const status = effectiveOrderStatus(order);
+  const specialOrder = isHerbicideFoliarOrder(order);
   const planned = plannedLiters(order);
   const real = dispatchedLiters(order);
   const variance = real - planned;
@@ -23166,7 +23352,7 @@ function orderCard(order) {
     <article class="order-card">
       <div class="order-card-head">
         <div>
-          <span class="overline">Orden #${order.number}</span>
+          <span class="overline">Orden #${order.number} · ${orderTypeLabel(order)}</span>
           <h3>${escapeHtml(potreroListLabel(order.potrero))} - ${escapeHtml(order.crop)}</h3>
         </div>
         <span class="badge ${statusClass(status)}">${statusLabel(status)}</span>
@@ -23174,15 +23360,17 @@ function orderCard(order) {
       <p>${order.objective || "Sin objetivo declarado"}</p>
       <dl class="metrics">
         <div><dt>Hectareas</dt><dd>${number(order.hectares)} ha</dd></div>
-        <div><dt>Mojamiento prog.</dt><dd>${number(planned, 0)} L</dd></div>
+        <div><dt>${specialOrder ? "Tipo" : "Mojamiento prog."}</dt><dd>${specialOrder ? "Herbicida/Foliar" : `${number(planned, 0)} L`}</dd></div>
         <div><dt>Salida bodega</dt><dd>${number(real, 0)} L</dd></div>
-        <div><dt>Diferencia</dt><dd class="${variance > 0 ? "bad" : "good"}">${number(variance, 0)} L</dd></div>
+        <div><dt>${specialOrder ? "Encargado" : "Diferencia"}</dt><dd class="${specialOrder ? "" : variance > 0 ? "bad" : "good"}">${specialOrder ? HERBICIDE_FOLIAR_RESPONSIBLE : `${number(variance, 0)} L`}</dd></div>
       </dl>
       ${order.notes ? `<div class="gantt-detail-note"><strong>Nota de la orden</strong><p>${escapeHtml(order.notes)}</p></div>` : ""}
       <div class="recipe-list">
         ${order.recipe.map((line) => {
           const product = getProduct(line.productId);
-          return `<span>${product?.name || "Producto"}: ${number(productHaFromDose(order, line))} ${product?.unit || ""}/ha - total ${number(plannedProduct(order, line))} ${product?.unit || ""}</span>`;
+          return specialOrder
+            ? `<span>${product?.name || "Producto"}: ${number(dispatchedProduct(order, line.productId))} ${product?.unit || ""} acumulado real</span>`
+            : `<span>${product?.name || "Producto"}: ${number(productHaFromDose(order, line))} ${product?.unit || ""}/ha - total ${number(plannedProduct(order, line))} ${product?.unit || ""}</span>`;
         }).join("")}
       </div>
       <div class="card-actions">
@@ -23209,13 +23397,14 @@ function renderExecution() {
 function executionCard(order) {
   const sprayer = state.equipment.find((item) => item.id === order.sprayerId);
   const tankLiters = sprayer?.tankLiters || state.settings.defaultTankLiters;
+  const specialOrder = isHerbicideFoliarOrder(order);
   return `
     <article class="execution-card ${isNewOrder(order) ? "is-new-order" : ""}">
       <div>
-        <span class="overline">Orden #${order.number} - ${getOperator(order.operatorId)}</span>
+        <span class="overline">Orden #${order.number} - ${specialOrder ? HERBICIDE_FOLIAR_RESPONSIBLE : getOperator(order.operatorId)}</span>
         ${newOrderMark(order)}
         <h3>${escapeHtml(potreroListLabel(order.potrero))} ${order.blocks?.length ? `bloques ${escapeHtml(orderBlocksLabel(order))}` : ""}</h3>
-        <p>${order.objective || "Aplicacion programada"} - ${number(order.hectares)} ha</p>
+        <p>${specialOrder ? orderTypeLabel(order) : order.objective || "Aplicacion programada"} - ${number(order.hectares)} ha</p>
         <div class="tech-strip compact">
           <span>${order.machineCode || getEquipment(order.sprayerId)}</span>
           <span>${order.tractorCode || getEquipment(order.tractorId)}</span>
@@ -23225,16 +23414,16 @@ function executionCard(order) {
         </div>
       </div>
       <div class="mix-box">
-        <strong>Receta para ${number(tankLiters, 0)} L</strong>
+        <strong>${specialOrder ? "Productos acumulados desde bodega" : `Receta para ${number(tankLiters, 0)} L`}</strong>
         ${order.recipe.map((line) => {
           const product = getProduct(line.productId);
-          const qty = dispatchProductQuantity(order, line, tankLiters);
-          return `<span>${product?.name}: ${number(qty)} ${product?.unit} (${number(productHaFromDose(order, line))} ${product?.unit}/ha)</span>`;
+          const qty = specialOrder ? dispatchedProduct(order, line.productId) : dispatchProductQuantity(order, line, tankLiters);
+          return `<span>${product?.name}: ${number(qty)} ${product?.unit}${specialOrder ? " acumulado real" : ` (${number(productHaFromDose(order, line))} ${product?.unit}/ha)`}</span>`;
         }).join("")}
       </div>
       <div class="wide-actions">
         <button class="secondary-button" data-action="start-order" data-id="${order.id}">Iniciar</button>
-        <button class="primary-button" data-action="open-tank" data-id="${order.id}">Registrar estanque</button>
+        ${specialOrder ? "" : `<button class="primary-button" data-action="open-tank" data-id="${order.id}">Registrar estanque</button>`}
         <button class="danger-button" data-action="close-order" data-id="${order.id}">Cerrar aplicacion</button>
       </div>
     </article>
@@ -23978,6 +24167,7 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   }
   const dialog = document.getElementById("orderDialog");
   const order = orderId ? state.orders.find((item) => item.id === orderId) : null;
+  const initialOrderType = normalizeOrderType(order?.orderType);
   const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(presetProgramId || order?.programId || ""));
   const initialSeasonId = order?.seasonId || selectedOfficialProgram?.seasonId || state.settings.currentSeasonId || state.seasons[0]?.id || "";
   const nextNumber = localNextApplicationOrderNumber();
@@ -23987,7 +24177,7 @@ async function openOrderDialog(orderId, presetProgramId = "") {
     showToast("No hay potreros activos disponibles en la tabla campos");
     return;
   }
-  const selectedPrograms = order?.programNumbers?.length
+  const selectedPrograms = initialOrderType === ORDER_TYPE_HERBICIDE_FOLIAR ? [] : order?.programNumbers?.length
     ? order.programNumbers
     : selectedOfficialProgram ? [selectedOfficialProgram.number] : normalizeProgramNumbers([order?.programNumber]);
   const initialPotrero = firstPotreroFromSelection(order?.blocks, order?.potrero);
@@ -24007,17 +24197,22 @@ async function openOrderDialog(orderId, presetProgramId = "") {
             <legend>Datos de la orden</legend>
             <div class="form-grid order-core-grid">
               <label class="autofill-locked-field">Numero<input name="number" type="number" min="1" step="1" value="${order?.number || nextNumber}" readonly required><small>Correlativo automatico</small></label>
+              <label>Tipo de orden<select name="orderType">${orderTypeOptions(initialOrderType)}</select></label>
               <label>Temporada<select name="seasonId">${state.seasons.map((season) => `<option value="${season.id}" ${season.id === initialSeasonId ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}</select></label>
               <label>Fecha de inicio<input name="plannedDate" type="date" value="${order ? orderStartDate(order) : new Date().toISOString().slice(0, 10)}" required></label>
-              <label>Fecha termino<input name="endDate" type="date" value="${order?.endDate || order?.plannedEndDate || (order ? orderStartDate(order) : new Date().toISOString().slice(0, 10))}" required></label>
+              <label class="order-normal-only">Fecha termino<input name="endDate" type="date" value="${order?.endDate || order?.plannedEndDate || (order ? orderStartDate(order) : new Date().toISOString().slice(0, 10))}" required></label>
               <label>Clasificacion<select name="classification">${classificationOptions(order?.classification || "")}</select></label>
               <label>Mojamiento L/ha<input name="waterHa" type="number" step="1" value="${order?.waterHa || 1500}" required></label>
               <label class="autofill-locked-field">Especie<input name="crop" value="${htmlAttr(order?.crop || "")}" placeholder="Automatico" readonly required><small>Segun bloques</small></label>
               <label class="autofill-locked-field">Variedad<input name="variety" value="${htmlAttr(order?.variety || "")}" placeholder="Automatico" readonly><small>Segun bloques</small></label>
               <label class="autofill-locked-field">Hectareas<input name="hectares" type="number" step="0.01" value="${htmlAttr(order?.hectares || "")}" readonly required><small>Suma automatica</small></label>
             </div>
+            <div class="herbicide-foliar-notice order-special-only" hidden>
+              <strong>Flujo Herbicida/Foliar</strong>
+              <span>Sin programa ni total calculado. Bodega ingresará y acumulará las cantidades reales de cada salida. Encargado: ${HERBICIDE_FOLIAR_RESPONSIBLE}.</span>
+            </div>
           </fieldset>
-          <div class="program-picker official-order-program-picker order-program-picker">
+          <div class="program-picker official-order-program-picker order-program-picker order-normal-only">
             <input type="hidden" name="programNumbers" value="${selectedPrograms.join(", ")}">
             <input type="hidden" name="programId" value="${selectedOfficialProgram?.id || order?.programId || ""}">
             <div class="block-picker-head">
@@ -24051,7 +24246,7 @@ async function openOrderDialog(orderId, presetProgramId = "") {
           </div>
         </div>
         <div class="order-form-side">
-          <label class="autofill-locked-field order-objective-field">Objetivo
+          <label class="autofill-locked-field order-objective-field order-normal-only">Objetivo
             <textarea name="objective" rows="2" readonly placeholder="Se completa al añadir productos vinculados al programa">${escapeHtml(order?.objective || "")}</textarea>
             <small>Autocompletado desde el programa de cada producto.</small>
           </label>
@@ -24063,7 +24258,7 @@ async function openOrderDialog(orderId, presetProgramId = "") {
             <div id="recipeLines" class="order-recipe-lines">
               <div class="recipe-line recipe-line-head">
                 <strong>Producto</strong>
-                <strong>Programa</strong>
+                <strong class="recipe-program-column order-normal-only">Programa</strong>
                 <strong>Dosis oficial</strong>
                 <strong>Gasto / ha</strong>
                 <span></span>
@@ -24084,12 +24279,14 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   formElement.dataset.orderId = order?.id || "";
   formElement.dataset.objectiveManaged = order ? "false" : "true";
   dialog.showModal();
+  syncOrderTypeForm(formElement);
   renderOrderProgramPicker(selectedPrograms);
   renderOrderBlockPicker(order?.blocks || []);
   refreshOfficialProgramSelect(formElement, selectedOfficialProgram?.id || "");
   document.querySelector('[name="classification"]').addEventListener("change", () => {
     renderOrderBlockPicker(selectedOrderBlocks());
   });
+  formElement.elements.orderType.addEventListener("change", () => syncOrderTypeForm(formElement));
   document.getElementById("potreroSelect").addEventListener("change", () => {
     renderOrderBlockPicker(selectedOrderBlocks());
     fillOrderFromSelectedBlocks();
@@ -24158,6 +24355,21 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   if (presetProgramId && !order) applyOfficialProgramToOrder(presetProgramId);
   updateOrderObjectiveFromRecipe(true);
   updateOrderRecipeCalculations();
+}
+
+function syncOrderTypeForm(form) {
+  if (!form) return;
+  const special = normalizeOrderType(form.elements.orderType?.value) === ORDER_TYPE_HERBICIDE_FOLIAR;
+  form.classList.toggle("is-herbicide-foliar", special);
+  form.querySelectorAll(".order-normal-only").forEach((element) => { element.hidden = special; });
+  form.querySelectorAll(".order-special-only").forEach((element) => { element.hidden = !special; });
+  if (form.elements.classification) form.elements.classification.required = special;
+  if (form.elements.endDate) {
+    form.elements.endDate.required = !special;
+    if (special) form.elements.endDate.value = form.elements.plannedDate?.value || form.elements.endDate.value;
+  }
+  const officialSelect = form.querySelector("#officialProgramSelect");
+  if (officialSelect) officialSelect.disabled = special || !officialSelect.options.length;
 }
 
 function officialProgramOrderOptions(selectedId = "", seasonId = "") {
@@ -24738,7 +24950,7 @@ function recipeLineHtml(line, programs = []) {
         <input type="hidden" name="productSearch" value="${htmlAttr(product?.name || line.name || "")}">
         <input type="hidden" name="productId" value="${htmlAttr(line.productId || "")}">
       </div>
-      <select name="lineProgramNumber">${programOptions(programs, line.programNumber ?? programs[0] ?? "")}</select>
+      <select name="lineProgramNumber" class="recipe-program-column order-normal-only">${programOptions(programs, line.programNumber ?? programs[0] ?? "")}</select>
       <label class="recipe-dose-control"><input name="dose100" type="number" step="0.01" value="${doseValue}" aria-label="Dosis oficial"><small>${escapeHtml(unit || "Unidad pendiente")}</small></label>
       <label class="recipe-result-control autofill-locked-field"><input name="productHaProgram" type="number" step="0.001" value="" aria-label="Gasto por producto y hectarea" title="Calculado desde la base de dosis oficial" readonly><small>${escapeHtml(line.outputUnit || getProduct(line.productId)?.unit || "kg/L")}/ha automatico</small></label>
       <button type="button" class="icon-button" data-action="remove-recipe" title="Quitar">x</button>
@@ -24778,28 +24990,30 @@ async function saveOrder(orderId) {
   syncAllRecipeLinePrograms();
   updateOrderObjectiveFromRecipe(true);
   const data = Object.fromEntries(new FormData(form));
+  const orderType = normalizeOrderType(data.orderType);
+  const specialOrder = orderType === ORDER_TYPE_HERBICIDE_FOLIAR;
   if (!orderId) {
     const verifiedNumber = await nextApplicationOrderNumber();
     data.number = String(verifiedNumber);
     form.elements.number.value = verifiedNumber;
   }
   const selectedBlocks = data.blocks.split(",").map((item) => item.trim()).filter(Boolean);
-  const selectedPrograms = normalizeProgramNumbers(data.programNumbers.split(",").map((item) => item.trim()));
+  const selectedPrograms = specialOrder ? [] : normalizeProgramNumbers(String(data.programNumbers || "").split(",").map((item) => item.trim()));
   if (!selectedBlocks.length) {
     showToast("Agrega al menos un bloque a la orden");
     return;
   }
-  if (!selectedPrograms.length) {
+  if (!specialOrder && !selectedPrograms.length) {
     showToast("Agrega al menos un numero de programa");
     return;
   }
-  const selectedOfficialProgram = state.programs.find((program) => String(program.id) === String(data.programId || ""));
+  const selectedOfficialProgram = specialOrder ? null : state.programs.find((program) => String(program.id) === String(data.programId || ""));
   if (selectedOfficialProgram && !normalizeCatalogText(data.crop).split(",").map((item) => item.trim()).includes(normalizeCatalogText(selectedOfficialProgram.crop))) {
     showToast(`La aplicación seleccionada corresponde a ${selectedOfficialProgram.crop}; revisa los bloques de la orden`);
     return;
   }
   const startDate = data.plannedDate || data.date || new Date().toISOString().slice(0, 10);
-  const endDate = data.endDate || startDate;
+  const endDate = specialOrder ? startDate : data.endDate || startDate;
   if (endDate < startDate) {
     showToast("La fecha termino no puede ser anterior al inicio");
     return;
@@ -24814,7 +25028,7 @@ async function saveOrder(orderId) {
         productId: line.querySelector('[name="productId"]').value,
         productSearch: line.querySelector('[name="productSearch"]')?.value || "",
         programProductId,
-        programNumber: isProgramNumberValue(lineProgramNumber) ? Number(lineProgramNumber) : selectedPrograms[0],
+        programNumber: specialOrder ? "" : isProgramNumberValue(lineProgramNumber) ? Number(lineProgramNumber) : selectedPrograms[0],
         dose100: Number(line.querySelector('[name="dose100"]').value),
         dose: Number(line.querySelector('[name="dose100"]').value),
         doseUnit: line.querySelector('[name="doseUnit"]')?.value || "",
@@ -24830,22 +25044,23 @@ async function saveOrder(orderId) {
     showToast(`Selecciona un producto valido para "${unresolvedProduct.productSearch}"`);
     return;
   }
-  const recipe = recipeRows.filter((line) => line.productId && line.dose100 > 0);
+  const recipe = recipeRows.filter((line) => line.productId && (specialOrder || line.dose100 > 0));
 
   if (!recipe.length) {
-    showToast("La orden necesita al menos un producto con dosis válida");
+    showToast(specialOrder ? "La orden necesita al menos un producto" : "La orden necesita al menos un producto con dosis válida");
     return;
   }
 
   recipe.forEach((line) => {
     line.productHaProgram = productHaFromDose({ waterHa: data.waterHa }, line);
-    line.totalProgram = line.productHaProgram * (Number(data.hectares) || 0);
+    line.totalProgram = specialOrder ? 0 : line.productHaProgram * (Number(data.hectares) || 0);
   });
 
   const payload = {
     number: Number(data.number),
+    orderType,
     seasonId: data.seasonId,
-    programId: data.programId || "",
+    programId: specialOrder ? "" : data.programId || "",
     programNumber: selectedPrograms[0] ?? "",
     programNumbers: selectedPrograms,
     program: "",
@@ -24856,7 +25071,7 @@ async function saveOrder(orderId) {
     plannedDate: startDate,
     fechaInicio: startDate,
     endDate: endDate,
-    objective: data.objective,
+    objective: specialOrder ? "" : data.objective,
     crop: data.crop,
     variety: data.variety,
     potrero: selectedBlocks.some((block) => block.includes(":"))
@@ -25067,7 +25282,7 @@ function dispatchInfoRows(order) {
         <td data-label="Mojamiento">${number(dispatch.liters || 0, 0)} L</td>
         <td data-label="Tractor">${dispatch.tractorCode || "-"}</td>
         <td data-label="Maquinaria">${dispatch.machineCode || "-"}</td>
-        <td data-label="Aplicador">${escapeHtml(dispatchOperatorName(dispatch))}</td>
+        <td data-label="Responsable">${escapeHtml(dispatchOperatorName(dispatch))}</td>
         <td data-label="Parametros">${dispatchTechnicalSummary(dispatch)}</td>
         <td data-label="Productos">${products}</td>
       </tr>
@@ -25082,6 +25297,7 @@ function openDispatchInfoDialog(orderId) {
   const total = plannedLiters(order);
   const dispatched = dispatchedLiters(order);
   const pct = total ? Math.min(100, dispatched / total * 100) : 0;
+  const specialOrder = isHerbicideFoliarOrder(order);
   const salidaCount = (order.dispatches || []).filter((item) => item.type !== "devolucion").length;
   const devolucionCount = (order.dispatches || []).filter((item) => item.type === "devolucion").length;
   dialog.innerHTML = `
@@ -25089,21 +25305,21 @@ function openDispatchInfoDialog(orderId) {
       <div class="modal-head">
         <div>
           <h2>Información de salida - Orden #${order.number}</h2>
-          <p>${escapeHtml(potreroListLabel(order.potrero))} · ${escapeHtml(orderBlocksLabel(order) || "Sin bloques")} · ${escapeHtml(programLabel(order))} · ${escapeHtml(order.objective || "Sin objetivo")}</p>
+          <p>${escapeHtml(potreroListLabel(order.potrero))} · ${escapeHtml(orderBlocksLabel(order) || "Sin bloques")} · ${escapeHtml(orderTypeLabel(order))}${specialOrder ? ` · ${HERBICIDE_FOLIAR_RESPONSIBLE}` : ` · ${escapeHtml(programLabel(order))} · ${escapeHtml(order.objective || "Sin objetivo")}`}</p>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="dispatch-info-summary">
-        <span><strong>Total autorizado</strong>${number(total, 0)} L</span>
+      <div class="dispatch-info-summary ${specialOrder ? "is-herbicide-foliar" : ""}">
+        ${specialOrder ? "" : `<span><strong>Total autorizado</strong>${number(total, 0)} L</span>`}
         <span><strong>Salido neto</strong>${number(dispatched, 0)} L</span>
-        <span><strong>Avance</strong>${number(pct, 0)}%</span>
+        ${specialOrder ? `<span><strong>Encargado</strong>${HERBICIDE_FOLIAR_RESPONSIBLE}</span>` : `<span><strong>Avance</strong>${number(pct, 0)}%</span>`}
         <span><strong>Salidas</strong>${salidaCount}</span>
         <span><strong>Devoluciones</strong>${devolucionCount}</span>
       </div>
-      <div class="progress"><i style="width:${pct}%"></i></div>
+      ${specialOrder ? "" : `<div class="progress"><i style="width:${pct}%"></i></div>`}
       <div class="table-wrap compact-table dispatch-info-table">
         <table>
-          <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Aplicador</th><th>Parametros</th><th>Productos</th></tr></thead>
+          <thead><tr><th>Folio</th><th>Fecha entrega</th><th>Hora inicio</th><th>Hora termino</th><th>Tipo</th><th>Mojamiento</th><th>Tractor</th><th>Maquinaria</th><th>Responsable</th><th>Parametros</th><th>Productos</th></tr></thead>
           <tbody>${dispatchInfoRows(order)}</tbody>
         </table>
       </div>
@@ -25142,7 +25358,7 @@ function dispatchProductCalculatorRow(order, line, value, manual = false) {
 
 function refreshDispatchProductCalculator(orderId, form, force = false) {
   const order = state.orders.find((item) => item.id === orderId);
-  if (!order || !form || form.dataset.dispatchType === "devolucion") return;
+  if (!order || !form || form.dataset.dispatchType === "devolucion" || isHerbicideFoliarOrder(order)) return;
   const liters = Number(form.elements.liters?.value) || 0;
   const equivalentHa = Number(order.waterHa) ? liters / Number(order.waterHa) : 0;
   order.recipe.forEach((line) => {
@@ -25168,7 +25384,8 @@ function refreshDispatchProductCalculator(orderId, form, force = false) {
 }
 
 function bindDispatchProductCalculator(orderId, form, preserveValues = false) {
-  if (!form || form.dataset.dispatchType === "devolucion") return;
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!form || form.dataset.dispatchType === "devolucion" || isHerbicideFoliarOrder(order)) return;
   form.querySelectorAll("[data-product-input]").forEach((input) => {
     input.dataset.manualOverride = preserveValues ? "true" : "false";
     input.addEventListener("input", () => {
@@ -25206,10 +25423,11 @@ async function openEditDispatchDialog(orderId, dispatchId) {
   const order = state.orders.find((item) => item.id === orderId);
   const dispatch = order?.dispatches?.find((item) => String(item.id) === String(dispatchId));
   if (!order || !dispatch) return;
+  const specialOrder = isHerbicideFoliarOrder(order);
 
   const dialog = document.getElementById(dispatch.type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form" id="editDispatchForm" data-dispatch-type="${dispatch.type}">
+    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form ${specialOrder ? "is-herbicide-foliar" : ""}" id="editDispatchForm" data-dispatch-type="${dispatch.type}" data-order-type="${normalizeOrderType(order.orderType)}">
       <div class="modal-head">
         <div><h2>Modificar ${dispatch.type === "devolucion" ? "devolucion" : "salida"} - Orden #${order.number}</h2><p>Datos de entrega, equipo y productos utilizados.</p></div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
@@ -25226,21 +25444,23 @@ async function openEditDispatchDialog(orderId, dispatchId) {
               ${dispatchTimeField("endTime", "Hora de término", dispatchEndDisplayTime(dispatch) !== "-" ? dispatchEndDisplayTime(dispatch) : "")}
               ${dispatchOvernightHintMarkup()}
               <label>Mojamiento ${dispatch.type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${dispatch.liters || 0}" required></label>
-              <label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>${operatorOptions(dispatch.operatorId || "")}</select></label>
-              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
-              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${dispatch.type === "salida" ? "required" : ""}>${machineCodeOptions(dispatch.machineCode || "")}</select></label>
+              ${specialOrder
+                ? `<label class="autofill-locked-field">Encargado<input value="${HERBICIDE_FOLIAR_RESPONSIBLE}" readonly><input name="operatorId" type="hidden" value=""><input name="operatorNameOrigin" type="hidden" value="${HERBICIDE_FOLIAR_RESPONSIBLE}"><small>Asignado por el tipo de orden</small></label>`
+                : `<label>Aplicador<select name="operatorId" ${dispatch.type === "salida" ? "required" : ""}>${operatorOptions(dispatch.operatorId || "")}</select></label>`}
+              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${dispatch.type === "salida" && !specialOrder ? "required" : ""}>${tractorCodeOptions(dispatch.tractorCode || "")}</select></label>
+              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${dispatch.type === "salida" && !specialOrder ? "required" : ""}>${machineCodeOptions(dispatch.machineCode || "")}</select></label>
             </div>
           </fieldset>
           ${dispatch.type === "salida" ? dispatchTechnicalFields(order, dispatch) : ""}
         </div>
         <div class="dispatch-form-side">
           <div class="recipe-editor dispatch-product-calculator">
-            <div class="dispatch-product-calculator-head"><h3>Productos ${dispatch.type === "devolucion" ? "devueltos" : "entregados"}</h3>${dispatch.type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
+            <div class="dispatch-product-calculator-head"><h3>Productos ${dispatch.type === "devolucion" ? "devueltos" : "entregados"}</h3>${dispatch.type === "salida" && !specialOrder ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
             <div class="dispatch-product-list">
               ${order.recipe.map((line) => {
                 const qty = dispatch.products?.[line.productId] ?? 0;
                 return dispatch.type === "salida"
-                  ? dispatchProductCalculatorRow(order, line, qty, true)
+                  ? specialOrder ? dispatchProductManualRow(line, qty) : dispatchProductCalculatorRow(order, line, qty, true)
                   : `<label>${escapeHtml(getProduct(line.productId)?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${Number(qty || 0).toFixed(3)}" required><span>${escapeHtml(getProduct(line.productId)?.unit || "")}</span></label>`;
               }).join("")}
             </div>
@@ -25282,6 +25502,10 @@ function updateEditDispatchPreview(orderId) {
     preview.innerHTML = form.dataset.dispatchType === "devolucion" ? `
       <span>Devolución: <strong>ingresa manualmente las cantidades recibidas</strong></span>
       <span>Mojamiento devuelto: <strong>${number(liters, 0)} L</strong></span>
+    ` : isHerbicideFoliarOrder(order) ? `
+      <span>Registro manual: <strong>las cantidades corresponden a esta salida</strong></span>
+      <span>Total neto actual de la orden: <strong>${number(dispatchedLiters(order), 0)} L</strong></span>
+      <span>Encargado: <strong>${HERBICIDE_FOLIAR_RESPONSIBLE}</strong></span>
     ` : `
       <span>Hectáreas equivalentes: <strong data-equivalent-hectares>${number(equivalentHa, 3)} ha</strong></span>
       <span>Fórmula: <strong>mojamiento salida / mojamiento L/ha × producto kg/L por ha</strong></span>
@@ -25304,9 +25528,16 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
     .filter((item) => String(item.id) !== String(dispatchId))
     .reduce((sum, item) => sum + (item.type === "devolucion" ? -(Number(item.liters) || 0) : (Number(item.liters) || 0)), 0);
 
-  if (dispatch.type === "salida" && otherDispatched + newLiters > plannedLiters(order) * 1.03) {
+  if (dispatch.type === "salida" && !isHerbicideFoliarOrder(order) && otherDispatched + newLiters > plannedLiters(order) * 1.03) {
     showToast("La modificacion supera el total autorizado");
     return;
+  }
+  if (dispatch.type === "salida" && isHerbicideFoliarOrder(order)) {
+    const hasProductQuantity = order.recipe.some((line) => Number(data.get(`product-${line.productId}`)) > 0);
+    if (!hasProductQuantity) {
+      showToast("Ingresa la cantidad real de al menos un producto");
+      return;
+    }
   }
 
   const previous = {
@@ -25354,8 +25585,8 @@ async function saveEditedDispatch(orderId, dispatchId, dialog) {
   dispatch.speed = data.get("speed") === null || data.get("speed") === "" ? "" : Number(data.get("speed"));
   dispatch.nozzle = String(data.get("nozzle") || "").trim();
   dispatch.nozzleSpecification = String(data.get("nozzleSpecification") || "").trim();
-  dispatch.operatorId = data.get("operatorId");
-  dispatch.operatorNameOrigin = getOperator(data.get("operatorId"));
+  dispatch.operatorId = isHerbicideFoliarOrder(order) ? "" : data.get("operatorId");
+  dispatch.operatorNameOrigin = isHerbicideFoliarOrder(order) ? HERBICIDE_FOLIAR_RESPONSIBLE : getOperator(data.get("operatorId"));
   dispatch.note = data.get("note");
   syncOrderStatus(order);
 
@@ -25451,12 +25682,13 @@ async function openDispatchDialog(orderId, type = "salida") {
   ]);
   const order = state.orders.find((item) => item.id === orderId);
   if (!order) return;
+  const specialOrder = isHerbicideFoliarOrder(order);
   const remaining = Math.max(0, plannedLiters(order) - dispatchedLiters(order));
-  const defaultLiters = type === "devolucion" ? 0 : Math.min(state.settings.defaultTankLiters, remaining || state.settings.defaultTankLiters);
+  const defaultLiters = type === "devolucion" || specialOrder ? 0 : Math.min(state.settings.defaultTankLiters, remaining || state.settings.defaultTankLiters);
   const lastDispatch = [...order.dispatches].reverse().find((item) => item.type === "salida") || {};
   const dialog = document.getElementById(type === "devolucion" ? "returnDialog" : "dispatchDialog");
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form" id="dispatchForm" data-dispatch-type="${type}">
+    <form method="dialog" class="modal-body dispatch-form-shell dispatch-entry-form ${specialOrder ? "is-herbicide-foliar" : ""}" id="dispatchForm" data-dispatch-type="${type}" data-order-type="${normalizeOrderType(order.orderType)}">
       <div class="modal-head">
         <div><h2>${type === "devolucion" ? "Devolucion de sobrante" : "Nueva salida de bodega"} - Orden #${order.number}</h2><p>Registra la entrega, el horario y los parámetros usados en terreno.</p></div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
@@ -25472,23 +25704,25 @@ async function openDispatchDialog(orderId, type = "salida") {
               ${dispatchTimeField("time", "Hora de inicio", currentTimeValue(), true)}
               ${dispatchTimeField("endTime", "Hora de término")}
               ${dispatchOvernightHintMarkup()}
-              <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" step="1" value="${defaultLiters}" required></label>
-              <label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>${operatorOptions(lastDispatch.operatorId || "")}</select></label>
-              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
-              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${type === "salida" ? "required" : ""}>${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
+              <label>Mojamiento ${type === "devolucion" ? "devuelto" : "salida"} L<input name="liters" type="number" min="0" step="1" value="${specialOrder && type === "salida" ? "" : defaultLiters}" ${specialOrder && type === "salida" ? "placeholder=\"Ingresa los litros reales\"" : ""} required></label>
+              ${specialOrder
+                ? `<label class="autofill-locked-field">Encargado<input value="${HERBICIDE_FOLIAR_RESPONSIBLE}" readonly><input name="operatorId" type="hidden" value=""><input name="operatorNameOrigin" type="hidden" value="${HERBICIDE_FOLIAR_RESPONSIBLE}"><small>Asignado por el tipo de orden</small></label>`
+                : `<label>Aplicador<select name="operatorId" ${type === "salida" ? "required" : ""}>${operatorOptions(lastDispatch.operatorId || "")}</select></label>`}
+              <label>Codigo tractor<select name="tractorCode" data-vehicle-code-select data-vehicle-kind="tractor" ${type === "salida" && !specialOrder ? "required" : ""}>${tractorCodeOptions(lastDispatch.tractorCode || "")}</select></label>
+              <label>Codigo maquinaria<select name="machineCode" data-vehicle-code-select data-vehicle-kind="machine" ${type === "salida" && !specialOrder ? "required" : ""}>${machineCodeOptions(lastDispatch.machineCode || "")}</select></label>
             </div>
           </fieldset>
           ${type === "salida" ? dispatchTechnicalFields(order, lastDispatch) : ""}
         </div>
         <div class="dispatch-form-side">
           <div class="recipe-editor dispatch-product-calculator">
-            <div class="dispatch-product-calculator-head"><h3>${type === "devolucion" ? "Productos devueltos" : "Productos a entregar"}</h3>${type === "salida" ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
+            <div class="dispatch-product-calculator-head"><h3>${type === "devolucion" ? "Productos devueltos" : "Productos a entregar"}</h3>${type === "salida" && !specialOrder ? `<button type="button" class="secondary-button" data-recalculate-dispatch-products>Recalcular todos</button>` : ""}</div>
             <div class="dispatch-product-list">
               ${order.recipe.map((line) => {
                 const product = getProduct(line.productId);
                 const qty = dispatchProductQuantity(order, line, defaultLiters);
                 return type === "salida"
-                  ? dispatchProductCalculatorRow(order, line, qty, false)
+                  ? specialOrder ? dispatchProductManualRow(line, 0) : dispatchProductCalculatorRow(order, line, qty, false)
                   : `<label>${escapeHtml(product?.name || "Producto")}<input name="product-${line.productId}" data-product-input="${line.productId}" type="number" min="0" step="0.001" value="${number(qty, 3).replaceAll(".", "").replace(",", ".")}" required><span>${escapeHtml(product?.unit || "")}</span></label>`;
               }).join("")}
             </div>
@@ -25530,6 +25764,10 @@ function updateDispatchProductQuantities(orderId) {
     preview.innerHTML = form.dataset.dispatchType === "devolucion" ? `
       <span>Devolución: <strong>ingresa manualmente las cantidades recibidas</strong></span>
       <span>Mojamiento devuelto: <strong>${number(liters, 0)} L</strong></span>
+    ` : isHerbicideFoliarOrder(order) ? `
+      <span>Registro manual: <strong>las cantidades se suman desde cada salida</strong></span>
+      <span>Acumulado al guardar: <strong>${number(dispatchedLiters(order) + liters, 0)} L</strong></span>
+      <span>Encargado: <strong>${HERBICIDE_FOLIAR_RESPONSIBLE}</strong></span>
     ` : `
       <span>Hectáreas equivalentes: <strong data-equivalent-hectares>${number(equivalentHa, 3)} ha</strong></span>
       <span>Fórmula: <strong>mojamiento salida / mojamiento L/ha × producto kg/L por ha</strong></span>
@@ -25545,11 +25783,22 @@ async function saveDispatch(orderId, type, dialog) {
   if (!form.reportValidity()) return;
   const data = new FormData(form);
   const liters = Number(data.get("liters")) || 0;
-  if (type === "salida" && dispatchedLiters(order) + liters > plannedLiters(order) * 1.03) {
+  if (type === "salida" && liters <= 0) {
+    showToast("Ingresa los litros reales de la salida");
+    return;
+  }
+  if (type === "salida" && !isHerbicideFoliarOrder(order) && dispatchedLiters(order) + liters > plannedLiters(order) * 1.03) {
     showToast("La salida supera el total autorizado");
     return;
   }
   const products = {};
+  if (type === "salida" && isHerbicideFoliarOrder(order)) {
+    const hasProductQuantity = order.recipe.some((line) => Number(data.get(`product-${line.productId}`)) > 0);
+    if (!hasProductQuantity) {
+      showToast("Ingresa la cantidad real de al menos un producto");
+      return;
+    }
+  }
   const previousProductStocks = new Map();
   const newMovementIds = [];
   order.recipe.forEach((line) => {
@@ -25587,8 +25836,8 @@ async function saveDispatch(orderId, type, dialog) {
     speed: data.get("speed") === null || data.get("speed") === "" ? "" : Number(data.get("speed")),
     nozzle: String(data.get("nozzle") || "").trim(),
     nozzleSpecification: String(data.get("nozzleSpecification") || "").trim(),
-    operatorId: data.get("operatorId"),
-    operatorNameOrigin: getOperator(data.get("operatorId")),
+    operatorId: isHerbicideFoliarOrder(order) ? "" : data.get("operatorId"),
+    operatorNameOrigin: isHerbicideFoliarOrder(order) ? HERBICIDE_FOLIAR_RESPONSIBLE : getOperator(data.get("operatorId")),
     note: data.get("note"),
     products
   };
@@ -26162,6 +26411,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const contentWidth = page.getWidth() - margin * 2;
     let top = page.getHeight() - margin;
     const program = getProgramDefinition(order);
+    const specialOrder = isHerbicideFoliarOrder(order);
     const latest = latestDispatch(order);
     const emittedBy = "Diego Ahumada";
     const blocks = orderBlocksGroupedLabel(order);
@@ -26174,7 +26424,7 @@ async function downloadApplicationOrderPdf(orderId) {
       return [
         { text: product.name || "Producto", bold: true }, product.sagType || "-", `${number(dose)} ${doseUnit}`, `${number(productHaFromDose(order, line))} ${line.outputUnit || product.unit || "kg/L"}/ha`,
         String(Number(product.reentryHours) || "-"), String(Number(product.carencyDays) || "NC"), applicationOrderAgendaPesticida(order, line, product), Number(product.carencyDays) ? orderViableHarvestDate(order) : "NC",
-        `${number(order.waterHa, 0)} L/ha`, orderRecipeLineObjective(order, line), `${number(plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
+        `${number(order.waterHa, 0)} L/ha`, specialOrder ? "Registro real por salida" : orderRecipeLineObjective(order, line), `${number(specialOrder ? dispatchedProduct(order, line.productId) : plannedProduct(order, line))} ${product.unit || line.outputUnit || "kg/L"}`
       ];
     });
     const allCompactParameterRows = applicationOrderDispatchParameterRows(order).map((row) => [
@@ -26223,7 +26473,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const title = "Orden de aplicacion de Fitosanitarios y Fertilizantes";
     const titleWidth = boldFont.widthOfTextAtSize(title, 14);
     page.drawText(title, { x: margin + (contentWidth - titleWidth) / 2, y: top - 17, size: 14, font: boldFont, color: colors.darkGreen });
-    const subtitle = pdfSafeText(program?.name || "Programa Fitosanitario");
+    const subtitle = pdfSafeText(specialOrder ? orderTypeLabel(order) : program?.name || "Programa Fitosanitario");
     const subtitleWidth = boldFont.widthOfTextAtSize(subtitle, 7);
     page.drawText(subtitle, { x: margin + (contentWidth - subtitleWidth) / 2, y: top - 29, size: 7, font: boldFont, color: colors.green });
     const orderBoxWidth = 94;
@@ -26242,8 +26492,8 @@ async function downloadApplicationOrderPdf(orderId) {
     const fieldValues = [
       ["Fecha", printDate(orderStartDate(order))], ["Potrero / Cuartel", potreroListLabel(order.potrero)], ["Bloque(s)", blocks],
       ["Especie / Variedad", [order.crop, order.variety].filter(Boolean).join(" / ") || "-"], ["Hectareas", `${number(order.hectares)} ha`],
-      ["Litros aplicados / total", `${number(appliedTotal, 0)} / ${number(plannedLiters(order), 0)} L`],
-      ["Temp. promedio diaria", weatherValue], ["Programa N°", programNumbersLabel(order)]
+      [specialOrder ? "Litros acumulados" : "Litros aplicados / total", specialOrder ? `${number(appliedTotal, 0)} L` : `${number(appliedTotal, 0)} / ${number(plannedLiters(order), 0)} L`],
+      ["Temp. promedio diaria", weatherValue], [specialOrder ? "Tipo de orden" : "Programa N°", specialOrder ? "Herbicida/Foliar" : programNumbersLabel(order)]
     ];
     let fx = margin;
     fieldValues.forEach(([label, value], index) => {
@@ -26260,7 +26510,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const recipeCount = Math.max(6, recipeRows.length);
     while (recipeRows.length < recipeCount) recipeRows.push(Array(11).fill(""));
     const productRowHeight = 15;
-    top = pdfDrawTable(page, top, [88, 72, 60, 60, 40, 42, 54, 51, 58, 205, 75], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia", "Agenda pesticida", "Fecha viable", "Mojamiento / ha", "Objetivo", "Total producto"], recipeRows, {
+    top = pdfDrawTable(page, top, [88, 72, 60, 60, 40, 42, 54, 51, 58, 205, 75], ["Producto", "Tipo producto SAG", "Dosis oficial", "Producto / ha", "Reingreso hrs", "Carencia", "Agenda pesticida", "Fecha viable", "Mojamiento / ha", specialOrder ? "Registro" : "Objetivo", specialOrder ? "Total real" : "Total producto"], recipeRows, {
       x: margin, headerHeight: 24, rowHeight: productRowHeight, headerSize: 6.1, rowSize: 6.3,
       font, boldFont, headerFill: colors.paleGreen, bodyFill: colors.white, border: colors.border
     });
@@ -26316,7 +26566,7 @@ async function downloadApplicationOrderPdf(orderId) {
     const operationRows = [...firstOperationRows];
     while (operationRows.length < 5) operationRows.push(Array(13).fill(""));
     const operationRowHeight = 12;
-    top = pdfDrawOperationTable(page, top, [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100], ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"], operationRows, {
+    top = pdfDrawOperationTable(page, top, [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100], ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Responsable", "Tractor", "Maquinaria", "Temperatura detectada"], operationRows, {
       x: margin, headerHeight: 24, rowHeight: operationRowHeight, headerSize: 5.5, rowSize: 5.8,
       font, boldFont, warehouseColumns: 4, groupFill: colors.paleGreen, headerFill: colors.softGreen,
       bodyFill: colors.white, border: colors.border, dynamicRows: true,
@@ -26386,7 +26636,7 @@ async function downloadApplicationOrderPdf(orderId) {
       drawContinuationSection({
         title: "Salidas de bodega y terreno - continuacion",
         widths: [26, 68, 112, 57, 45, 40, 40, 90, 45, 80, 47, 55, 100],
-        headers: ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Aplicador", "Tractor", "Maquinaria", "Temperatura detectada"],
+        headers: ["Folio", "Fecha entrega", "Potrero / Bloque", "Litros entregados", "Fecha", "Hora inicio", "Hora termino", "Potrero / Bloque", "Litros aplicados", "Responsable", "Tractor", "Maquinaria", "Temperatura detectada"],
         rows: remainingOperationRows, rowHeight: 18, headerHeight: 24, rowSize: 5.6, operation: true
       });
     }
@@ -27737,6 +27987,23 @@ function renderInformatics() {
           }).join("") : `<div class="empty-state compact"><strong>No hay labores pendientes con estos filtros.</strong></div>`}
         </div>
       </section>
+    </div>`;
+}
+
+function dispatchProductManualRow(line, value = 0) {
+  const product = getProduct(line.productId) || {};
+  return `
+    <div class="dispatch-product-calc-row is-manual herbicide-foliar-product-row" data-dispatch-product-row="${htmlAttr(line.productId)}">
+      <div class="dispatch-product-identity">
+        <strong>${escapeHtml(product.name || "Producto")}</strong>
+        <span>Cantidad registrada directamente para esta salida</span>
+      </div>
+      <label class="dispatch-product-total">Cantidad real
+        <span class="dispatch-product-input-wrap">
+          <input name="product-${htmlAttr(line.productId)}" data-product-input="${htmlAttr(line.productId)}" data-manual-override="true" type="number" min="0" step="0.001" value="${Number(value || 0).toFixed(3)}" required>
+          <b>${escapeHtml(product.unit || line.outputUnit || "kg/L")}</b>
+        </span>
+      </label>
     </div>`;
 }
 
@@ -29126,12 +29393,13 @@ initSidebarAutoHide();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=436-overnight-dispatch-time", { updateViaCache: "none" })
+    .register("./sw.js?v=440-order-types", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }
 
 async function initApp() {
+  showAppLoading("Preparando AgroCore...");
   enhanceAuthGate();
   hydrateCloudLoadedModulesFromCache();
   passwordRecoverySession = readRecoverySessionFromUrl();
@@ -29140,6 +29408,7 @@ async function initApp() {
     setAuthGate(true);
     showGateTab("resetPassword");
     setGateStatus("Ingresa una nueva contrasena para completar la recuperacion.", "info");
+    await hideAppLoading(700);
     return;
   }
   if (supabaseSession) {
@@ -29149,14 +29418,33 @@ async function initApp() {
       await loadCloudProfile();
       showAuthenticatedShell("Cargando inicio desde Supabase...");
       loadCloudDataInBackground({ toastOnSuccess: true });
+      await hideAppLoading(700);
       return;
     } catch (error) {
       showToast(`Supabase no cargo: ${error.message}`);
-      saveSession(null);
+      if (sessionFailureRequiresLogin(error)) {
+        saveSession(null);
+        clearCachedProfile();
+        currentProfile = null;
+      } else if (currentProfile) {
+        applyRoleNavigation();
+        updateAuthenticatedUserUi();
+        showAuthenticatedShell("Sesion restaurada. Reconectando con Supabase...");
+        await hideAppLoading(700);
+        setTimeout(() => loadCloudDataInBackground({ toastOnSuccess: true }), 1400);
+        showToast("Sesion restaurada desde este equipo");
+        return;
+      } else {
+        setAuthGate(true);
+        setGateStatus("No se pudo conectar con Supabase. Tu sesion sigue guardada; intenta nuevamente.", "error");
+        await hideAppLoading(700);
+        return;
+      }
     }
   }
   setAuthGate(true);
   document.getElementById("storageStatus").textContent = "Esperando inicio de sesion";
+  await hideAppLoading(700);
 }
 
 initApp();

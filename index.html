@@ -3,22 +3,29 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#1f6f4a">
+    <meta name="theme-color" content="#07131f">
     <title>Canelillo AgroCore</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="icon" href="canelilloIcon.png">
-  <link rel="stylesheet" href="styles.css?v=436-overnight-dispatch-time">
+    <link rel="icon" href="assets/canelillo-symbol.png">
+  <link rel="stylesheet" href="styles.css?v=440-order-types">
   </head>
   <body>
-    <section id="authGate" class="auth-gate">
-      <div class="auth-card">
-        <div class="brand auth-brand">
-          <div class="brand-mark"><img src="canelilloIcon.png" alt="Logo Canelillo" onerror="this.style.display='none'; this.parentElement.classList.add('logo-fallback');"></div>
+    <section id="appBootScreen" class="app-boot-screen" role="status" aria-live="polite" aria-busy="true">
+      <div class="app-boot-content">
+        <span class="app-boot-spinner" aria-hidden="true"></span>
+        <div class="app-boot-brand">
+          <img src="assets/canelillo-symbol.png" alt="Simbolo Canelillo">
           <div>
-            <strong>Canelillo AgroCore</strong>
-            <span>Supabase · aplicaciones y bodega</span>
+            <small>Agricola El Canelillo</small>
+            <strong>AgroCore</strong>
           </div>
         </div>
+        <p id="appBootMessage">Preparando AgroCore...</p>
+      </div>
+    </section>
+
+    <section id="authGate" class="auth-gate">
+      <div class="auth-card">
         <div class="auth-tabs">
           <button type="button" class="active" data-action="gate-tab" data-tab="login">Ingresar</button>
           <button type="button" data-action="gate-tab" data-tab="register">Registrar</button>
@@ -26,7 +33,8 @@
         <div id="gateStatus" class="auth-status" role="status" aria-live="polite"></div>
         <form id="gateLoginForm" class="auth-pane active-auth-pane">
           <label>Correo<input name="email" type="email" autocomplete="email" required></label>
-          <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+          <label>Contraseña<span class="auth-password-field"><input id="gateLoginPassword" name="password" type="password" autocomplete="current-password" required><button class="auth-password-toggle" type="button" data-password-target="gateLoginPassword" aria-label="Mostrar contrasena" aria-pressed="false" title="Mostrar contrasena"><span aria-hidden="true"></span></button></span></label>
+          <label class="auth-remember"><input name="rememberSession" type="checkbox" checked><span>Recordar sesion en este equipo</span></label>
           <button class="primary-button" type="button" id="gateLoginButton">Entrar</button>
           <button class="link-button" type="button" data-action="gate-tab" data-tab="recover">Recuperar contraseÃ±a</button>
         </form>
@@ -64,12 +72,8 @@
 
     <div class="app-shell locked">
       <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark"><img src="canelilloIcon.png" alt="Logo Canelillo" onerror="this.style.display='none'; this.parentElement.classList.add('logo-fallback');"></div>
-          <div>
-            <strong>Canelillo AgroCore</strong>
-            <span>Gestión agrícola en nube</span>
-          </div>
+        <div class="brand sidebar-brand">
+          <img class="sidebar-brand-logo" src="assets/canelillo-logo-hd.png" alt="Canelillo">
         </div>
         <nav class="nav" aria-label="Principal">
           <button class="nav-item active" data-view="dashboard" title="Inicio"><span class="nav-label">Inicio</span></button>
@@ -191,6 +195,6 @@
     <script src="vendor/pdf-lib.min.js"></script>
     <script src="agricultural-map.js?v=358-calicata-shared-map"></script>
     <script src="index-color-scales.js?v=334-shared-agricultural-map"></script>
-  <script src="app.js?v=436-overnight-dispatch-time"></script>
+  <script src="app.js?v=440-order-types"></script>
   </body>
 </html>
