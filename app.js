@@ -20582,11 +20582,11 @@ function dispatchOrderSummary(order) {
   const pending = Math.max(0, total - applied);
   return `
     <div class="dispatch-order-summary" aria-label="Resumen de la orden">
-      <span><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero))}</strong></span>
-      <span class="dispatch-order-blocks"><small>Bloques</small><strong>${escapeHtml(orderBlocksLabel(order) || "Sin bloques")}</strong></span>
-      <span><small>Solicitado</small><strong>${number(total, 0)} L</strong></span>
-      <span><small>Aplicado neto</small><strong>${number(applied, 0)} L</strong></span>
-      <span class="${pending > 0 ? "is-pending" : "is-complete"}"><small>Pendiente</small><strong>${number(pending, 0)} L</strong></span>
+      <span class="is-automatic"><small>Potrero</small><strong>${escapeHtml(potreroListLabel(order.potrero))}</strong></span>
+      <span class="dispatch-order-blocks is-automatic"><small>Bloques</small><strong>${escapeHtml(orderBlocksLabel(order) || "Sin bloques")}</strong></span>
+      <span class="is-automatic"><small>Solicitado</small><strong>${number(total, 0)} L</strong></span>
+      <span class="is-automatic"><small>Aplicado neto</small><strong>${number(applied, 0)} L</strong></span>
+      <span class="is-automatic ${pending > 0 ? "is-pending" : "is-complete"}"><small>Pendiente</small><strong>${number(pending, 0)} L</strong></span>
     </div>`;
 }
 
@@ -23826,81 +23826,87 @@ async function openOrderDialog(orderId, presetProgramId = "") {
   const initialPotrero = firstPotreroFromSelection(order?.blocks, order?.potrero);
 
   dialog.innerHTML = `
-    <form method="dialog" class="modal-body" id="orderForm">
+    <form method="dialog" class="modal-body order-entry-form" id="orderForm">
       <div class="modal-head">
-        <h2>${order ? "Editar orden" : "Nueva orden de aplicacion"}</h2>
+        <div>
+          <h2>${order ? "Editar orden" : "Nueva orden de aplicacion"}</h2>
+          <p>Planifica sectores, programa y productos en una sola vista.</p>
+        </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar">x</button>
       </div>
-      <div class="form-grid">
-        <label>Numero<input name="number" type="number" min="1" step="1" value="${order?.number || nextNumber}" readonly required></label>
-        <label>Temporada<select name="seasonId">${state.seasons.map((season) => `<option value="${season.id}" ${season.id === initialSeasonId ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}</select></label>
-        <label>Fecha de inicio<input name="plannedDate" type="date" value="${order ? orderStartDate(order) : new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Fecha termino aplicacion<input name="endDate" type="date" value="${order?.endDate || order?.plannedEndDate || (order ? orderStartDate(order) : new Date().toISOString().slice(0, 10))}" required></label>
-        <div class="program-picker official-order-program-picker full">
-          <input type="hidden" name="programNumbers" value="${selectedPrograms.join(", ")}">
-          <input type="hidden" name="programId" value="${selectedOfficialProgram?.id || order?.programId || ""}">
-          <div class="block-picker-head">
-            <label>Programa Fitosanitario
-              <select id="officialProgramSelect">
-                <option value="">Seleccionar aplicación oficial</option>
-                ${officialProgramOrderOptions(selectedOfficialProgram?.id || "", initialSeasonId)}
-              </select>
-            </label>
-            <button type="button" class="secondary-button" id="applyOfficialProgram">Añadir programa</button>
+      <div class="order-form-workspace">
+        <div class="order-form-main">
+          <fieldset class="order-section order-core-section">
+            <legend>Datos de la orden</legend>
+            <div class="form-grid order-core-grid">
+              <label class="autofill-locked-field">Numero<input name="number" type="number" min="1" step="1" value="${order?.number || nextNumber}" readonly required><small>Correlativo automatico</small></label>
+              <label>Temporada<select name="seasonId">${state.seasons.map((season) => `<option value="${season.id}" ${season.id === initialSeasonId ? "selected" : ""}>${escapeHtml(applicationSeasonLabel(season))}</option>`).join("")}</select></label>
+              <label>Fecha de inicio<input name="plannedDate" type="date" value="${order ? orderStartDate(order) : new Date().toISOString().slice(0, 10)}" required></label>
+              <label>Fecha termino<input name="endDate" type="date" value="${order?.endDate || order?.plannedEndDate || (order ? orderStartDate(order) : new Date().toISOString().slice(0, 10))}" required></label>
+              <label>Clasificacion<select name="classification">${classificationOptions(order?.classification || "")}</select></label>
+              <label>Mojamiento L/ha<input name="waterHa" type="number" step="1" value="${order?.waterHa || 1500}" required></label>
+              <label class="autofill-locked-field">Especie<input name="crop" value="${htmlAttr(order?.crop || "")}" placeholder="Automatico" readonly required><small>Segun bloques</small></label>
+              <label class="autofill-locked-field">Variedad<input name="variety" value="${htmlAttr(order?.variety || "")}" placeholder="Automatico" readonly><small>Segun bloques</small></label>
+              <label class="autofill-locked-field">Hectareas<input name="hectares" type="number" step="0.01" value="${htmlAttr(order?.hectares || "")}" readonly required><small>Suma automatica</small></label>
+            </div>
+          </fieldset>
+          <div class="program-picker official-order-program-picker order-program-picker">
+            <input type="hidden" name="programNumbers" value="${selectedPrograms.join(", ")}">
+            <input type="hidden" name="programId" value="${selectedOfficialProgram?.id || order?.programId || ""}">
+            <div class="block-picker-head">
+              <label>Programa Fitosanitario
+                <select id="officialProgramSelect">
+                  <option value="">Seleccionar aplicación oficial</option>
+                  ${officialProgramOrderOptions(selectedOfficialProgram?.id || "", initialSeasonId)}
+                </select>
+              </label>
+              <button type="button" class="secondary-button" id="applyOfficialProgram">Añadir</button>
+            </div>
+            <div id="selectedPrograms" class="selected-blocks"></div>
+            <p class="field-hint">Puedes asociar más de un programa.</p>
           </div>
-          <div id="selectedPrograms" class="selected-blocks"></div>
-          <p class="field-hint">Puedes añadir más de una aplicación oficial a la misma orden.</p>
-        </div>
-        <label class="full">Objetivo
-          <textarea name="objective" rows="2" readonly placeholder="Se completa al añadir productos vinculados al programa">${escapeHtml(order?.objective || "")}</textarea>
-          <small>Se obtiene del programa correspondiente a cada producto seleccionado.</small>
-        </label>
-        <label>Clasificacion
-          <select name="classification">
-            ${classificationOptions(order?.classification || "")}
-          </select>
-        </label>
-        <label id="potreroSelectLabel">Potrero base
-          <select name="potrero" id="potreroSelect" required>
-            <option value="">Seleccionar</option>
-            ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === initialPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}
-          </select>
-        </label>
-        <div class="block-picker full">
-          <input type="hidden" name="blocks" value="${order?.blocks?.join(", ") || ""}">
-          <div class="block-picker-head">
-            <label>Bloque a agregar
-              <select id="blockSelect">
-                <option value="">Primero selecciona un potrero</option>
-              </select>
-            </label>
-            <button type="button" class="secondary-button" id="addBlockToOrder">Agregar bloque</button>
+          <div class="block-picker order-block-picker">
+            <input type="hidden" name="blocks" value="${order?.blocks?.join(", ") || ""}">
+            <div class="order-block-controls">
+              <label id="potreroSelectLabel">Potrero a agregar
+                <select name="potrero" id="potreroSelect" required>
+                  <option value="">Seleccionar</option>
+                  ${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === initialPotrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}
+                </select>
+              </label>
+              <label>Bloque a agregar
+                <select id="blockSelect"><option value="">Primero selecciona un potrero</option></select>
+              </label>
+              <button type="button" class="secondary-button" id="addBlockToOrder">Agregar</button>
+            </div>
+            <div id="selectedBlocks" class="selected-blocks"></div>
+            <p id="blockSummary" class="field-hint">Selecciona un potrero y agrega sus bloques.</p>
           </div>
-          <div id="selectedBlocks" class="selected-blocks"></div>
-          <p id="blockSummary" class="field-hint">Selecciona un potrero, agrega sus bloques y luego continúa con el siguiente potrero.</p>
         </div>
-        <label class="autofill-locked-field">Especie<input name="crop" value="${order?.crop || ""}" placeholder="Se rellena automaticamente" readonly required><small>Autocompletado por potrero/bloque</small></label>
-        <label class="autofill-locked-field">Variedad<input name="variety" value="${order?.variety || ""}" placeholder="Se rellena automaticamente" readonly><small>Autocompletado por potrero/bloque</small></label>
-        <label>Hectareas<input name="hectares" type="number" step="0.01" value="${order?.hectares || ""}" readonly required></label>
-        <label>Mojamiento L/ha<input name="waterHa" type="number" step="1" value="${order?.waterHa || 1500}" required></label>
+        <div class="order-form-side">
+          <label class="autofill-locked-field order-objective-field">Objetivo
+            <textarea name="objective" rows="2" readonly placeholder="Se completa al añadir productos vinculados al programa">${escapeHtml(order?.objective || "")}</textarea>
+            <small>Autocompletado desde el programa de cada producto.</small>
+          </label>
+          <div class="recipe-editor order-recipe-editor">
+            <div class="panel-header">
+              <h3>Receta</h3>
+              <button type="button" class="secondary-button" id="addRecipeLine">Agregar producto</button>
+            </div>
+            <div id="recipeLines" class="order-recipe-lines">
+              <div class="recipe-line recipe-line-head">
+                <strong>Producto</strong>
+                <strong>Programa</strong>
+                <strong>Dosis oficial</strong>
+                <strong>Gasto / ha</strong>
+                <span></span>
+              </div>
+              ${selectedRecipe.map((line) => recipeLineHtml(line, selectedPrograms)).join("")}
+            </div>
+          </div>
+          <label class="order-notes-field">Observaciones<textarea name="notes" rows="2">${escapeHtml(order?.notes || "")}</textarea></label>
+        </div>
       </div>
-      <div class="recipe-editor">
-        <div class="panel-header">
-          <h3>Receta</h3>
-          <button type="button" class="secondary-button" id="addRecipeLine">Agregar producto</button>
-        </div>
-        <div id="recipeLines">
-          <div class="recipe-line recipe-line-head">
-            <strong>Producto</strong>
-            <strong>Programa</strong>
-            <strong>Dosis oficial</strong>
-            <strong>Gasto por producto / ha</strong>
-            <span></span>
-          </div>
-          ${selectedRecipe.map((line) => recipeLineHtml(line, selectedPrograms)).join("")}
-        </div>
-      </div>
-      <label>Observaciones<textarea name="notes" rows="3">${order?.notes || ""}</textarea></label>
       <div class="modal-actions">
         <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
         <button class="primary-button" type="button" id="saveOrder">${order ? "Guardar cambios" : "Crear orden"}</button>
@@ -24567,7 +24573,7 @@ function recipeLineHtml(line, programs = []) {
       </div>
       <select name="lineProgramNumber">${programOptions(programs, line.programNumber ?? programs[0] ?? "")}</select>
       <label class="recipe-dose-control"><input name="dose100" type="number" step="0.01" value="${doseValue}" aria-label="Dosis oficial"><small>${escapeHtml(unit || "Unidad pendiente")}</small></label>
-      <label class="recipe-result-control"><input name="productHaProgram" type="number" step="0.001" value="" aria-label="Gasto por producto y hectarea" title="Calculado desde la base de dosis oficial" readonly><small>${escapeHtml(line.outputUnit || getProduct(line.productId)?.unit || "kg/L")}/ha</small></label>
+      <label class="recipe-result-control autofill-locked-field"><input name="productHaProgram" type="number" step="0.001" value="" aria-label="Gasto por producto y hectarea" title="Calculado desde la base de dosis oficial" readonly><small>${escapeHtml(line.outputUnit || getProduct(line.productId)?.unit || "kg/L")}/ha automatico</small></label>
       <button type="button" class="icon-button" data-action="remove-recipe" title="Quitar">x</button>
     </div>
   `;
@@ -24948,7 +24954,7 @@ function dispatchProductCalculatorRow(order, line, value, manual = false) {
   const product = getProduct(line.productId) || {};
   const productHa = productHaFromDose(order, line);
   return `
-    <div class="dispatch-product-calc-row ${manual ? "is-manual" : ""}" data-dispatch-product-row="${htmlAttr(line.productId)}">
+    <div class="dispatch-product-calc-row ${manual ? "is-manual" : "is-auto-calculated"}" data-dispatch-product-row="${htmlAttr(line.productId)}">
       <div class="dispatch-product-identity">
         <strong>${escapeHtml(product.name || "Producto")}</strong>
         <span>Producto / ha: <b>${number(productHa)} ${escapeHtml(product.unit || line.outputUnit || "kg/L")}/ha</b></span>
@@ -24957,7 +24963,7 @@ function dispatchProductCalculatorRow(order, line, value, manual = false) {
         <small>Cálculo sugerido</small>
         <strong data-dispatch-formula="${htmlAttr(line.productId)}">-</strong>
       </div>
-      <label class="dispatch-product-total">Total producto
+      <label class="dispatch-product-total">Total producto <small class="dispatch-auto-badge">Automatico</small>
         <span class="dispatch-product-input-wrap">
           <input name="product-${htmlAttr(line.productId)}" data-product-input="${htmlAttr(line.productId)}" data-manual-override="${manual ? "true" : "false"}" type="number" min="0" step="0.001" value="${Number(value || 0).toFixed(3)}" required>
           <b>${escapeHtml(product.unit || line.outputUnit || "kg/L")}</b>
@@ -24986,6 +24992,7 @@ function refreshDispatchProductCalculator(orderId, form, force = false) {
       input.value = qty.toFixed(3);
       input.dataset.manualOverride = "false";
       row?.classList.remove("is-manual");
+      row?.classList.add("is-auto-calculated");
     }
   });
   form.querySelectorAll("[data-equivalent-hectares]").forEach((element) => {
@@ -24999,7 +25006,9 @@ function bindDispatchProductCalculator(orderId, form, preserveValues = false) {
     input.dataset.manualOverride = preserveValues ? "true" : "false";
     input.addEventListener("input", () => {
       input.dataset.manualOverride = "true";
-      input.closest("[data-dispatch-product-row]")?.classList.add("is-manual");
+      const row = input.closest("[data-dispatch-product-row]");
+      row?.classList.add("is-manual");
+      row?.classList.remove("is-auto-calculated");
     });
   });
   form.querySelectorAll("[data-use-dispatch-calculation]").forEach((button) => {
@@ -28950,7 +28959,7 @@ if (resetDemoButton) {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker
-    .register("./sw.js?v=433-dispatch-dialog-24h", { updateViaCache: "none" })
+    .register("./sw.js?v=434-order-dialog-autofill", { updateViaCache: "none" })
     .then((registration) => registration.update())
     .catch(() => {}));
 }

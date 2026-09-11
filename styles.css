@@ -26775,3 +26775,355 @@ dialog.informatics-staff-dialog {
     text-align: left;
   }
 }
+
+/* Supervisor: nueva orden completa y campos de origen automatico. */
+#orderDialog:has(.order-entry-form) {
+  width: min(1380px, calc(100vw - 18px));
+  max-width: none;
+  max-height: calc(100dvh - 18px);
+  overflow: hidden;
+  background: #f7faf8;
+}
+
+.order-entry-form {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: min(900px, calc(100dvh - 18px));
+  max-height: calc(100dvh - 18px);
+  gap: 9px;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.order-entry-form .modal-head {
+  min-height: 40px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #d2e2dc;
+}
+
+.order-entry-form .modal-head h2,
+.order-entry-form .modal-head p {
+  margin: 0;
+}
+
+.order-entry-form .modal-head h2 {
+  color: #173d32;
+  font-size: 1.12rem;
+}
+
+.order-entry-form .modal-head p {
+  margin-top: 2px;
+  color: #697d75;
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.order-form-workspace {
+  display: grid;
+  grid-template-columns: minmax(560px, 0.98fr) minmax(580px, 1.02fr);
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.order-form-main,
+.order-form-side {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  gap: 8px;
+}
+
+.order-form-side {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+}
+
+.order-section,
+.order-entry-form .order-program-picker,
+.order-entry-form .order-block-picker,
+.order-entry-form .order-recipe-editor,
+.order-entry-form .order-objective-field,
+.order-entry-form .order-notes-field {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #c9ddd4;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.order-section {
+  padding: 8px;
+}
+
+.order-section legend {
+  padding: 0 5px;
+  color: #126047;
+  font-size: 0.69rem;
+  font-weight: 900;
+}
+
+.order-core-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+
+.order-entry-form label {
+  min-width: 0;
+  gap: 3px;
+  font-size: 0.66rem;
+}
+
+.order-entry-form input,
+.order-entry-form select,
+.order-entry-form textarea,
+.order-entry-form button {
+  min-height: 34px;
+  font-size: 0.72rem;
+}
+
+.order-entry-form input,
+.order-entry-form select,
+.order-entry-form textarea {
+  padding: 6px 8px;
+}
+
+.order-entry-form .autofill-locked-field input[readonly],
+.order-entry-form .autofill-locked-field textarea[readonly] {
+  padding-right: 32px;
+  border-color: #83c5aa;
+  background: #e8f7f0;
+  color: #0c5b43;
+  font-weight: 850;
+  cursor: not-allowed;
+}
+
+.order-entry-form .autofill-locked-field::after {
+  top: 27px;
+  right: 10px;
+  font-size: 0.78rem;
+}
+
+.order-entry-form .autofill-locked-field small {
+  margin-top: 0;
+  font-size: 0.56rem;
+  line-height: 1.1;
+}
+
+.order-entry-form .order-program-picker,
+.order-entry-form .order-block-picker {
+  gap: 5px;
+  padding: 8px;
+}
+
+.order-entry-form .block-picker-head,
+.order-block-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 7px;
+}
+
+.order-block-controls {
+  grid-template-columns: minmax(130px, 0.75fr) minmax(150px, 1fr) auto;
+}
+
+.order-entry-form .selected-blocks {
+  min-height: 28px;
+  max-height: 82px;
+  gap: 5px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.order-entry-form .selected-block-group {
+  min-width: 140px;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 6px;
+}
+
+.order-entry-form .selected-block-group strong,
+.order-entry-form .block-chip {
+  font-size: 0.62rem;
+}
+
+.order-entry-form .block-chip {
+  min-height: 25px;
+  gap: 5px;
+  padding: 3px 7px;
+}
+
+.order-entry-form .field-hint {
+  font-size: 0.59rem;
+  line-height: 1.2;
+}
+
+.order-objective-field,
+.order-notes-field {
+  position: relative;
+  padding: 7px;
+}
+
+.order-objective-field textarea,
+.order-notes-field textarea {
+  min-height: 48px;
+  height: 48px;
+  resize: none;
+}
+
+.order-entry-form .order-objective-field::after {
+  top: 29px;
+  right: 16px;
+}
+
+.order-recipe-editor {
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  gap: 6px;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.order-recipe-editor .panel-header {
+  min-height: 32px;
+}
+
+.order-recipe-editor .panel-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.order-recipe-lines {
+  min-height: 0;
+  padding-right: 3px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.order-entry-form .recipe-line {
+  grid-template-columns: minmax(145px, 1.25fr) minmax(86px, 0.65fr) minmax(98px, 0.72fr) minmax(98px, 0.72fr) 32px;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.order-entry-form .recipe-line-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 24px;
+  padding: 3px;
+  background: #f5faf7;
+  font-size: 0.58rem;
+}
+
+.order-entry-form .recipe-product-trigger {
+  min-height: 38px;
+  padding: 5px 7px;
+}
+
+.order-entry-form .recipe-product-trigger strong {
+  font-size: 0.68rem;
+}
+
+.order-entry-form .recipe-product-trigger small,
+.order-entry-form .recipe-product-trigger > b,
+.order-entry-form .recipe-dose-control small,
+.order-entry-form .recipe-result-control small {
+  font-size: 0.55rem;
+}
+
+.order-entry-form .recipe-result-control.autofill-locked-field::after {
+  top: 9px;
+  right: 9px;
+}
+
+.order-entry-form .modal-actions {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid #d2e2dc;
+}
+
+/* Bodega: datos heredados y calculados identificables de inmediato. */
+.dispatch-order-summary > .is-automatic {
+  position: relative;
+  padding-right: 29px;
+  border-color: #9bcfba;
+  background: #edf9f4;
+}
+
+.dispatch-order-summary > .is-automatic::after,
+.dispatch-auto-badge::before {
+  content: "🔒";
+}
+
+.dispatch-order-summary > .is-automatic::after {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  color: #117153;
+  font-size: 0.68rem;
+}
+
+.dispatch-product-calc-row.is-auto-calculated {
+  border-color: #8fc9b1;
+  background: #f0faf5;
+}
+
+.dispatch-auto-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  color: #0e7655;
+  font-size: 0.54rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dispatch-product-calc-row.is-manual .dispatch-auto-badge {
+  display: none;
+}
+
+@media (max-width: 1040px) {
+  #orderDialog:has(.order-entry-form) {
+    width: calc(100vw - 14px) !important;
+    max-width: none !important;
+  }
+
+  .order-entry-form {
+    height: auto;
+    min-height: min(780px, calc(100dvh - 14px));
+    overflow: auto;
+    overflow-x: hidden;
+  }
+
+  .order-form-workspace {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .order-recipe-lines {
+    max-height: 360px;
+  }
+}
+
+@media (max-width: 640px) {
+  .order-entry-form {
+    max-height: calc(100dvh - 12px) !important;
+    min-height: 0;
+    padding: 11px;
+  }
+
+  .order-core-grid,
+  .order-block-controls,
+  .order-entry-form .block-picker-head {
+    grid-template-columns: 1fr;
+  }
+
+  .order-entry-form .recipe-line:not(.recipe-line-head) {
+    grid-template-columns: 1fr 1fr 32px;
+  }
+}
