@@ -7678,6 +7678,24 @@ td span,
   white-space: nowrap;
 }
 
+.irrigation-cell-popover-wiseconn-grid span.is-under {
+  border-color: #efc06f;
+  background: #fff6db;
+}
+
+.irrigation-cell-popover-wiseconn-grid span.is-under b {
+  color: #8a4b08;
+}
+
+.irrigation-cell-popover-wiseconn-grid span.is-complete {
+  border-color: #a7d8c1;
+  background: #eef9f3;
+}
+
+.irrigation-cell-popover-wiseconn-grid span.is-complete b {
+  color: #146447;
+}
+
 .irrigation-cell-popover-wiseconn.is-manual {
   border-color: #f0c57d;
   border-left-color: #d97706;

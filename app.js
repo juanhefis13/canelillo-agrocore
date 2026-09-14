@@ -3459,6 +3459,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     context.blockId,
     context.date,
     value,
+    context.kind === "real" ? irrigationProgramHours[key] ?? "" : "",
     audit?.updatedAt || "",
     observation?.updatedAt || "",
     observation?.text ? "obs" : "",
@@ -3483,6 +3484,17 @@ function irrigationCellPopoverHtml(context, block) {
   const events = irrigationCellEvents(context.blockId, context.date);
   const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
   const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
+  const programmedHours = Number(irrigationProgramHours[key]);
+  const realHours = Number(value);
+  const hasProgrammedHours = context.kind === "real" && Number.isFinite(programmedHours) && programmedHours > 0;
+  const hoursDifference = hasProgrammedHours && Number.isFinite(realHours) ? realHours - programmedHours : null;
+  const hoursDifferenceLabel = hoursDifference === null
+    ? "Sin programa"
+    : hoursDifference < 0
+      ? `Faltaron ${number(Math.abs(hoursDifference), 2)} h`
+      : hoursDifference > 0
+        ? `Exceso ${number(hoursDifference, 2)} h`
+        : "Programa cumplido";
   const lastUser = sourceInfo.source === "wiseconn" ? "WiseConn" : (audit?.userName || audit?.userEmail || "Sin modificación");
   const wiseconnSyncedAt = wiseconnSyncState.syncedAt || sourceInfo.meta?.syncedAt || "";
   const lastDate = sourceInfo.source === "wiseconn" && wiseconnSyncedAt
@@ -3504,6 +3516,8 @@ function irrigationCellPopoverHtml(context, block) {
         <span><small>Caudal medido</small><b>${Number(sourceInfo.meta?.measuredFlowM3H) > 0 ? `${number(sourceInfo.meta.measuredFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
         <span><small>Caudal teórico AgroCore</small><b>${number(sourceInfo.meta?.flowM3H, 2)} m3/h</b></span>
         <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
+        <span><small>Horas programadas</small><b>${hasProgrammedHours ? `${number(programmedHours, 2)} h` : "Sin programa"}</b></span>
+        <span class="${hoursDifference === null ? "" : hoursDifference < 0 ? "is-under" : "is-complete"}"><small>Balance del día</small><b>${hoursDifferenceLabel}</b></span>
       </div>
       <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Día operativo 06:00 a 05:59</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
