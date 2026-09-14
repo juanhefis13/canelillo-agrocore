@@ -2704,8 +2704,9 @@ async function persistWiseconnIrrigationDays(rows = [], range = null) {
   };
 }
 
-async function fetchWiseconnEvents(range) {
-  const response = await fetch(`${WISECONN_PROXY_BASE}/real-irrigations?from=${encodeURIComponent(wiseconnShiftDate(range.start, -1))}&to=${encodeURIComponent(range.end)}`, {
+async function fetchWiseconnEvents(range, options = {}) {
+  const forceQuery = options.force ? "&refresh=1" : "";
+  const response = await fetch(`${WISECONN_PROXY_BASE}/real-irrigations?from=${encodeURIComponent(wiseconnShiftDate(range.start, -1))}&to=${encodeURIComponent(range.end)}${forceQuery}`, {
     headers: { Authorization: `Bearer ${supabaseSession?.access_token || ""}` },
     cache: "no-store"
   });
@@ -2754,10 +2755,8 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     const shouldRefresh = options.force || Date.now() - lastRefresh > WISECONN_REFRESH_TTL_MS;
     if (shouldRefresh) {
       try {
-        const remote = await fetchWiseconnEvents(range);
-        const byId = new Map(events.map((event) => [event.id, event]));
-        remote.events.forEach((event) => byId.set(event.id, event));
-        events = [...byId.values()];
+        const remote = await fetchWiseconnEvents(range, { force: Boolean(options.force) });
+        events = remote.events;
         await persistWiseconnEvents(remote.events);
         wiseconnMonthRefresh.set(monthPrefix, Date.now());
         wiseconnSyncState.cached = remote.cached;
@@ -3492,8 +3491,28 @@ function irrigationCellPopoverHtml(context, block) {
     ? "Sin programa"
     : hoursDifference < 0
       ? `Faltaron ${number(Math.abs(hoursDifference), 2)} h`
-      : hoursDifference > 0
-        ? `Exceso ${number(hoursDifference, 2)} h`
+        : hoursDifference > 0
+          ? `Exceso ${number(hoursDifference, 2)} h`
+          : "Programa cumplido";
+  const monthPrefix = String(context.date || "").slice(0, 7);
+  const monthParts = monthPrefix.split("-").map(Number);
+  const monthDays = monthParts.length === 2 && monthParts.every(Number.isFinite)
+    ? new Date(monthParts[0], monthParts[1], 0).getDate()
+    : 0;
+  const programmedMonthHours = monthDays
+    ? irrigationBlockMonthTotal(irrigationProgramHours, context.blockId, monthPrefix, monthDays)
+    : 0;
+  const wiseconnMonthHours = monthDays
+    ? irrigationBlockMonthTotal({ ...wiseconnPersistedHours, ...wiseconnIrrigationHours }, context.blockId, monthPrefix, monthDays)
+    : 0;
+  const hasMonthlyProgram = programmedMonthHours > 0;
+  const monthlyDifference = hasMonthlyProgram ? wiseconnMonthHours - programmedMonthHours : null;
+  const monthlyDifferenceLabel = monthlyDifference === null
+    ? "Sin programa mensual"
+    : monthlyDifference < 0
+      ? `Faltaron ${number(Math.abs(monthlyDifference), 2)} h`
+      : monthlyDifference > 0
+        ? `Exceso ${number(monthlyDifference, 2)} h`
         : "Programa cumplido";
   const lastUser = sourceInfo.source === "wiseconn" ? "WiseConn" : (audit?.userName || audit?.userEmail || "Sin modificación");
   const wiseconnSyncedAt = wiseconnSyncState.syncedAt || sourceInfo.meta?.syncedAt || "";
@@ -3518,6 +3537,14 @@ function irrigationCellPopoverHtml(context, block) {
         <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
         <span><small>Horas programadas</small><b>${hasProgrammedHours ? `${number(programmedHours, 2)} h` : "Sin programa"}</b></span>
         <span class="${hoursDifference === null ? "" : hoursDifference < 0 ? "is-under" : "is-complete"}"><small>Balance del día</small><b>${hoursDifferenceLabel}</b></span>
+      </div>
+      <div class="irrigation-cell-popover-wiseconn-month">
+        <strong>Total mensual del sector</strong>
+        <div>
+          <span><small>Programado</small><b>${hasMonthlyProgram ? `${number(programmedMonthHours, 2)} h` : "Sin programa"}</b></span>
+          <span><small>WiseConn</small><b>${number(wiseconnMonthHours, 2)} h</b></span>
+          <span class="${monthlyDifference === null ? "" : monthlyDifference < 0 ? "is-under" : "is-complete"}"><small>Diferencia</small><b>${monthlyDifferenceLabel}</b></span>
+        </div>
       </div>
       <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Día operativo 06:00 a 05:59</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}

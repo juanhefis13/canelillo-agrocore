@@ -7696,6 +7696,48 @@ td span,
   color: #146447;
 }
 
+.irrigation-cell-popover-wiseconn-month {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+  border-top: 1px solid #c9e2ed;
+}
+
+.irrigation-cell-popover-wiseconn-month > strong {
+  color: #174f69;
+  font-size: 0.62rem;
+}
+
+.irrigation-cell-popover-wiseconn-month > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.irrigation-cell-popover-wiseconn-month span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.irrigation-cell-popover-wiseconn-month span.is-under {
+  background: #fff2c7;
+}
+
+.irrigation-cell-popover-wiseconn-month span.is-complete {
+  background: #e8f7ef;
+}
+
+.irrigation-cell-popover-wiseconn-month b {
+  color: #123f54;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .irrigation-cell-popover-wiseconn.is-manual {
   border-color: #f0c57d;
   border-left-color: #d97706;

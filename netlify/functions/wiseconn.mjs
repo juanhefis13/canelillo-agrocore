@@ -132,9 +132,9 @@ function minimalZone(zone = {}) {
   };
 }
 
-async function cached(key, loader) {
+async function cached(key, loader, force = false) {
   const previous = responseCache.get(key);
-  if (previous && previous.expiresAt > Date.now()) return { value: previous.value, cache: "HIT" };
+  if (!force && previous && previous.expiresAt > Date.now()) return { value: previous.value, cache: "HIT" };
   const value = await loader();
   responseCache.set(key, { value, expiresAt: Date.now() + cacheTtlMs });
   return { value, cache: "MISS" };
@@ -178,9 +178,10 @@ export default async (req) => {
     if (!url.pathname.endsWith("/real-irrigations")) return json(404, { message: "Endpoint WiseConn no encontrado" });
     const from = dateOnly(url.searchParams.get("from"));
     const to = dateOnly(url.searchParams.get("to"));
+    const forceRefresh = url.searchParams.get("refresh") === "1";
     if (!from || !to || from > to) return json(400, { message: "Rango de fechas invalido" });
     if (rangeDays(from, to) > 62) return json(400, { message: "El rango maximo permitido es de 62 dias" });
-    const result = await cached(`events:${farmId}:${from}:${to}`, () => realIrrigations(farmId, from, to));
+    const result = await cached(`events:${farmId}:${from}:${to}`, () => realIrrigations(farmId, from, to), forceRefresh);
     return json(200, {
       farmId,
       from,
