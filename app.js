@@ -3713,7 +3713,6 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     sourceInfo.meta?.measuredFlowM3H ?? "",
     sourceInfo.meta?.durationHours ?? "",
     sourceInfo.meta?.scheduledHours ?? "",
-    wiseconnScheduledHours[key] ?? "",
     sourceInfo.meta?.eventCount ?? "",
     cellEvents.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join(",")
   ].join("|");
@@ -3732,42 +3731,26 @@ function irrigationCellPopoverHtml(context, block) {
   const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
   const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
   const agrocoreProgrammedHours = Number(irrigationProgramHours[key]);
-  const scheduledInfo = wiseconnScheduledMeta.get(key) || null;
-  const wiseconnProgrammedHours = Number(sourceInfo.meta?.scheduledHours ?? scheduledInfo?.hours ?? wiseconnScheduledHours[key]);
+  const wiseconnProgrammedHours = Number(sourceInfo.meta?.scheduledHours);
   const realHours = Number(value);
   const hasWiseconnProgram = context.kind === "real" && Number.isFinite(wiseconnProgrammedHours) && wiseconnProgrammedHours > 0;
   const hasAgrocoreProgram = context.kind === "real" && Number.isFinite(agrocoreProgrammedHours) && agrocoreProgrammedHours > 0;
-  const hoursDifference = hasWiseconnProgram && Number.isFinite(realHours) ? realHours - wiseconnProgrammedHours : null;
+  const rawHoursDifference = hasWiseconnProgram && Number.isFinite(realHours) ? realHours - wiseconnProgrammedHours : null;
+  const hoursDifference = rawHoursDifference !== null && Math.abs(rawHoursDifference) < 0.005 ? 0 : rawHoursDifference;
+  const hoursDifferencePercent = hoursDifference === null ? null : (hoursDifference / wiseconnProgrammedHours) * 100;
+  const differenceClass = hoursDifference === null
+    ? ""
+    : hoursDifference < 0
+      ? "is-under"
+      : hoursDifference > 0
+        ? "is-over"
+        : "is-complete";
   const hoursDifferenceLabel = hoursDifference === null
     ? "Sin programación WiseConn"
-    : hoursDifference < 0
-      ? `Faltaron ${number(Math.abs(hoursDifference), 2)} h`
-        : hoursDifference > 0
-          ? `Exceso ${number(hoursDifference, 2)} h`
-          : "Programa cumplido";
-  const monthPrefix = String(context.date || "").slice(0, 7);
-  const monthParts = monthPrefix.split("-").map(Number);
-  const monthDays = monthParts.length === 2 && monthParts.every(Number.isFinite)
-    ? new Date(monthParts[0], monthParts[1], 0).getDate()
-    : 0;
-  const agrocoreProgrammedMonthHours = monthDays
-    ? irrigationBlockMonthTotal(irrigationProgramHours, context.blockId, monthPrefix, monthDays)
-    : 0;
-  const wiseconnProgrammedMonthHours = monthDays
-    ? irrigationBlockMonthTotal(wiseconnScheduledHours, context.blockId, monthPrefix, monthDays)
-    : 0;
-  const wiseconnMonthHours = monthDays
-    ? irrigationBlockMonthTotal({ ...wiseconnPersistedHours, ...wiseconnIrrigationHours }, context.blockId, monthPrefix, monthDays)
-    : 0;
-  const hasMonthlyProgram = wiseconnProgrammedMonthHours > 0;
-  const monthlyDifference = hasMonthlyProgram ? wiseconnMonthHours - wiseconnProgrammedMonthHours : null;
-  const monthlyDifferenceLabel = monthlyDifference === null
+    : `${hoursDifference > 0 ? "+" : ""}${number(hoursDifference, 2)} h`;
+  const hoursDifferencePercentLabel = hoursDifferencePercent === null
     ? "Sin programación WiseConn"
-    : monthlyDifference < 0
-      ? `Faltaron ${number(Math.abs(monthlyDifference), 2)} h`
-      : monthlyDifference > 0
-        ? `Exceso ${number(monthlyDifference, 2)} h`
-        : "Programa cumplido";
+    : `${hoursDifferencePercent > 0 ? "+" : ""}${number(hoursDifferencePercent, 1)}% · ${hoursDifferencePercent < 0 ? "Falta" : hoursDifferencePercent > 0 ? "Sobre" : "Cumplido"}`;
   const lastUser = sourceInfo.source === "wiseconn"
     ? (sourceInfo.adjusted ? `${audit?.userName || audit?.userEmail || "Usuario"} · ajuste sobre WiseConn` : "WiseConn")
     : (audit?.userName || audit?.userEmail || "Sin modificación");
@@ -3788,24 +3771,16 @@ function irrigationCellPopoverHtml(context, block) {
       <strong>${sourceInfo.adjusted ? "WiseConn con ajuste de horas" : "Medición WiseConn"}</strong>
       <div class="irrigation-cell-popover-wiseconn-grid">
         <span><small>Volumen entregado</small><b>${number(sourceInfo.meta?.volumeM3, 2)} m3</b></span>
-        <span><small>Volumen programado (día)</small><b>${Number(sourceInfo.meta?.scheduledVolumeM3 ?? scheduledInfo?.volumeM3) > 0 ? `${number(sourceInfo.meta?.scheduledVolumeM3 ?? scheduledInfo?.volumeM3, 2)} m3` : "Sin dato"}</b></span>
+        <span><small>Volumen programado (día)</small><b>${Number(sourceInfo.meta?.scheduledVolumeM3) > 0 ? `${number(sourceInfo.meta.scheduledVolumeM3, 2)} m3` : "Sin dato"}</b></span>
         <span><small>Caudal medido</small><b>${Number(sourceInfo.meta?.measuredFlowM3H) > 0 ? `${number(sourceInfo.meta.measuredFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
         <span><small>Caudal teórico AgroCore</small><b>${number(sourceInfo.meta?.flowM3H, 2)} m3/h</b></span>
-        <span><small>Caudal programado WiseConn</small><b>${Number(sourceInfo.meta?.scheduledFlowM3H ?? scheduledInfo?.flowM3H) > 0 ? `${number(sourceInfo.meta?.scheduledFlowM3H ?? scheduledInfo?.flowM3H, 2)} m3/h` : "Sin dato"}</b></span>
+        <span><small>Caudal programado WiseConn</small><b>${Number(sourceInfo.meta?.scheduledFlowM3H) > 0 ? `${number(sourceInfo.meta.scheduledFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
         <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
         <span><small>Duración registrada</small><b>${Number(sourceInfo.meta?.durationHours) > 0 ? `${number(sourceInfo.meta.durationHours, 2)} h` : "Sin dato"}</b></span>
         <span><small>Programado WiseConn (día)</small><b>${hasWiseconnProgram ? `${number(wiseconnProgrammedHours, 2)} h` : "Sin programación asociada"}</b></span>
-        <span class="${hoursDifference === null ? "" : hoursDifference < 0 ? "is-under" : "is-complete"}"><small>Balance vs WiseConn</small><b>${hoursDifferenceLabel}</b></span>
+        <span class="${differenceClass}"><small>Diferencia de horas</small><b>${hoursDifferenceLabel}</b></span>
+        <span class="${differenceClass}"><small>Diferencia porcentual</small><b>${hoursDifferencePercentLabel}</b></span>
         ${hasAgrocoreProgram ? `<span><small>Programa AgroCore</small><b>${number(agrocoreProgrammedHours, 2)} h</b></span>` : ""}
-      </div>
-      <div class="irrigation-cell-popover-wiseconn-month">
-        <strong>Total mensual del sector</strong>
-        <div>
-          <span><small>Programado WiseConn</small><b>${hasMonthlyProgram ? `${number(wiseconnProgrammedMonthHours, 2)} h` : "Sin programa"}</b></span>
-          <span><small>Real calculado</small><b>${number(wiseconnMonthHours, 2)} h</b></span>
-          <span class="${monthlyDifference === null ? "" : monthlyDifference < 0 ? "is-under" : "is-complete"}"><small>Diferencia</small><b>${monthlyDifferenceLabel}</b></span>
-          ${agrocoreProgrammedMonthHours > 0 ? `<span><small>Programa AgroCore</small><b>${number(agrocoreProgrammedMonthHours, 2)} h</b></span>` : ""}
-        </div>
       </div>
       <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Fecha según inicio del riego</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}

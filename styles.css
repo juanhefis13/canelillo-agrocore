@@ -7679,12 +7679,21 @@ td span,
 }
 
 .irrigation-cell-popover-wiseconn-grid span.is-under {
-  border-color: #efc06f;
-  background: #fff6db;
+  border-color: #e8a49c;
+  background: #fff0ed;
 }
 
 .irrigation-cell-popover-wiseconn-grid span.is-under b {
-  color: #8a4b08;
+  color: #a7352a;
+}
+
+.irrigation-cell-popover-wiseconn-grid span.is-over {
+  border-color: #91cada;
+  background: #eaf7fb;
+}
+
+.irrigation-cell-popover-wiseconn-grid span.is-over b {
+  color: #16637d;
 }
 
 .irrigation-cell-popover-wiseconn-grid span.is-complete {
@@ -7694,48 +7703,6 @@ td span,
 
 .irrigation-cell-popover-wiseconn-grid span.is-complete b {
   color: #146447;
-}
-
-.irrigation-cell-popover-wiseconn-month {
-  display: grid;
-  gap: 4px;
-  padding-top: 2px;
-  border-top: 1px solid #c9e2ed;
-}
-
-.irrigation-cell-popover-wiseconn-month > strong {
-  color: #174f69;
-  font-size: 0.62rem;
-}
-
-.irrigation-cell-popover-wiseconn-month > div {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.irrigation-cell-popover-wiseconn-month span {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-  padding: 5px;
-  border-radius: 5px;
-  background: rgb(255 255 255 / 72%);
-}
-
-.irrigation-cell-popover-wiseconn-month span.is-under {
-  background: #fff2c7;
-}
-
-.irrigation-cell-popover-wiseconn-month span.is-complete {
-  background: #e8f7ef;
-}
-
-.irrigation-cell-popover-wiseconn-month b {
-  color: #123f54;
-  font-size: 0.62rem;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
 }
 
 .irrigation-cell-popover-wiseconn.is-manual {
