@@ -74,6 +74,7 @@ alter table public.riego
   add column if not exists caudal numeric,
   add column if not exists origen text not null default 'manual',
   add column if not exists wiseconn_volumen_m3 numeric(16, 3),
+  add column if not exists wiseconn_caudal_medido_m3_h numeric(14, 3),
   add column if not exists wiseconn_horas_calculadas numeric(8, 2),
   add column if not exists wiseconn_eventos integer,
   add column if not exists wiseconn_sincronizado_en timestamptz;
@@ -224,7 +225,14 @@ grant select on public.wiseconn_zona_campos to authenticated;
 grant select, insert, update on public.wiseconn_riegos_reales to authenticated;
 grant usage, select on sequence public.wiseconn_zona_campos_id_seq to authenticated;
 
-create or replace function public.sincronizar_riego_wiseconn(p_registros jsonb)
+drop function if exists public.sincronizar_riego_wiseconn(jsonb);
+drop function if exists public.sincronizar_riego_wiseconn(jsonb, date, date);
+
+create function public.sincronizar_riego_wiseconn(
+  p_registros jsonb,
+  p_desde date default null,
+  p_hasta date default null
+)
 returns jsonb
 language plpgsql
 security invoker
@@ -233,9 +241,32 @@ as $$
 declare
   v_procesados integer := 0;
   v_manuales_preservados integer := 0;
+  v_automaticos_eliminados integer := 0;
 begin
   if p_registros is null or jsonb_typeof(p_registros) <> 'array' then
     raise exception 'p_registros debe ser un arreglo JSON';
+  end if;
+
+  if (p_desde is null) <> (p_hasta is null) then
+    raise exception 'p_desde y p_hasta deben enviarse juntos';
+  end if;
+
+  if p_desde is not null and p_hasta <= p_desde then
+    raise exception 'El rango de sincronizacion WiseConn no es valido';
+  end if;
+
+  if p_desde is not null then
+    delete from public.riego r
+    where r.fecha >= greatest(p_desde, date '2026-01-01')
+      and r.fecha < p_hasta
+      and coalesce(nullif(r.origen, ''), 'manual') = 'wiseconn'
+      and not exists (
+        select 1
+        from jsonb_to_recordset(p_registros) as x(campo_id uuid, fecha date)
+        where x.campo_id = r.campo_id
+          and x.fecha = r.fecha
+      );
+    get diagnostics v_automaticos_eliminados = row_count;
   end if;
 
   with entrada as (
@@ -244,6 +275,7 @@ begin
       x.fecha,
       round(greatest(coalesce(x.horas, 0), 0)::numeric, 2) as horas,
       round(greatest(coalesce(x.volumen_m3, 0), 0)::numeric, 3) as volumen_m3,
+      round(greatest(coalesce(x.caudal_medido_m3_h, 0), 0)::numeric, 3) as caudal_medido_m3_h,
       greatest(coalesce(x.eventos, 0), 0)::integer as eventos,
       c.potrero,
       c.bloque,
@@ -257,6 +289,7 @@ begin
       fecha date,
       horas numeric,
       volumen_m3 numeric,
+      caudal_medido_m3_h numeric,
       eventos integer
     )
     join public.campos c on c.id = x.campo_id
@@ -279,6 +312,7 @@ begin
       x.fecha,
       round(greatest(coalesce(x.horas, 0), 0)::numeric, 2) as horas,
       round(greatest(coalesce(x.volumen_m3, 0), 0)::numeric, 3) as volumen_m3,
+      round(greatest(coalesce(x.caudal_medido_m3_h, 0), 0)::numeric, 3) as caudal_medido_m3_h,
       greatest(coalesce(x.eventos, 0), 0)::integer as eventos,
       c.potrero,
       c.bloque,
@@ -292,6 +326,7 @@ begin
       fecha date,
       horas numeric,
       volumen_m3 numeric,
+      caudal_medido_m3_h numeric,
       eventos integer
     )
     join public.campos c on c.id = x.campo_id
@@ -307,6 +342,7 @@ begin
     volumen,
     origen,
     wiseconn_volumen_m3,
+    wiseconn_caudal_medido_m3_h,
     wiseconn_horas_calculadas,
     wiseconn_eventos,
     wiseconn_sincronizado_en,
@@ -325,6 +361,7 @@ begin
     e.volumen_m3,
     'wiseconn',
     e.volumen_m3,
+    nullif(e.caudal_medido_m3_h, 0),
     e.horas,
     e.eventos,
     now(),
@@ -353,6 +390,7 @@ begin
       else coalesce(nullif(riego.origen, ''), 'manual')
     end,
     wiseconn_volumen_m3 = excluded.wiseconn_volumen_m3,
+    wiseconn_caudal_medido_m3_h = excluded.wiseconn_caudal_medido_m3_h,
     wiseconn_horas_calculadas = excluded.wiseconn_horas_calculadas,
     wiseconn_eventos = excluded.wiseconn_eventos,
     wiseconn_sincronizado_en = excluded.wiseconn_sincronizado_en,
@@ -369,13 +407,14 @@ begin
   return jsonb_build_object(
     'procesados', v_procesados,
     'manuales_preservados', v_manuales_preservados,
+    'automaticos_eliminados', v_automaticos_eliminados,
     'desde', '2026-01-01'
   );
 end;
 $$;
 
-revoke all on function public.sincronizar_riego_wiseconn(jsonb) from public;
-grant execute on function public.sincronizar_riego_wiseconn(jsonb) to authenticated;
+revoke all on function public.sincronizar_riego_wiseconn(jsonb, date, date) from public;
+grant execute on function public.sincronizar_riego_wiseconn(jsonb, date, date) to authenticated;
 
 commit;
 

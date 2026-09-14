@@ -7633,8 +7633,7 @@ td span,
 
 .irrigation-cell-popover-wiseconn {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 8px;
+  gap: 6px;
   align-items: center;
   padding: 7px 8px;
   border: 1px solid #b7dbea;
@@ -7648,15 +7647,35 @@ td span,
   font-size: 0.66rem;
 }
 
-.irrigation-cell-popover-wiseconn span {
+.irrigation-cell-popover-wiseconn > span {
   color: #174f69;
   font-size: 0.64rem;
   font-weight: 850;
   text-align: right;
 }
 
-.irrigation-cell-popover-wiseconn small {
-  grid-column: 1 / -1;
+.irrigation-cell-popover-wiseconn-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.irrigation-cell-popover-wiseconn-grid span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #d1e8f2;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.irrigation-cell-popover-wiseconn-grid b {
+  overflow: hidden;
+  color: #123f54;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .irrigation-cell-popover-wiseconn.is-manual {

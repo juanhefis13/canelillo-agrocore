@@ -114,9 +114,9 @@ function minimalEvent(event = {}) {
     endTime: event.endTime || "",
     status: event.status || "",
     type: event.type?.description || event.type || "",
-    volumeM3: numeric(event.volume?.value),
-    precipitationMm: numeric(event.precipitation?.value),
-    flowM3H: numeric(event.flow?.value)
+    volumeM3: numeric(event.volume?.value ?? event.volume),
+    precipitationMm: numeric(event.precipitation?.value ?? event.precipitation),
+    flowM3H: numeric(event.flow?.value ?? event.flow)
   };
 }
 

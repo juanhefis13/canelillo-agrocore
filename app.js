@@ -24,6 +24,7 @@ const IRRIGATION_OPTIONAL_COLUMNS = [
   "caudal",
   "origen",
   "wiseconn_volumen_m3",
+  "wiseconn_caudal_medido_m3_h",
   "wiseconn_horas_calculadas",
   "wiseconn_eventos",
   "wiseconn_sincronizado_en"
@@ -250,6 +251,7 @@ const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgo
 const WISECONN_PROXY_BASE = "/api/wiseconn";
 const WISECONN_FARM_ID = 4212;
 const WISECONN_TIME_ZONE = "America/Santiago";
+const WISECONN_OPERATIONAL_DAY_CUTOFF_HOUR = 6;
 const WISECONN_REFRESH_TTL_MS = 5 * 60 * 1000;
 const WISECONN_IRRIGATION_START_DATE = "2026-01-01";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
@@ -408,7 +410,7 @@ let wiseconnIrrigationHours = {};
 let wiseconnIrrigationMeta = new Map();
 let wiseconnPersistedHours = {};
 let wiseconnPersistedMeta = new Map();
-let wiseconnSyncState = { loading: false, available: false, cached: false, eventCount: 0, mappedEventCount: 0, calculatedDays: 0, persistedDays: 0, manualOverrides: 0, totalVolumeM3: 0, missingFlowCount: 0, syncedAt: "", persistenceError: "", error: "" };
+let wiseconnSyncState = { loading: false, available: false, cached: false, eventCount: 0, mappedEventCount: 0, calculatedDays: 0, persistedDays: 0, deletedDays: 0, manualOverrides: 0, totalVolumeM3: 0, missingFlowCount: 0, syncedAt: "", persistenceError: "", error: "" };
 let wiseconnMonthRefresh = new Map();
 let irrigationAudit = loadJsonMap(IRRIGATION_AUDIT_KEY);
 let irrigationProgramAudit = loadJsonMap(IRRIGATION_PROGRAM_AUDIT_KEY);
@@ -2465,6 +2467,22 @@ function wiseconnLocalDate(value) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+const wiseconnLocalHourFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: WISECONN_TIME_ZONE,
+  hour: "2-digit",
+  hourCycle: "h23"
+});
+
+function wiseconnOperationalDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const localDate = wiseconnLocalDate(date);
+  const localHour = Number(wiseconnLocalHourFormatter.format(date));
+  return localDate && Number.isFinite(localHour) && localHour < WISECONN_OPERATIONAL_DAY_CUTOFF_HOUR
+    ? wiseconnShiftDate(localDate, -1)
+    : localDate;
+}
+
 function wiseconnShiftDate(value, days) {
   const date = new Date(`${value}T12:00:00Z`);
   if (!Number.isFinite(date.getTime())) return value;
@@ -2472,12 +2490,12 @@ function wiseconnShiftDate(value, days) {
   return date.toISOString().slice(0, 10);
 }
 
-function wiseconnNextLocalDateBoundary(startMs, endMs, localDate) {
+function wiseconnNextOperationalDateBoundary(startMs, endMs, operationalDate) {
   let low = startMs + 1;
   let high = endMs;
   while (low < high) {
     const middle = Math.floor((low + high) / 2);
-    if (wiseconnLocalDate(new Date(middle)) === localDate) low = middle + 1;
+    if (wiseconnOperationalDate(new Date(middle)) === operationalDate) low = middle + 1;
     else high = middle;
   }
   return Math.min(endMs, low);
@@ -2490,19 +2508,23 @@ function wiseconnEventDailyVolumes(event) {
   const endMs = new Date(event.endTime).getTime();
   if (!Number.isFinite(startMs)) return [];
   if (!Number.isFinite(endMs) || endMs <= startMs) {
-    const date = wiseconnLocalDate(new Date(startMs));
-    return date ? [{ date, volume }] : [];
+    const date = wiseconnOperationalDate(new Date(startMs));
+    return date ? [{ date, volume, durationHours: null }] : [];
   }
   const totalMs = endMs - startMs;
   const output = [];
   let cursor = startMs;
   while (cursor < endMs) {
-    const date = wiseconnLocalDate(new Date(cursor));
+    const date = wiseconnOperationalDate(new Date(cursor));
     if (!date) break;
-    const endDate = wiseconnLocalDate(new Date(endMs - 1));
-    const boundary = date === endDate ? endMs : wiseconnNextLocalDateBoundary(cursor, endMs, date);
+    const endDate = wiseconnOperationalDate(new Date(endMs - 1));
+    const boundary = date === endDate ? endMs : wiseconnNextOperationalDateBoundary(cursor, endMs, date);
     if (boundary <= cursor) break;
-    output.push({ date, volume: volume * ((boundary - cursor) / totalMs) });
+    output.push({
+      date,
+      volume: volume * ((boundary - cursor) / totalMs),
+      durationHours: (boundary - cursor) / 3600000
+    });
     cursor = boundary;
   }
   return output;
@@ -2577,8 +2599,26 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
     wiseconnEventDailyVolumes(event).forEach((part) => {
       if (monthPrefix && !part.date.startsWith(monthPrefix)) return;
       const key = irrigationKey(mapping.fieldId, part.date);
-      const bucket = buckets.get(key) || { volumeM3: 0, eventIds: new Set(), statuses: new Set(), fieldId: mapping.fieldId, date: part.date, zoneName: mapping.zoneName };
+      const bucket = buckets.get(key) || {
+        volumeM3: 0,
+        measuredFlowWeighted: 0,
+        measuredFlowWeight: 0,
+        eventIds: new Set(),
+        statuses: new Set(),
+        fieldId: mapping.fieldId,
+        date: part.date,
+        zoneName: mapping.zoneName
+      };
       bucket.volumeM3 += part.volume;
+      const eventDurationHours = (new Date(event.endTime).getTime() - new Date(event.initTime).getTime()) / 3600000;
+      const measuredFlow = Number(event.flowM3H) > 0
+        ? Number(event.flowM3H)
+        : (eventDurationHours > 0 ? Number(event.volumeM3) / eventDurationHours : null);
+      if (Number.isFinite(measuredFlow) && measuredFlow > 0) {
+        const weight = Number(part.durationHours) > 0 ? Number(part.durationHours) : Number(part.volume);
+        bucket.measuredFlowWeighted += measuredFlow * weight;
+        bucket.measuredFlowWeight += weight;
+      }
       bucket.eventIds.add(event.id);
       if (event.status) bucket.statuses.add(event.status);
       buckets.set(key, bucket);
@@ -2592,12 +2632,16 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
     totalVolumeM3 += bucket.volumeM3;
     const block = fieldsById.get(String(bucket.fieldId));
     const flow = Number(block?.flow);
+    const measuredFlow = bucket.measuredFlowWeight > 0
+      ? bucket.measuredFlowWeighted / bucket.measuredFlowWeight
+      : null;
     const hasFlow = Number.isFinite(flow) && flow > 0;
     if (hasFlow) hours[key] = Number((bucket.volumeM3 / flow).toFixed(2));
     else missingFlowCount += 1;
     meta.set(key, {
       volumeM3: bucket.volumeM3,
       flowM3H: hasFlow ? flow : null,
+      measuredFlowM3H: Number.isFinite(measuredFlow) ? measuredFlow : null,
       hours: hasFlow ? bucket.volumeM3 / flow : null,
       eventCount: bucket.eventIds.size,
       statuses: [...bucket.statuses],
@@ -2618,6 +2662,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
       fecha: irrigationKeyDate(key),
       horas: Number(Number(item.hours).toFixed(2)),
       volumen_m3: Number(Number(item.volumeM3).toFixed(3)),
+      caudal_medido_m3_h: Number.isFinite(Number(item.measuredFlowM3H)) ? Number(Number(item.measuredFlowM3H).toFixed(3)) : null,
       eventos: Number(item.eventCount) || 0
     }));
 }
@@ -2633,19 +2678,30 @@ async function persistWiseconnEvents(events) {
   }
 }
 
-async function persistWiseconnIrrigationDays(rows = []) {
+async function persistWiseconnIrrigationDays(rows = [], range = null) {
   const eligible = rows.filter((item) => item.campo_id && item.fecha >= WISECONN_IRRIGATION_START_DATE && Number(item.volumen_m3) > 0);
-  let processed = 0;
-  let manualOverrides = 0;
-  for (let index = 0; index < eligible.length; index += 400) {
-    const result = await sbFetch("/rest/v1/rpc/sincronizar_riego_wiseconn", {
+  let result;
+  try {
+    result = await sbFetch("/rest/v1/rpc/sincronizar_riego_wiseconn", {
       method: "POST",
-      body: JSON.stringify({ p_registros: eligible.slice(index, index + 400) })
+      body: JSON.stringify({
+        p_registros: eligible,
+        p_desde: range?.start || null,
+        p_hasta: range?.end || null
+      })
     });
-    processed += Number(result?.procesados) || 0;
-    manualOverrides += Number(result?.manuales_preservados) || 0;
+  } catch (error) {
+    if (!isMissingSupabaseRelation(error, ["sincronizar_riego_wiseconn"])) throw error;
+    result = await sbFetch("/rest/v1/rpc/sincronizar_riego_wiseconn", {
+      method: "POST",
+      body: JSON.stringify({ p_registros: eligible })
+    });
   }
-  return { processed, manualOverrides };
+  return {
+    processed: Number(result?.procesados) || 0,
+    manualOverrides: Number(result?.manuales_preservados) || 0,
+    deleted: Number(result?.automaticos_eliminados) || 0
+  };
 }
 
 async function fetchWiseconnEvents(range) {
@@ -2715,9 +2771,10 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     wiseconnSyncState.eventCount = events.length;
     const dailyRows = rebuildWiseconnIrrigationHours(monthPrefix);
     try {
-      const persisted = await persistWiseconnIrrigationDays(dailyRows);
+      const persisted = await persistWiseconnIrrigationDays(dailyRows, range);
       wiseconnSyncState.persistedDays = persisted.processed;
       wiseconnSyncState.manualOverrides = persisted.manualOverrides;
+      wiseconnSyncState.deletedDays = persisted.deleted;
       wiseconnSyncState.persistenceError = "";
     } catch (error) {
       wiseconnSyncState.persistedDays = 0;
@@ -2739,6 +2796,7 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
       mappedEventCount: 0,
       calculatedDays: 0,
       persistedDays: 0,
+      deletedDays: 0,
       manualOverrides: 0,
       totalVolumeM3: 0,
       missingFlowCount: 0,
@@ -2761,6 +2819,7 @@ function wiseconnSyncLabel() {
     `${wiseconnSyncState.calculatedDays} bloque-dia calculados`
   ];
   if (wiseconnSyncState.persistedDays) parts.push(`${wiseconnSyncState.persistedDays} guardados en riego`);
+  if (wiseconnSyncState.deletedDays) parts.push(`${wiseconnSyncState.deletedDays} automáticos corregidos`);
   if (wiseconnSyncState.manualOverrides) parts.push(`${wiseconnSyncState.manualOverrides} ajustes manuales conservados`);
   if (wiseconnSyncState.missingFlowCount) parts.push(`${wiseconnSyncState.missingFlowCount} sin caudal`);
   if (wiseconnSyncState.persistenceError) parts.push(wiseconnSyncState.persistenceError);
@@ -3068,6 +3127,7 @@ function applyIrrigationRecords(rows = [], options = {}) {
     origin: item.origen || "manual",
     wiseconnHours: item.wiseconn_horas_calculadas === null || item.wiseconn_horas_calculadas === undefined ? null : Number(item.wiseconn_horas_calculadas),
     wiseconnVolume: item.wiseconn_volumen_m3 === null || item.wiseconn_volumen_m3 === undefined ? null : Number(item.wiseconn_volumen_m3),
+    wiseconnMeasuredFlow: item.wiseconn_caudal_medido_m3_h === null || item.wiseconn_caudal_medido_m3_h === undefined ? null : Number(item.wiseconn_caudal_medido_m3_h),
     wiseconnEvents: Number(item.wiseconn_eventos) || 0,
     wiseconnSyncedAt: item.wiseconn_sincronizado_en || "",
     modifiedByName: item.modificado_por_nombre || item.creado_por_nombre || "",
@@ -3094,6 +3154,7 @@ function applyIrrigationRecords(rows = [], options = {}) {
       cloudWiseconnMeta.set(key, {
         volumeM3: automaticVolume,
         flowM3H: automaticHours > 0 ? automaticVolume / automaticHours : null,
+        measuredFlowM3H: Number.isFinite(item.wiseconnMeasuredFlow) ? item.wiseconnMeasuredFlow : null,
         hours: automaticHours,
         eventCount: item.wiseconnEvents,
         statuses: [],
@@ -3185,6 +3246,7 @@ async function saveIrrigationCell(blockId, date, hours) {
           volumen: Number(Number(sourceMeta.volumeM3).toFixed(3)),
           origen: "wiseconn",
           wiseconn_volumen_m3: Number(Number(sourceMeta.volumeM3).toFixed(3)),
+          wiseconn_caudal_medido_m3_h: Number.isFinite(Number(sourceMeta.measuredFlowM3H)) ? Number(Number(sourceMeta.measuredFlowM3H).toFixed(3)) : null,
           wiseconn_horas_calculadas: Number(Number(sourceMeta.hours).toFixed(2)),
           wiseconn_eventos: Number(sourceMeta.eventCount) || 0,
           wiseconn_sincronizado_en: new Date().toISOString()
@@ -3403,6 +3465,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     sourceInfo.source,
     sourceInfo.meta?.volumeM3 ?? "",
     sourceInfo.meta?.flowM3H ?? "",
+    sourceInfo.meta?.measuredFlowM3H ?? "",
     sourceInfo.meta?.eventCount ?? "",
     cellEvents.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join(",")
   ].join("|");
@@ -3435,9 +3498,14 @@ function irrigationCellPopoverHtml(context, block) {
       <span><small>Horas</small><strong>${value === "" || value === undefined ? "-" : `${escapeHtml(value)} h`}</strong></span>
     </div>
     ${sourceInfo.source === "wiseconn" ? `<div class="irrigation-cell-popover-wiseconn">
-      <strong>Calculado desde WiseConn</strong>
-      <span>${number(sourceInfo.meta?.volumeM3, 2)} m3 / ${number(sourceInfo.meta?.flowM3H, 2)} m3/h</span>
-      <small>${number(sourceInfo.meta?.hours, 2)} h · ${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"}</small>
+      <strong>Medición WiseConn</strong>
+      <div class="irrigation-cell-popover-wiseconn-grid">
+        <span><small>Volumen entregado</small><b>${number(sourceInfo.meta?.volumeM3, 2)} m3</b></span>
+        <span><small>Caudal medido</small><b>${Number(sourceInfo.meta?.measuredFlowM3H) > 0 ? `${number(sourceInfo.meta.measuredFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
+        <span><small>Caudal teórico AgroCore</small><b>${number(sourceInfo.meta?.flowM3H, 2)} m3/h</b></span>
+        <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
+      </div>
+      <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Día operativo 06:00 a 05:59</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
     ${events.length ? `<div class="irrigation-cell-popover-events">
       ${events.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b aria-hidden="true">!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
@@ -20990,8 +21058,11 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar calicatas", error);
       return [];
     }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
+    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_caudal_medido_m3_h,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
       .catch((error) => {
+        if (isMissingSupabaseColumn(error, ["wiseconn_caudal_medido_m3_h"])) {
+          return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
+        }
         if (!isMissingSupabaseColumn(error, ["origen", "wiseconn_volumen_m3", "wiseconn_horas_calculadas", "wiseconn_eventos", "wiseconn_sincronizado_en", "creado_por_nombre", "modificado_por_nombre", "modificado_en", "actualizado_en", "updated_at"])) throw error;
         return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
       })
