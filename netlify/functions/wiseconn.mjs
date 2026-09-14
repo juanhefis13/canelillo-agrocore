@@ -105,11 +105,12 @@ async function wiseconnGet(path, params = {}) {
 }
 
 function minimalEvent(event = {}) {
-  const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  const numeric = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
   return {
     id: Number(event.id),
     zoneId: Number(event.zoneId),
     pumpSystemId: numeric(event.pumpSystemId),
+    scheduledIrrigationId: numeric(event.scheduledIrrigationId),
     initTime: event.initTime || "",
     endTime: event.endTime || "",
     status: event.status || "",
@@ -117,6 +118,28 @@ function minimalEvent(event = {}) {
     volumeM3: numeric(event.volume?.value ?? event.volume),
     precipitationMm: numeric(event.precipitation?.value ?? event.precipitation),
     flowM3H: numeric(event.flow?.value ?? event.flow)
+  };
+}
+
+function minimalScheduledIrrigation(irrigation = {}) {
+  const numeric = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
+  const initMs = new Date(irrigation.initTime).getTime();
+  const endMs = new Date(irrigation.endTime).getTime();
+  return {
+    id: Number(irrigation.id),
+    zoneId: Number(irrigation.zoneId),
+    pumpSystemId: numeric(irrigation.pumpSystemId),
+    initTime: irrigation.initTime || "",
+    endTime: irrigation.endTime || "",
+    status: irrigation.status || "",
+    irrigationType: irrigation.irrigationType || "",
+    scheduledType: irrigation.scheduledType || "",
+    volumeM3: numeric(irrigation.volume?.value ?? irrigation.volume),
+    theoreticalFlowM3H: numeric(irrigation.theoricalFlow?.value ?? irrigation.theoreticalFlow?.value ?? irrigation.theoricalFlow),
+    programmedHours: Number.isFinite(initMs) && Number.isFinite(endMs) && endMs > initMs
+      ? (endMs - initMs) / 3600000
+      : null,
+    programmedBy: irrigation.programmedByUser?.name || ""
   };
 }
 
@@ -154,6 +177,43 @@ async function realIrrigations(farmId, from, to) {
     .filter((event) => Number.isFinite(event.id) && Number.isFinite(event.zoneId));
 }
 
+async function scheduledIrrigations(farmId, from, to, scheduledIds = []) {
+  const all = [];
+  for (const segment of rangeSegments(from, to)) {
+    const rows = await wiseconnGet(`/farms/${farmId}/irrigations`, {
+      initTime: `${segment.from}T00:00:00`,
+      endTime: `${segment.to}T23:59:59`
+    });
+    all.push(...(Array.isArray(rows) ? rows : []));
+    if (segment.to !== to) await new Promise((resolve) => setTimeout(resolve, 375));
+  }
+  const byId = new Map(all.map((item) => [Number(item.id), minimalScheduledIrrigation(item)]));
+  const missingIds = [...new Set(scheduledIds.map(Number).filter(Number.isFinite))]
+    .filter((id) => !byId.has(id));
+  for (let index = 0; index < missingIds.length; index += 8) {
+    const rows = await Promise.all(missingIds.slice(index, index + 8).map(async (id) => {
+      try {
+        return await wiseconnGet(`/irrigations/${id}`);
+      } catch {
+        return null;
+      }
+    }));
+    rows.filter(Boolean).forEach((item) => byId.set(Number(item.id), minimalScheduledIrrigation(item)));
+  }
+  return [...byId.values()].filter((item) => Number.isFinite(item.id) && Number.isFinite(item.zoneId));
+}
+
+async function irrigationBundle(farmId, from, to) {
+  const events = await realIrrigations(farmId, from, to);
+  const scheduled = await scheduledIrrigations(
+    farmId,
+    from,
+    to,
+    events.map((event) => event.scheduledIrrigationId)
+  );
+  return { events, scheduled };
+}
+
 export default async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
   try {
@@ -181,14 +241,15 @@ export default async (req) => {
     const forceRefresh = url.searchParams.get("refresh") === "1";
     if (!from || !to || from > to) return json(400, { message: "Rango de fechas invalido" });
     if (rangeDays(from, to) > 62) return json(400, { message: "El rango maximo permitido es de 62 dias" });
-    const result = await cached(`events:${farmId}:${from}:${to}`, () => realIrrigations(farmId, from, to), forceRefresh);
+    const result = await cached(`irrigation-bundle-v2:${farmId}:${from}:${to}`, () => irrigationBundle(farmId, from, to), forceRefresh);
     return json(200, {
       farmId,
       from,
       to,
       cache: result.cache,
       syncedAt: new Date().toISOString(),
-      events: result.value
+      events: result.value.events,
+      scheduledIrrigations: result.value.scheduled
     });
   } catch (error) {
     return json(Number(error?.status) || 502, { message: error?.message || "No se pudo consultar WiseConn" });
