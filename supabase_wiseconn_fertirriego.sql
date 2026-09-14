@@ -34,6 +34,35 @@ on conflict (farm_id) do update set
   activo = true,
   actualizado_en = now();
 
+create table if not exists public.wiseconn_riegos_reales (
+  event_id bigint primary key,
+  farm_id bigint not null references public.wiseconn_campos(farm_id) on delete cascade,
+  zone_id bigint not null,
+  scheduled_irrigation_id bigint,
+  inicio timestamptz not null,
+  termino timestamptz not null,
+  estado text,
+  tipo text,
+  pump_system_id bigint,
+  volumen_m3 numeric(16, 3),
+  precipitacion_mm numeric(14, 3),
+  caudal_m3_h numeric(14, 3),
+  fertirriego_real jsonb not null default '[]'::jsonb,
+  sincronizado_en timestamptz not null default now(),
+  constraint wiseconn_riego_periodo_ck check (termino >= inicio)
+);
+
+alter table public.wiseconn_riegos_reales
+  add column if not exists scheduled_irrigation_id bigint,
+  add column if not exists fertirriego_real jsonb not null default '[]'::jsonb;
+
+create index if not exists wiseconn_riegos_reales_zone_inicio_idx
+  on public.wiseconn_riegos_reales (farm_id, zone_id, inicio);
+
+create index if not exists wiseconn_riegos_reales_scheduled_idx
+  on public.wiseconn_riegos_reales (scheduled_irrigation_id)
+  where scheduled_irrigation_id is not null;
+
 create table if not exists public.wiseconn_riegos_programados (
   scheduled_id bigint primary key,
   farm_id bigint not null references public.wiseconn_campos(farm_id) on delete cascade,
@@ -61,11 +90,24 @@ create index if not exists wiseconn_riegos_programados_zone_inicio_idx
   on public.wiseconn_riegos_programados (farm_id, zone_id, inicio);
 
 alter table public.wiseconn_campos enable row level security;
+alter table public.wiseconn_riegos_reales enable row level security;
 alter table public.wiseconn_riegos_programados enable row level security;
 
 drop policy if exists wiseconn_campos_select on public.wiseconn_campos;
 create policy wiseconn_campos_select on public.wiseconn_campos
 for select to authenticated using (true);
+
+drop policy if exists wiseconn_riegos_reales_select on public.wiseconn_riegos_reales;
+create policy wiseconn_riegos_reales_select on public.wiseconn_riegos_reales
+for select to authenticated using (true);
+
+drop policy if exists wiseconn_riegos_reales_insert on public.wiseconn_riegos_reales;
+create policy wiseconn_riegos_reales_insert on public.wiseconn_riegos_reales
+for insert to authenticated with check (true);
+
+drop policy if exists wiseconn_riegos_reales_update on public.wiseconn_riegos_reales;
+create policy wiseconn_riegos_reales_update on public.wiseconn_riegos_reales
+for update to authenticated using (true) with check (true);
 
 drop policy if exists wiseconn_riegos_programados_select on public.wiseconn_riegos_programados;
 create policy wiseconn_riegos_programados_select on public.wiseconn_riegos_programados
@@ -80,6 +122,7 @@ create policy wiseconn_riegos_programados_update on public.wiseconn_riegos_progr
 for update to authenticated using (true) with check (true);
 
 grant select on public.wiseconn_campos to authenticated;
+grant select, insert, update on public.wiseconn_riegos_reales to authenticated;
 grant select, insert, update on public.wiseconn_riegos_programados to authenticated;
 
 commit;
@@ -87,9 +130,11 @@ commit;
 notify pgrst, 'reload schema';
 
 select
-  count(*) as riegos_programados,
-  count(*) filter (
+  (select count(*) from public.wiseconn_riegos_reales) as riegos_reales,
+  (select count(*) from public.wiseconn_riegos_reales
+    where jsonb_typeof(fertirriego_real) = 'array'
+      and jsonb_array_length(fertirriego_real) > 0) as riegos_reales_con_fip,
+  (select count(*) from public.wiseconn_riegos_programados) as riegos_programados,
+  (select count(*) from public.wiseconn_riegos_programados
     where jsonb_typeof(fertirriego_programado) = 'array'
-      and jsonb_array_length(fertirriego_programado) > 0
-  ) as riegos_con_fertirriego
-from public.wiseconn_riegos_programados;
+      and jsonb_array_length(fertirriego_programado) > 0) as riegos_programados_con_fip;

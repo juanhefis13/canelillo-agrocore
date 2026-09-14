@@ -7854,6 +7854,20 @@ td span,
   background: rgb(255 255 255 / 72%);
 }
 
+.irrigation-wiseconn-fip-list > span.is-risk {
+  border-color: #e7a75f;
+  background: #fff5e8;
+}
+
+.irrigation-wiseconn-fip-list > span.is-risk b {
+  color: #9a3f0c;
+}
+
+.irrigation-wiseconn-fip-list > span.is-ok {
+  border-color: #79c5a3;
+  background: #effaf4;
+}
+
 .irrigation-wiseconn-fip-list b {
   overflow-wrap: anywhere;
   color: #0e6548;

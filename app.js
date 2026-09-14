@@ -427,9 +427,6 @@ let irrigationProgramObservations = loadJsonMap(IRRIGATION_PROGRAM_OBSERVATIONS_
 let irrigationEventCellIndex = new Map();
 let irrigationEventsCloudAvailable = true;
 let irrigationEventStatusFilter = "Todos";
-let irrigationFipAssignments = new Map();
-let irrigationFipAssignmentsLoaded = false;
-let irrigationFipAssignmentsError = "";
 let irrigationCellPopoverTarget = null;
 let irrigationCellPopoverHideTimer = null;
 let irrigationAuditsPruned = false;
@@ -2521,7 +2518,8 @@ function wiseconnMapEventRow(item = {}) {
     type: item.tipo || item.type || "",
     volumeM3: numeric(item.volumen_m3 ?? item.volumeM3),
     precipitationMm: numeric(item.precipitacion_mm ?? item.precipitationMm),
-    flowM3H: numeric(item.caudal_m3_h ?? item.flowM3H)
+    flowM3H: numeric(item.caudal_m3_h ?? item.flowM3H),
+    fertigations: normalizeWiseconnFertigations(item.fertirriego_real ?? item.fertigations)
   };
 }
 
@@ -2542,7 +2540,10 @@ function normalizeWiseconnFertigations(value = []) {
     firstStart: item?.firstStart || item?.inicio || "",
     lastEnd: item?.lastEnd || item?.termino || "",
     fertilizerNames: Array.isArray(item?.fertilizerNames) ? item.fertilizerNames.filter(Boolean) : [],
-    types: Array.isArray(item?.types) ? item.types.filter(Boolean) : []
+    types: Array.isArray(item?.types) ? item.types.filter(Boolean) : [],
+    scheduledFertigationIds: Array.isArray(item?.scheduledFertigationIds)
+      ? item.scheduledFertigationIds.map(Number).filter(Number.isFinite)
+      : []
   })).filter((item) => Number.isFinite(item.tankId));
 }
 
@@ -2558,7 +2559,8 @@ function mergeWiseconnFertigations(rows = []) {
       firstStart: "",
       lastEnd: "",
       fertilizerNames: new Set(),
-      types: new Set()
+      types: new Set(),
+      scheduledFertigationIds: new Set()
     };
     current.volume += Number(item.volume) || 0;
     current.count += Number(item.count) || 0;
@@ -2566,13 +2568,15 @@ function mergeWiseconnFertigations(rows = []) {
     if (item.lastEnd && (!current.lastEnd || item.lastEnd > current.lastEnd)) current.lastEnd = item.lastEnd;
     item.fertilizerNames.forEach((name) => current.fertilizerNames.add(name));
     item.types.forEach((type) => current.types.add(type));
+    item.scheduledFertigationIds.forEach((id) => current.scheduledFertigationIds.add(id));
     grouped.set(key, current);
   });
   return [...grouped.values()].map((item) => ({
     ...item,
     volume: Number(item.volume.toFixed(3)),
     fertilizerNames: [...item.fertilizerNames],
-    types: [...item.types]
+    types: [...item.types],
+    scheduledFertigationIds: [...item.scheduledFertigationIds]
   }));
 }
 
@@ -2615,6 +2619,7 @@ function wiseconnDbPayload(event) {
     volumen_m3: event.volumeM3,
     precipitacion_mm: event.precipitationMm,
     caudal_m3_h: event.flowM3H,
+    fertirriego_real: normalizeWiseconnFertigations(event.fertigations),
     sincronizado_en: new Date().toISOString()
   };
 }
@@ -2739,6 +2744,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
         eventIds: new Set(),
         scheduledIds: new Set(),
         statuses: new Set(),
+        fertigations: [],
         fieldId: mapping.fieldId,
         date: part.date,
         zoneName: mapping.zoneName
@@ -2759,6 +2765,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
         bucket.scheduledIds.add(Number(event.scheduledIrrigationId));
       }
       if (event.status) bucket.statuses.add(event.status);
+      bucket.fertigations.push(event.fertigations);
       buckets.set(key, bucket);
     });
   });
@@ -2786,7 +2793,8 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
     const programmedFlowValues = linkedScheduled
       .map((item) => Number(item.flowM3H))
       .filter((value) => Number.isFinite(value) && value > 0);
-    const fertigations = mergeWiseconnFertigations(linkedScheduled.map((item) => item.fertigations));
+    const actualFertigations = mergeWiseconnFertigations(bucket.fertigations);
+    const scheduledFertigations = mergeWiseconnFertigations(linkedScheduled.map((item) => item.fertigations));
     meta.set(key, {
       volumeM3: bucket.volumeM3,
       flowM3H: hasFlow ? flow : null,
@@ -2801,7 +2809,8 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
           ? programmedFlowValues.reduce((sum, value) => sum + value, 0) / programmedFlowValues.length
           : null,
       scheduledCount: linkedScheduled.length,
-      fertigations,
+      fertigations: actualFertigations,
+      scheduledFertigations,
       eventCount: bucket.eventIds.size,
       statuses: [...bucket.statuses],
       zoneName: bucket.zoneName,
@@ -2857,19 +2866,47 @@ async function persistWiseconnEvents(events) {
   const rows = events.map(wiseconnDbPayload).filter((item) => item.event_id && item.zone_id && item.inicio && item.termino);
   for (let index = 0; index < rows.length; index += 400) {
     const batch = rows.slice(index, index + 400);
+    let payload = batch;
+    let optionalColumns = ["fertirriego_real", "scheduled_irrigation_id"];
+    while (true) {
+      try {
+        await sbFetch("/rest/v1/wiseconn_riegos_reales?on_conflict=event_id", {
+          method: "POST",
+          prefer: "resolution=merge-duplicates,return=minimal",
+          body: JSON.stringify(payload)
+        });
+        break;
+      } catch (error) {
+        const missing = missingSupabaseColumnName(error, optionalColumns);
+        if (!missing) throw error;
+        payload = payload.map((item) => {
+          const next = { ...item };
+          delete next[missing];
+          return next;
+        });
+        optionalColumns = optionalColumns.filter((column) => column !== missing);
+      }
+    }
+  }
+}
+
+async function loadWiseconnCachedEvents(queryStart, queryEnd) {
+  let columns = [
+    "event_id", "farm_id", "zone_id", "scheduled_irrigation_id", "inicio", "termino", "estado", "tipo",
+    "pump_system_id", "volumen_m3", "precipitacion_mm", "caudal_m3_h", "fertirriego_real"
+  ];
+  let optionalColumns = ["fertirriego_real", "scheduled_irrigation_id"];
+  while (true) {
     try {
-      await sbFetch("/rest/v1/wiseconn_riegos_reales?on_conflict=event_id", {
-        method: "POST",
-        prefer: "resolution=merge-duplicates,return=minimal",
-        body: JSON.stringify(batch)
-      });
+      return await sbSelectAll(
+        "wiseconn_riegos_reales",
+        `select=${columns.join(",")}&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
+      );
     } catch (error) {
-      if (!isMissingSupabaseColumn(error, ["scheduled_irrigation_id"])) throw error;
-      await sbFetch("/rest/v1/wiseconn_riegos_reales?on_conflict=event_id", {
-        method: "POST",
-        prefer: "resolution=merge-duplicates,return=minimal",
-        body: JSON.stringify(batch.map(({ scheduled_irrigation_id: _ignored, ...item }) => item))
-      });
+      const missing = missingSupabaseColumnName(error, optionalColumns);
+      if (!missing) throw error;
+      columns = columns.filter((column) => column !== missing);
+      optionalColumns = optionalColumns.filter((column) => column !== missing);
     }
   }
 }
@@ -2923,41 +2960,6 @@ async function persistWiseconnIrrigationDays(rows = [], range = null) {
   };
 }
 
-async function loadIrrigationFipAssignments(options = {}) {
-  if (irrigationFipAssignmentsLoaded && !options.force) return irrigationFipAssignments;
-  try {
-    const rows = await sbSelectAll(
-      "v_fertilizante_estanque_campos",
-      "select=campo_id,caseta,numero_estanque,fip&campo_id=not.is.null&order=caseta.asc,numero_estanque.asc,fip.asc",
-      5000
-    );
-    const assignments = new Map();
-    (rows || []).forEach((row) => {
-      const fieldId = String(row.campo_id || "");
-      if (!fieldId) return;
-      const current = assignments.get(fieldId) || [];
-      const assignment = {
-        caseta: row.caseta || "Sin caseta",
-        tank: row.numero_estanque || "Sin estanque",
-        fip: row.fip || "Sin FIP"
-      };
-      const signature = `${assignment.caseta}|${assignment.tank}|${assignment.fip}`.toLocaleLowerCase("es");
-      if (!current.some((item) => item.signature === signature)) current.push({ ...assignment, signature });
-      assignments.set(fieldId, current);
-    });
-    irrigationFipAssignments = new Map([...assignments.entries()].map(([fieldId, items]) => [
-      fieldId,
-      items.map(({ signature: _signature, ...item }) => item)
-    ]));
-    irrigationFipAssignmentsLoaded = true;
-    irrigationFipAssignmentsError = "";
-  } catch (error) {
-    irrigationFipAssignmentsError = error.message || "No se pudieron cargar los FIP asociados";
-    console.warn("No se pudieron relacionar los FIP con la carta Gantt", error);
-  }
-  return irrigationFipAssignments;
-}
-
 async function fetchWiseconnEvents(range, options = {}) {
   const forceQuery = options.force ? "&refresh=1" : "";
   const response = await fetch(`${WISECONN_PROXY_BASE}/real-irrigations?from=${encodeURIComponent(wiseconnShiftDate(range.start, -1))}&to=${encodeURIComponent(range.end)}${forceQuery}`, {
@@ -2999,19 +3001,9 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
       block: item.bloque_agrocore || "",
       sync: item.sincronizar !== false
     }));
-    await loadIrrigationFipAssignments({ force: Boolean(options.force) });
     const queryStart = `${wiseconnShiftDate(range.start, -1)}T00:00:00Z`;
     const queryEnd = `${wiseconnShiftDate(range.end, 1)}T00:00:00Z`;
-    const cachedRows = await sbSelectAll(
-      "wiseconn_riegos_reales",
-      `select=event_id,farm_id,zone_id,scheduled_irrigation_id,inicio,termino,estado,tipo,pump_system_id,volumen_m3,precipitacion_mm,caudal_m3_h&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
-    ).catch((error) => {
-      if (!isMissingSupabaseColumn(error, ["scheduled_irrigation_id"])) throw error;
-      return sbSelectAll(
-        "wiseconn_riegos_reales",
-        `select=event_id,farm_id,zone_id,inicio,termino,estado,tipo,pump_system_id,volumen_m3,precipitacion_mm,caudal_m3_h&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
-      );
-    });
+    const cachedRows = await loadWiseconnCachedEvents(queryStart, queryEnd);
     const cachedScheduledRows = await sbSelectAll(
       "wiseconn_riegos_programados",
       `select=scheduled_id,farm_id,zone_id,pump_system_id,inicio,termino,estado,tipo_riego,tipo_programacion,horas_programadas,volumen_programado_m3,caudal_teorico_m3_h,programado_por,fertirriego_programado&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
@@ -3328,19 +3320,35 @@ function irrigationWiseconnDiagnostics(blockId, date, sourceInfo = null, realVal
   const value = realValue === undefined ? irrigationRealHoursValue(blockId, date) : realValue;
   const balance = wiseconnDailyBalance(source, value);
   const hydraulic = wiseconnHydraulicDiagnostic(balance.percent);
-  const scheduledFips = normalizeWiseconnFertigations(source?.meta?.fertigations);
-  const fipRisk = Number.isFinite(balance.percent) && balance.percent <= -30 && scheduledFips.length > 0;
+  const actualFips = normalizeWiseconnFertigations(source?.meta?.fertigations);
+  const scheduledFips = normalizeWiseconnFertigations(source?.meta?.scheduledFertigations);
+  const actualByTank = new Map(actualFips.map((item) => [String(item.tankId), item]));
+  const fipComparisons = scheduledFips.map((scheduled) => {
+    const actual = actualByTank.get(String(scheduled.tankId)) || null;
+    const scheduledVolume = Number(scheduled.volume) || 0;
+    const actualVolume = Number(actual?.volume) || 0;
+    const percent = scheduledVolume > 0 ? ((actualVolume - scheduledVolume) / scheduledVolume) * 100 : null;
+    return {
+      tankId: scheduled.tankId,
+      scheduled,
+      actual,
+      percent,
+      risk: !actual || (Number.isFinite(percent) && percent <= -30)
+    };
+  });
+  const fipRisk = fipComparisons.some((item) => item.risk);
   return {
     balance,
     hydraulic,
     fipRisk,
+    actualFips,
     scheduledFips,
-    fips: fipRisk ? (irrigationFipAssignments.get(String(blockId)) || []) : []
+    fipComparisons
   };
 }
 
 function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
-  if (!diagnostics?.hydraulic && !diagnostics?.fipRisk) return "";
+  if (!diagnostics?.hydraulic && !diagnostics?.fipRisk && !diagnostics?.actualFips?.length) return "";
   const signedPercent = Number.isFinite(diagnostics.balance?.percent)
     ? `${diagnostics.balance.percent > 0 ? "+" : ""}${number(diagnostics.balance.percent, 1)}%`
     : "";
@@ -3353,30 +3361,33 @@ function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
         <p>${escapeHtml(diagnostics.hydraulic.description)}</p>
       </div>
     </article>` : "";
-  const scheduledFipRows = diagnostics.scheduledFips.map((item) => {
-    const start = String(item.firstStart || "").slice(11, 16);
-    const end = String(item.lastEnd || "").slice(11, 16);
-    const time = start && end ? `${start}-${end}` : "Horario no informado";
-    const volume = Number(item.volume) > 0 ? `${number(item.volume, 1)} ${escapeHtml(item.unit || "L")}` : "Volumen no informado";
-    return `<span><b>FIP WiseConn ID ${escapeHtml(item.tankId)}</b><small>${volume} · ${escapeHtml(time)} · ${number(item.count, 0)} etapa${Number(item.count) === 1 ? "" : "s"}</small></span>`;
+  const fipTime = (item) => {
+    const start = String(item?.firstStart || "").slice(11, 16);
+    const end = String(item?.lastEnd || "").slice(11, 16);
+    return start && end ? `${start}-${end}` : "Horario no informado";
+  };
+  const actualFipRows = diagnostics.actualFips.map((item) => {
+    const volume = Number(item.volume) > 0 ? `${number(item.volume, 1)} ${escapeHtml(item.unit || "L")}` : `0 ${escapeHtml(item.unit || "L")}`;
+    const types = item.types.length ? ` · ${escapeHtml(item.types.join(", "))}` : "";
+    return `<span><b>FIP DropControl ${escapeHtml(item.tankId)}</b><small>Real ${volume} · ${escapeHtml(fipTime(item))}${types}</small></span>`;
   }).join("");
-  const relatedFipRows = diagnostics.fips.length
-    ? diagnostics.fips.map((item) => {
-      const tankLabel = /^estanque\b/i.test(String(item.tank || "")) ? item.tank : `Estanque ${item.tank}`;
-      return `<span><b>${escapeHtml(item.fip)}</b><small>${escapeHtml(item.caseta)} · ${escapeHtml(tankLabel)}</small></span>`;
-    }).join("")
-    : `<span><b>Sin FIP relacionado en AgroCore</b><small>${escapeHtml(irrigationFipAssignmentsError || "Revisa la relación del bloque con fertilizante_estanques.")}</small></span>`;
-  const fipCard = diagnostics.fipRisk ? `
-    <article class="irrigation-wiseconn-alert-card is-fip">
+  const scheduledFipRows = diagnostics.fipComparisons.map((item) => {
+    const plannedVolume = `${number(item.scheduled.volume, 1)} ${escapeHtml(item.scheduled.unit || "L")}`;
+    const actualVolume = item.actual ? `${number(item.actual.volume, 1)} ${escapeHtml(item.actual.unit || item.scheduled.unit || "L")}` : "Sin ejecución detectada";
+    const difference = Number.isFinite(item.percent) ? `${item.percent > 0 ? "+" : ""}${number(item.percent, 1)}%` : "Sin comparación";
+    return `<span class="${item.risk ? "is-risk" : "is-ok"}"><b>FIP DropControl ${escapeHtml(item.tankId)}</b><small>Programado ${plannedVolume} · Real ${actualVolume} · ${difference}</small></span>`;
+  }).join("");
+  const hasFipData = diagnostics.actualFips.length || diagnostics.scheduledFips.length;
+  const fipCard = hasFipData ? `
+    <article class="irrigation-wiseconn-alert-card is-fip ${diagnostics.fipRisk ? "is-risk" : "is-ok"}">
       <b aria-hidden="true">F</b>
       <div>
-        <span><strong>Alerta de fertirriego</strong><em>${signedPercent}</em></span>
-        <h4>Posible paso insuficiente de fertilizante</h4>
-        <p>WiseConn tenía fertirriego programado y el agua quedó 30% o más bajo lo esperado. Los FIP pueden no haber aplicado correctamente.</p>
-        <strong class="irrigation-wiseconn-fip-subtitle">Programación WiseConn</strong>
-        <div class="irrigation-wiseconn-fip-list">${scheduledFipRows}</div>
-        <strong class="irrigation-wiseconn-fip-subtitle">FIP asociados en AgroCore</strong>
-        <div class="irrigation-wiseconn-fip-list">${relatedFipRows}</div>
+        <span><strong>${diagnostics.fipRisk ? "Alerta FIP DropControl" : "Fertirriego DropControl"}</strong><em>${diagnostics.fipRisk ? `${diagnostics.fipComparisons.filter((item) => item.risk).length} con diferencia` : "Detectado"}</em></span>
+        <h4>${diagnostics.fipRisk ? "Fertilizante bajo lo programado" : "FIP ejecutados durante el riego"}</h4>
+        <p>${diagnostics.fipRisk ? "Uno o más FIP quedaron 30% o más bajo el volumen programado, o no registraron ejecución." : "El riego real contiene fertirrigaciones informadas directamente por WiseConn."}</p>
+        ${scheduledFipRows ? `<strong class="irrigation-wiseconn-fip-subtitle">Programado vs real en DropControl</strong><div class="irrigation-wiseconn-fip-list">${scheduledFipRows}</div>` : ""}
+        <strong class="irrigation-wiseconn-fip-subtitle">FIP reales de DropControl</strong>
+        <div class="irrigation-wiseconn-fip-list">${actualFipRows || '<span class="is-risk"><b>Sin FIP ejecutado</b><small>DropControl no devolvió una fertirrigación real para esta programación.</small></span>'}</div>
       </div>
     </article>` : "";
   return `<div class="irrigation-wiseconn-alerts">${hydraulicCard}${fipCard}</div>`;
@@ -3959,6 +3970,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     sourceInfo.meta?.durationHours ?? "",
     sourceInfo.meta?.scheduledHours ?? "",
     JSON.stringify(sourceInfo.meta?.fertigations || []),
+    JSON.stringify(sourceInfo.meta?.scheduledFertigations || []),
     sourceInfo.meta?.eventCount ?? "",
     cellEvents.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join(",")
   ].join("|");
@@ -3980,7 +3992,7 @@ function irrigationCellPopoverHtml(context, block) {
   const agrocoreProgrammedHours = Number(irrigationProgramHours[key]);
   const diagnostics = context.kind === "real"
     ? irrigationWiseconnDiagnostics(context.blockId, context.date, sourceInfo, value)
-    : { balance: { programmedHours: null, hours: null, percent: null, className: "" }, hydraulic: null, fipRisk: false, fips: [] };
+    : { balance: { programmedHours: null, hours: null, percent: null, className: "" }, hydraulic: null, fipRisk: false, actualFips: [], scheduledFips: [], fipComparisons: [] };
   const wiseconnProgrammedHours = diagnostics.balance.programmedHours;
   const hoursDifference = diagnostics.balance.hours;
   const hoursDifferencePercent = diagnostics.balance.percent;

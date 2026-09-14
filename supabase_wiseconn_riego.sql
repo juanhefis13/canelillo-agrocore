@@ -53,12 +53,14 @@ create table if not exists public.wiseconn_riegos_reales (
   volumen_m3 numeric(16, 3),
   precipitacion_mm numeric(14, 3),
   caudal_m3_h numeric(14, 3),
+  fertirriego_real jsonb not null default '[]'::jsonb,
   sincronizado_en timestamptz not null default now(),
   constraint wiseconn_riego_periodo_ck check (termino >= inicio)
 );
 
 alter table public.wiseconn_riegos_reales
-  add column if not exists scheduled_irrigation_id bigint;
+  add column if not exists scheduled_irrigation_id bigint,
+  add column if not exists fertirriego_real jsonb not null default '[]'::jsonb;
 
 create index if not exists wiseconn_riegos_reales_zone_inicio_idx
   on public.wiseconn_riegos_reales (farm_id, zone_id, inicio);

@@ -117,11 +117,12 @@ function minimalEvent(event = {}) {
     type: event.type?.description || event.type || "",
     volumeM3: numeric(event.volume?.value ?? event.volume),
     precipitationMm: numeric(event.precipitation?.value ?? event.precipitation),
-    flowM3H: numeric(event.flow?.value ?? event.flow)
+    flowM3H: numeric(event.flow?.value ?? event.flow),
+    fertigations: summarizeFertigations(event.fertigations)
   };
 }
 
-function summarizeScheduledFertigations(rows = []) {
+function summarizeFertigations(rows = []) {
   const grouped = new Map();
   (Array.isArray(rows) ? rows : []).forEach((item) => {
     const tankId = Number(item?.tankId);
@@ -136,7 +137,8 @@ function summarizeScheduledFertigations(rows = []) {
       firstStart: "",
       lastEnd: "",
       fertilizerNames: new Set(),
-      types: new Set()
+      types: new Set(),
+      scheduledFertigationIds: new Set()
     };
     if (Number.isFinite(volume) && volume > 0) current.volume += volume;
     current.count += 1;
@@ -146,6 +148,7 @@ function summarizeScheduledFertigations(rows = []) {
     if (endTime && (!current.lastEnd || endTime > current.lastEnd)) current.lastEnd = endTime;
     if (item?.fertilizer?.name) current.fertilizerNames.add(item.fertilizer.name);
     if (item?.fertigationType) current.types.add(item.fertigationType);
+    if (Number.isFinite(Number(item?.scheduledFertigationId))) current.scheduledFertigationIds.add(Number(item.scheduledFertigationId));
     grouped.set(key, current);
   });
   return [...grouped.values()].map((item) => ({
@@ -156,7 +159,8 @@ function summarizeScheduledFertigations(rows = []) {
     firstStart: item.firstStart,
     lastEnd: item.lastEnd,
     fertilizerNames: [...item.fertilizerNames],
-    types: [...item.types]
+    types: [...item.types],
+    scheduledFertigationIds: [...item.scheduledFertigationIds]
   }));
 }
 
@@ -179,7 +183,7 @@ function minimalScheduledIrrigation(irrigation = {}) {
       ? (endMs - initMs) / 3600000
       : null,
     programmedBy: irrigation.programmedByUser?.name || "",
-    fertigations: summarizeScheduledFertigations(irrigation.scheduledFertigations)
+    fertigations: summarizeFertigations(irrigation.scheduledFertigations)
   };
 }
 
@@ -281,7 +285,7 @@ export default async (req) => {
     const forceRefresh = url.searchParams.get("refresh") === "1";
     if (!from || !to || from > to) return json(400, { message: "Rango de fechas invalido" });
     if (rangeDays(from, to) > 62) return json(400, { message: "El rango maximo permitido es de 62 dias" });
-    const result = await cached(`irrigation-bundle-v2:${farmId}:${from}:${to}`, () => irrigationBundle(farmId, from, to), forceRefresh);
+    const result = await cached(`irrigation-bundle-v3:${farmId}:${from}:${to}`, () => irrigationBundle(farmId, from, to), forceRefresh);
     return json(200, {
       farmId,
       from,
