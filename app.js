@@ -23,6 +23,7 @@ const IRRIGATION_OPTIONAL_COLUMNS = [
   "precipitacion",
   "caudal",
   "origen",
+  "wiseconn_ajuste_manual",
   "wiseconn_volumen_m3",
   "wiseconn_caudal_medido_m3_h",
   "wiseconn_horas_calculadas",
@@ -2580,9 +2581,15 @@ function irrigationRealHoursSource() {
 
 function irrigationRealSourceInfo(blockId, date) {
   const key = irrigationKey(blockId, date);
-  if (wiseconnHasManualOverride(key)) return { source: "manual", meta: null };
   const meta = wiseconnIrrigationMeta.get(key) || wiseconnPersistedMeta.get(key) || null;
-  return { source: meta ? "wiseconn" : "", meta };
+  const manualValue = Number(irrigationHours[key]);
+  const adjusted = meta
+    && Number.isFinite(manualValue)
+    && manualValue > 0
+    && Math.abs(manualValue - Number(meta.hours)) > 0.005;
+  if (meta) return { source: "wiseconn", meta, adjusted };
+  if (wiseconnHasManualOverride(key)) return { source: "manual", meta: null, adjusted: false };
+  return { source: "", meta: null, adjusted: false };
 }
 
 function rebuildWiseconnIrrigationHours(monthPrefix = "") {
@@ -2769,6 +2776,11 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     wiseconnSyncState.available = wiseconnZoneMappings.length > 0;
     wiseconnSyncState.eventCount = events.length;
     const dailyRows = rebuildWiseconnIrrigationHours(monthPrefix);
+    dailyRows.forEach((item) => {
+      const key = irrigationKey(item.campo_id, item.fecha);
+      if (wiseconnHasManualOverride(key) && !irrigationAudit[key]?.userName) delete irrigationHours[key];
+    });
+    saveIrrigationHours();
     try {
       const persisted = await persistWiseconnIrrigationDays(dailyRows, range);
       wiseconnSyncState.persistedDays = persisted.processed;
@@ -2965,7 +2977,7 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const sourceInfo = kind === "real" ? irrigationRealSourceInfo(block.id, date) : { source: "", meta: null };
   const auditClass = Number(value) > 0 && audit ? "has-audit" : "";
   const wiseconnClass = sourceInfo.source === "wiseconn" ? "has-wiseconn" : "";
-  const manualClass = sourceInfo.source === "manual" ? "has-manual-override" : "";
+  const manualClass = sourceInfo.source === "manual" || sourceInfo.adjusted ? "has-manual-override" : "";
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const cellEvents = irrigationCellEvents(block.id, date);
   const eventClass = cellEvents.length ? "has-event" : "";
@@ -3124,6 +3136,7 @@ function applyIrrigationRecords(rows = [], options = {}) {
     hours: Number(item.horas_riego) || 0,
     volume: Number(item.volumen) || 0,
     origin: item.origen || "manual",
+    wiseconnManualAdjustment: item.wiseconn_ajuste_manual === true,
     wiseconnHours: item.wiseconn_horas_calculadas === null || item.wiseconn_horas_calculadas === undefined ? null : Number(item.wiseconn_horas_calculadas),
     wiseconnVolume: item.wiseconn_volumen_m3 === null || item.wiseconn_volumen_m3 === undefined ? null : Number(item.wiseconn_volumen_m3),
     wiseconnMeasuredFlow: item.wiseconn_caudal_medido_m3_h === null || item.wiseconn_caudal_medido_m3_h === undefined ? null : Number(item.wiseconn_caudal_medido_m3_h),
@@ -3141,13 +3154,21 @@ function applyIrrigationRecords(rows = [], options = {}) {
   const cloudWiseconnMeta = new Map();
   records.forEach((item) => {
     const key = irrigationKey(item.blockId, item.date);
-    const isWiseconn = item.origin === "wiseconn";
-    if (!isWiseconn && item.hours > 0) cloudHours[key] = item.hours;
-    if (!isWiseconn && item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
+    const hasWiseconnData = item.origin === "wiseconn" || Number(item.wiseconnVolume) > 0 || Number.isFinite(item.wiseconnHours);
+    const automaticHours = Number.isFinite(item.wiseconnHours) ? item.wiseconnHours : (item.origin === "wiseconn" ? item.hours : null);
+    const isWiseconnAdjustment = hasWiseconnData && (
+      item.wiseconnManualAdjustment
+      || (
+        Boolean(item.modifiedByName)
+        && Number.isFinite(automaticHours)
+        && Math.abs(item.hours - automaticHours) > 0.005
+      )
+    );
+    if ((!hasWiseconnData || isWiseconnAdjustment) && item.hours > 0) cloudHours[key] = item.hours;
+    if ((!hasWiseconnData || isWiseconnAdjustment) && item.hours > 0 && (item.modifiedByName || item.modifiedAt)) {
       cloudAudit[key] = { userName: item.modifiedByName, updatedAt: item.modifiedAt };
     }
-    const automaticHours = Number.isFinite(item.wiseconnHours) ? item.wiseconnHours : (isWiseconn ? item.hours : null);
-    const automaticVolume = Number.isFinite(item.wiseconnVolume) ? item.wiseconnVolume : (isWiseconn ? item.volume : null);
+    const automaticVolume = Number.isFinite(item.wiseconnVolume) ? item.wiseconnVolume : (item.origin === "wiseconn" ? item.volume : null);
     if (Number.isFinite(automaticHours) && automaticHours >= 0 && Number(automaticVolume) > 0) {
       cloudWiseconnHours[key] = automaticHours;
       cloudWiseconnMeta.set(key, {
@@ -3244,6 +3265,7 @@ async function saveIrrigationCell(blockId, date, hours) {
           horas_riego: Number(Number(sourceMeta.hours).toFixed(2)),
           volumen: Number(Number(sourceMeta.volumeM3).toFixed(3)),
           origen: "wiseconn",
+          wiseconn_ajuste_manual: false,
           wiseconn_volumen_m3: Number(Number(sourceMeta.volumeM3).toFixed(3)),
           wiseconn_caudal_medido_m3_h: Number.isFinite(Number(sourceMeta.measuredFlowM3H)) ? Number(Number(sourceMeta.measuredFlowM3H).toFixed(3)) : null,
           wiseconn_horas_calculadas: Number(Number(sourceMeta.hours).toFixed(2)),
@@ -3260,12 +3282,23 @@ async function saveIrrigationCell(blockId, date, hours) {
       irrigationCloudAvailable = true;
       return true;
     }
+    const key = irrigationKey(blockId, date);
+    const sourceMeta = wiseconnIrrigationMeta.get(key) || wiseconnPersistedMeta.get(key) || null;
+    const isWiseconnValue = date >= WISECONN_IRRIGATION_START_DATE && sourceMeta && Number(sourceMeta.volumeM3) > 0;
     const payload = {
       campo_id: blockId,
       fecha: date,
       horas_riego: value,
-      volumen: irrigationVolume(value, block.flow),
-      origen: "manual",
+      volumen: isWiseconnValue ? Number(Number(sourceMeta.volumeM3).toFixed(3)) : irrigationVolume(value, block.flow),
+      origen: isWiseconnValue ? "wiseconn" : "manual",
+      wiseconn_ajuste_manual: Boolean(isWiseconnValue && Math.abs(value - Number(sourceMeta.hours)) > 0.005),
+      ...(isWiseconnValue ? {
+        wiseconn_volumen_m3: Number(Number(sourceMeta.volumeM3).toFixed(3)),
+        wiseconn_caudal_medido_m3_h: Number.isFinite(Number(sourceMeta.measuredFlowM3H)) ? Number(Number(sourceMeta.measuredFlowM3H).toFixed(3)) : null,
+        wiseconn_horas_calculadas: Number(Number(sourceMeta.hours).toFixed(2)),
+        wiseconn_eventos: Number(sourceMeta.eventCount) || 0,
+        wiseconn_sincronizado_en: sourceMeta.syncedAt || new Date().toISOString()
+      } : {}),
       creado_por: audit.userId,
       ...irrigationAuditPayload(audit),
       ...irrigationBlockSnapshot(block)
@@ -3463,6 +3496,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     observation?.updatedAt || "",
     observation?.text ? "obs" : "",
     sourceInfo.source,
+    sourceInfo.adjusted ? "adjusted" : "",
     sourceInfo.meta?.volumeM3 ?? "",
     sourceInfo.meta?.flowM3H ?? "",
     sourceInfo.meta?.measuredFlowM3H ?? "",
@@ -3514,7 +3548,9 @@ function irrigationCellPopoverHtml(context, block) {
       : monthlyDifference > 0
         ? `Exceso ${number(monthlyDifference, 2)} h`
         : "Programa cumplido";
-  const lastUser = sourceInfo.source === "wiseconn" ? "WiseConn" : (audit?.userName || audit?.userEmail || "Sin modificación");
+  const lastUser = sourceInfo.source === "wiseconn"
+    ? (sourceInfo.adjusted ? `${audit?.userName || audit?.userEmail || "Usuario"} · ajuste sobre WiseConn` : "WiseConn")
+    : (audit?.userName || audit?.userEmail || "Sin modificación");
   const wiseconnSyncedAt = wiseconnSyncState.syncedAt || sourceInfo.meta?.syncedAt || "";
   const lastDate = sourceInfo.source === "wiseconn" && wiseconnSyncedAt
     ? new Date(wiseconnSyncedAt).toLocaleString("es-CL")
@@ -3528,8 +3564,8 @@ function irrigationCellPopoverHtml(context, block) {
       <span><small>Fecha</small><strong>${escapeHtml(irrigationEventDateLabel(context.date))}</strong></span>
       <span><small>Horas</small><strong>${value === "" || value === undefined ? "-" : `${escapeHtml(value)} h`}</strong></span>
     </div>
-    ${sourceInfo.source === "wiseconn" ? `<div class="irrigation-cell-popover-wiseconn">
-      <strong>Medición WiseConn</strong>
+    ${sourceInfo.source === "wiseconn" ? `<div class="irrigation-cell-popover-wiseconn ${sourceInfo.adjusted ? "is-adjusted" : ""}">
+      <strong>${sourceInfo.adjusted ? "WiseConn con ajuste de horas" : "Medición WiseConn"}</strong>
       <div class="irrigation-cell-popover-wiseconn-grid">
         <span><small>Volumen entregado</small><b>${number(sourceInfo.meta?.volumeM3, 2)} m3</b></span>
         <span><small>Caudal medido</small><b>${Number(sourceInfo.meta?.measuredFlowM3H) > 0 ? `${number(sourceInfo.meta.measuredFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
@@ -12007,7 +12043,7 @@ function renderIrrigation() {
     target.classList.toggle("has-hours", nextValue > 0);
     target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
     target.classList.toggle("has-wiseconn", currentSourceInfo.source === "wiseconn");
-    target.classList.toggle("has-manual-override", currentSourceInfo.source === "manual");
+    target.classList.toggle("has-manual-override", currentSourceInfo.source === "manual" || currentSourceInfo.adjusted);
     delete target.dataset.titleSignature;
     hydrateIrrigationInputTitle(target, context, block);
     scheduleIrrigationLocalSave("real");
@@ -21099,8 +21135,15 @@ async function loadCloudData(options = {}) {
       console.warn("No se pudieron cargar calicatas", error);
       return [];
     }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_caudal_medido_m3_h,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
+    loadIrrigation ? sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_ajuste_manual,wiseconn_volumen_m3,wiseconn_caudal_medido_m3_h,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
       .catch((error) => {
+        if (isMissingSupabaseColumn(error, ["wiseconn_ajuste_manual"])) {
+          return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_caudal_medido_m3_h,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`)
+            .catch((fallbackError) => {
+              if (!isMissingSupabaseColumn(fallbackError, ["wiseconn_caudal_medido_m3_h"])) throw fallbackError;
+              return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
+            });
+        }
         if (isMissingSupabaseColumn(error, ["wiseconn_caudal_medido_m3_h"])) {
           return sbSelectAll("riego", `select=id,campo_id,fecha,horas_riego,volumen,origen,wiseconn_volumen_m3,wiseconn_horas_calculadas,wiseconn_eventos,wiseconn_sincronizado_en,creado_por_nombre,modificado_por_nombre,modificado_en,actualizado_en,updated_at${irrigationDateQuery}&order=fecha.asc,campo_id.asc`);
         }

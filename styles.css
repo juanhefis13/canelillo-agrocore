@@ -7748,6 +7748,16 @@ td span,
   color: #8a4b08;
 }
 
+.irrigation-cell-popover-wiseconn.is-adjusted {
+  border-color: #efc06f;
+  border-left-color: #d97706;
+  background: #fff8e8;
+}
+
+.irrigation-cell-popover-wiseconn.is-adjusted > strong {
+  color: #8a4b08;
+}
+
 .irrigation-cell-popover-events {
   display: grid;
   gap: 5px;

@@ -72,12 +72,52 @@ alter table public.riego
   add column if not exists hectareas numeric(12, 3),
   add column if not exists precipitacion numeric,
   add column if not exists caudal numeric,
+  add column if not exists modificado_por uuid,
+  add column if not exists modificado_por_nombre text,
   add column if not exists origen text not null default 'manual',
+  add column if not exists wiseconn_ajuste_manual boolean not null default false,
   add column if not exists wiseconn_volumen_m3 numeric(16, 3),
   add column if not exists wiseconn_caudal_medido_m3_h numeric(14, 3),
   add column if not exists wiseconn_horas_calculadas numeric(8, 2),
   add column if not exists wiseconn_eventos integer,
   add column if not exists wiseconn_sincronizado_en timestamptz;
+
+-- Una fila con telemetria WiseConn sigue siendo WiseConn aunque sus horas
+-- hayan sido ajustadas. La diferencia queda registrada en una bandera aparte.
+update public.riego
+set
+  wiseconn_ajuste_manual = coalesce(wiseconn_ajuste_manual, false)
+    or (
+      (modificado_por is not null or nullif(btrim(coalesce(modificado_por_nombre, '')), '') is not null)
+      and abs(coalesce(horas_riego, 0) - coalesce(wiseconn_horas_calculadas, horas_riego, 0)) > 0.005
+    ),
+  origen = 'wiseconn'
+where coalesce(wiseconn_volumen_m3, 0) > 0
+   or wiseconn_horas_calculadas is not null;
+
+create or replace function public.preservar_origen_riego_wiseconn()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if coalesce(new.wiseconn_volumen_m3, 0) > 0
+     or new.wiseconn_horas_calculadas is not null then
+    new.origen := 'wiseconn';
+    if new.wiseconn_horas_calculadas is not null
+       and abs(coalesce(new.horas_riego, 0) - new.wiseconn_horas_calculadas) > 0.005
+       and (tg_op = 'INSERT' or new.horas_riego is distinct from old.horas_riego) then
+      new.wiseconn_ajuste_manual := true;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_preservar_origen_riego_wiseconn on public.riego;
+create trigger trg_preservar_origen_riego_wiseconn
+before insert or update on public.riego
+for each row execute function public.preservar_origen_riego_wiseconn();
 
 create index if not exists riego_origen_fecha_idx
   on public.riego (origen, fecha);
@@ -260,6 +300,7 @@ begin
     where r.fecha >= greatest(p_desde, date '2026-01-01')
       and r.fecha < p_hasta
       and coalesce(nullif(r.origen, ''), 'manual') = 'wiseconn'
+      and not coalesce(r.wiseconn_ajuste_manual, false)
       and not exists (
         select 1
         from jsonb_to_recordset(p_registros) as x(campo_id uuid, fecha date)
@@ -304,7 +345,12 @@ begin
   join public.riego r
     on r.campo_id = e.campo_id
    and r.fecha = e.fecha
-  where coalesce(nullif(r.origen, ''), 'manual') <> 'wiseconn';
+  where coalesce(r.wiseconn_ajuste_manual, false)
+     or (
+       coalesce(nullif(r.origen, ''), 'manual') <> 'wiseconn'
+       and (r.modificado_por is not null or nullif(btrim(coalesce(r.modificado_por_nombre, '')), '') is not null)
+       and abs(coalesce(r.horas_riego, 0) - e.horas) > 0.005
+     );
 
   with entrada as (
     select distinct on (x.campo_id, x.fecha)
@@ -341,6 +387,7 @@ begin
     horas_riego,
     volumen,
     origen,
+    wiseconn_ajuste_manual,
     wiseconn_volumen_m3,
     wiseconn_caudal_medido_m3_h,
     wiseconn_horas_calculadas,
@@ -360,6 +407,7 @@ begin
     e.horas,
     e.volumen_m3,
     'wiseconn',
+    false,
     e.volumen_m3,
     nullif(e.caudal_medido_m3_h, 0),
     e.horas,
@@ -375,20 +423,22 @@ begin
   from entrada e
   on conflict (campo_id, fecha) do update set
     horas_riego = case
-      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
-        then excluded.horas_riego
-      else riego.horas_riego
+      when coalesce(riego.wiseconn_ajuste_manual, false)
+        or (
+          coalesce(nullif(riego.origen, ''), 'manual') <> 'wiseconn'
+          and (riego.modificado_por is not null or nullif(btrim(coalesce(riego.modificado_por_nombre, '')), '') is not null)
+          and abs(coalesce(riego.horas_riego, 0) - excluded.horas_riego) > 0.005
+        ) then riego.horas_riego
+      else excluded.horas_riego
     end,
-    volumen = case
-      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
-        then excluded.volumen
-      else riego.volumen
-    end,
-    origen = case
-      when coalesce(nullif(riego.origen, ''), 'manual') = 'wiseconn'
-        then 'wiseconn'
-      else coalesce(nullif(riego.origen, ''), 'manual')
-    end,
+    volumen = excluded.volumen,
+    origen = 'wiseconn',
+    wiseconn_ajuste_manual = coalesce(riego.wiseconn_ajuste_manual, false)
+      or (
+        coalesce(nullif(riego.origen, ''), 'manual') <> 'wiseconn'
+        and (riego.modificado_por is not null or nullif(btrim(coalesce(riego.modificado_por_nombre, '')), '') is not null)
+        and abs(coalesce(riego.horas_riego, 0) - excluded.horas_riego) > 0.005
+      ),
     wiseconn_volumen_m3 = excluded.wiseconn_volumen_m3,
     wiseconn_caudal_medido_m3_h = excluded.wiseconn_caudal_medido_m3_h,
     wiseconn_horas_calculadas = excluded.wiseconn_horas_calculadas,
