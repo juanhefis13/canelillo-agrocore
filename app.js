@@ -257,7 +257,6 @@ const IRRIGATION_SATELLITE_TRANSPARENT_TILE = "data:image/png;base64,iVBORw0KGgo
 const WISECONN_PROXY_BASE = "/api/wiseconn";
 const WISECONN_FARM_ID = 4212;
 const WISECONN_TIME_ZONE = "America/Santiago";
-const WISECONN_OPERATIONAL_DAY_CUTOFF_HOUR = 6;
 const WISECONN_REFRESH_TTL_MS = 5 * 60 * 1000;
 const WISECONN_IRRIGATION_START_DATE = "2026-01-01";
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
@@ -2476,22 +2475,6 @@ function wiseconnLocalDate(value) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-const wiseconnLocalHourFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: WISECONN_TIME_ZONE,
-  hour: "2-digit",
-  hourCycle: "h23"
-});
-
-function wiseconnOperationalDate(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) return "";
-  const localDate = wiseconnLocalDate(date);
-  const localHour = Number(wiseconnLocalHourFormatter.format(date));
-  return localDate && Number.isFinite(localHour) && localHour < WISECONN_OPERATIONAL_DAY_CUTOFF_HOUR
-    ? wiseconnShiftDate(localDate, -1)
-    : localDate;
-}
-
 function wiseconnShiftDate(value, days) {
   const date = new Date(`${value}T12:00:00Z`);
   if (!Number.isFinite(date.getTime())) return value;
@@ -2499,42 +2482,16 @@ function wiseconnShiftDate(value, days) {
   return date.toISOString().slice(0, 10);
 }
 
-function wiseconnNextOperationalDateBoundary(startMs, endMs, operationalDate) {
-  let low = startMs + 1;
-  let high = endMs;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (wiseconnOperationalDate(new Date(middle)) === operationalDate) low = middle + 1;
-    else high = middle;
-  }
-  return Math.min(endMs, low);
-}
-
 function wiseconnIntervalDailyParts(item) {
   const startMs = new Date(item.initTime).getTime();
   const endMs = new Date(item.endTime).getTime();
   if (!Number.isFinite(startMs)) return [];
-  if (!Number.isFinite(endMs) || endMs <= startMs) {
-    const date = wiseconnOperationalDate(new Date(startMs));
-    return date ? [{ date, share: 1, durationHours: null }] : [];
-  }
-  const totalMs = endMs - startMs;
-  const output = [];
-  let cursor = startMs;
-  while (cursor < endMs) {
-    const date = wiseconnOperationalDate(new Date(cursor));
-    if (!date) break;
-    const endDate = wiseconnOperationalDate(new Date(endMs - 1));
-    const boundary = date === endDate ? endMs : wiseconnNextOperationalDateBoundary(cursor, endMs, date);
-    if (boundary <= cursor) break;
-    output.push({
-      date,
-      share: (boundary - cursor) / totalMs,
-      durationHours: (boundary - cursor) / 3600000
-    });
-    cursor = boundary;
-  }
-  return output;
+  const date = wiseconnLocalDate(new Date(startMs));
+  if (!date) return [];
+  const durationHours = Number.isFinite(endMs) && endMs > startMs
+    ? (endMs - startMs) / 3600000
+    : null;
+  return [{ date, share: 1, durationHours }];
 }
 
 function wiseconnEventDailyVolumes(event) {
@@ -2652,21 +2609,30 @@ function irrigationRealSourceInfo(blockId, date) {
   return { source: "", meta: null, adjusted: false };
 }
 
-function rebuildWiseconnIrrigationHours(monthPrefix = "") {
+function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
   const mappingByZone = new Map(wiseconnZoneMappings
     .filter((item) => item.sync && item.fieldId)
     .map((item) => [Number(item.zoneId), item]));
   const fieldsById = new Map((state.blocks || []).map((block) => [String(block.id), block]));
   const buckets = new Map();
   const scheduledBuckets = new Map();
+  const scheduledById = new Map();
   let mappedEventCount = 0;
   wiseconnScheduledIrrigations.forEach((irrigation) => {
     const mapping = mappingByZone.get(Number(irrigation.zoneId));
     if (!mapping) return;
     const fullHours = Number(irrigation.programmedHours);
     const volumeM3 = Number(irrigation.volumeM3);
+    const theoreticalFlow = Number(irrigation.theoreticalFlowM3H);
+    const programmedHours = Number.isFinite(fullHours) && fullHours > 0 ? fullHours : null;
+    scheduledById.set(Number(irrigation.id), {
+      hours: programmedHours,
+      volumeM3: Number.isFinite(volumeM3) && volumeM3 > 0 ? volumeM3 : null,
+      flowM3H: Number.isFinite(theoreticalFlow) && theoreticalFlow > 0 ? theoreticalFlow : null
+    });
     wiseconnIntervalDailyParts(irrigation).forEach((part) => {
       if (monthPrefix && !part.date.startsWith(monthPrefix)) return;
+      const dailyProgrammedHours = programmedHours ?? part.durationHours;
       const key = irrigationKey(mapping.fieldId, part.date);
       const bucket = scheduledBuckets.get(key) || {
         hours: 0,
@@ -2674,16 +2640,25 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
         theoreticalFlowWeighted: 0,
         theoreticalFlowWeight: 0,
         scheduledIds: new Set(),
+        hoursById: new Map(),
+        volumeById: new Map(),
+        flowById: new Map(),
         fullHoursById: new Map(),
         statuses: new Set()
       };
-      if (Number.isFinite(part.durationHours) && part.durationHours > 0) bucket.hours += part.durationHours;
+      if (Number.isFinite(dailyProgrammedHours) && dailyProgrammedHours > 0) bucket.hours += dailyProgrammedHours;
       if (Number.isFinite(volumeM3) && volumeM3 > 0) bucket.volumeM3 += volumeM3 * part.share;
-      const theoreticalFlow = Number(irrigation.theoreticalFlowM3H);
+      if (Number.isFinite(dailyProgrammedHours) && dailyProgrammedHours > 0) {
+        bucket.hoursById.set(irrigation.id, dailyProgrammedHours);
+      }
+      if (Number.isFinite(volumeM3) && volumeM3 > 0) {
+        bucket.volumeById.set(irrigation.id, (bucket.volumeById.get(irrigation.id) || 0) + volumeM3 * part.share);
+      }
       if (Number.isFinite(theoreticalFlow) && theoreticalFlow > 0) {
-        const weight = Number(part.durationHours) > 0 ? Number(part.durationHours) : 1;
+        const weight = Number(dailyProgrammedHours) > 0 ? Number(dailyProgrammedHours) : 1;
         bucket.theoreticalFlowWeighted += theoreticalFlow * weight;
         bucket.theoreticalFlowWeight += weight;
+        bucket.flowById.set(irrigation.id, theoreticalFlow);
       }
       bucket.scheduledIds.add(irrigation.id);
       if (Number.isFinite(fullHours) && fullHours > 0) bucket.fullHoursById.set(irrigation.id, fullHours);
@@ -2704,6 +2679,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
         measuredFlowWeight: 0,
         durationHours: 0,
         eventIds: new Set(),
+        scheduledIds: new Set(),
         statuses: new Set(),
         fieldId: mapping.fieldId,
         date: part.date,
@@ -2721,6 +2697,9 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
         bucket.measuredFlowWeight += weight;
       }
       bucket.eventIds.add(event.id);
+      if (Number.isFinite(Number(event.scheduledIrrigationId)) && Number(event.scheduledIrrigationId) > 0) {
+        bucket.scheduledIds.add(Number(event.scheduledIrrigationId));
+      }
       if (event.status) bucket.statuses.add(event.status);
       buckets.set(key, bucket);
     });
@@ -2741,8 +2720,14 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
     const hasFlow = Number.isFinite(flow) && flow > 0;
     if (hasFlow) hours[key] = Number((bucket.volumeM3 / flow).toFixed(2));
     else missingFlowCount += 1;
-    const scheduled = scheduledBuckets.get(key);
-    const programmedHours = Number(scheduled?.hours);
+    const linkedScheduled = [...bucket.scheduledIds]
+      .map((id) => scheduledById.get(id))
+      .filter(Boolean);
+    const programmedHours = linkedScheduled.reduce((sum, item) => sum + Number(item.hours || 0), 0);
+    const programmedVolumeM3 = linkedScheduled.reduce((sum, item) => sum + Number(item.volumeM3 || 0), 0);
+    const programmedFlowValues = linkedScheduled
+      .map((item) => Number(item.flowM3H))
+      .filter((value) => Number.isFinite(value) && value > 0);
     meta.set(key, {
       volumeM3: bucket.volumeM3,
       flowM3H: hasFlow ? flow : null,
@@ -2750,14 +2735,13 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
       hours: hasFlow ? bucket.volumeM3 / flow : null,
       durationHours: bucket.durationHours > 0 ? bucket.durationHours : null,
       scheduledHours: Number.isFinite(programmedHours) && programmedHours > 0 ? programmedHours : null,
-      scheduledTotalHours: scheduled
-        ? [...scheduled.fullHoursById.values()].reduce((sum, value) => sum + Number(value || 0), 0)
-        : null,
-      scheduledVolumeM3: Number(scheduled?.volumeM3) > 0 ? Number(scheduled.volumeM3) : null,
-      scheduledFlowM3H: Number(scheduled?.theoreticalFlowWeight) > 0
-        ? scheduled.theoreticalFlowWeighted / scheduled.theoreticalFlowWeight
-        : null,
-      scheduledCount: scheduled?.scheduledIds.size || 0,
+      scheduledVolumeM3: programmedVolumeM3 > 0 ? programmedVolumeM3 : null,
+      scheduledFlowM3H: programmedHours > 0 && programmedVolumeM3 > 0
+        ? programmedVolumeM3 / programmedHours
+        : programmedFlowValues.length
+          ? programmedFlowValues.reduce((sum, value) => sum + value, 0) / programmedFlowValues.length
+          : null,
+      scheduledCount: linkedScheduled.length,
       eventCount: bucket.eventIds.size,
       statuses: [...bucket.statuses],
       zoneName: bucket.zoneName,
@@ -2780,8 +2764,14 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "") {
   });
   wiseconnIrrigationHours = hours;
   wiseconnIrrigationMeta = meta;
-  wiseconnScheduledHours = { ...wiseconnScheduledHours, ...scheduledHours };
-  wiseconnScheduledMeta = new Map([...wiseconnScheduledMeta, ...scheduledMeta]);
+  const previousScheduledHours = options.replaceScheduled && monthPrefix
+    ? Object.fromEntries(Object.entries(wiseconnScheduledHours).filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : wiseconnScheduledHours;
+  const previousScheduledMeta = options.replaceScheduled && monthPrefix
+    ? new Map([...wiseconnScheduledMeta.entries()].filter(([key]) => !irrigationKeyMatchesMonth(key, monthPrefix)))
+    : wiseconnScheduledMeta;
+  wiseconnScheduledHours = { ...previousScheduledHours, ...scheduledHours };
+  wiseconnScheduledMeta = new Map([...previousScheduledMeta, ...scheduledMeta]);
   wiseconnSyncState.mappedEventCount = mappedEventCount;
   wiseconnSyncState.calculatedDays = Object.keys(hours).length;
   wiseconnSyncState.totalVolumeM3 = totalVolumeM3;
@@ -2920,11 +2910,12 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
       "wiseconn_riegos_programados",
       `select=scheduled_id,farm_id,zone_id,pump_system_id,inicio,termino,estado,tipo_riego,tipo_programacion,horas_programadas,volumen_programado_m3,caudal_teorico_m3_h,programado_por&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
     ).catch((error) => {
-      if (isMissingSupabaseRelation(error, ["wiseconn_riegos_programados"])) return [];
+      if (isMissingSupabaseRelation(error, ["wiseconn_riegos_programados"])) return null;
       throw error;
     });
     let events = (cachedRows || []).map(wiseconnMapEventRow);
     let scheduledIrrigations = (cachedScheduledRows || []).map(wiseconnMapScheduledRow);
+    let scheduledSnapshotAvailable = Array.isArray(cachedScheduledRows);
     const lastRefresh = wiseconnMonthRefresh.get(monthPrefix) || 0;
     const shouldRefresh = options.force || Date.now() - lastRefresh > WISECONN_REFRESH_TTL_MS;
     if (shouldRefresh) {
@@ -2932,6 +2923,7 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
         const remote = await fetchWiseconnEvents(range, { force: Boolean(options.force) });
         events = remote.events;
         scheduledIrrigations = remote.scheduledIrrigations;
+        scheduledSnapshotAvailable = true;
         await persistWiseconnEvents(remote.events);
         try {
           await persistWiseconnScheduledIrrigations(remote.scheduledIrrigations);
@@ -2950,7 +2942,7 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     wiseconnSyncState.available = wiseconnZoneMappings.length > 0;
     wiseconnSyncState.eventCount = events.length;
     wiseconnSyncState.scheduledCount = scheduledIrrigations.length;
-    const dailyRows = rebuildWiseconnIrrigationHours(monthPrefix);
+    const dailyRows = rebuildWiseconnIrrigationHours(monthPrefix, { replaceScheduled: scheduledSnapshotAvailable });
     dailyRows.forEach((item) => {
       const key = irrigationKey(item.campo_id, item.fecha);
       if (wiseconnHasManualOverride(key) && !irrigationAudit[key]?.userName) delete irrigationHours[key];
@@ -3742,7 +3734,6 @@ function irrigationCellPopoverHtml(context, block) {
   const agrocoreProgrammedHours = Number(irrigationProgramHours[key]);
   const scheduledInfo = wiseconnScheduledMeta.get(key) || null;
   const wiseconnProgrammedHours = Number(sourceInfo.meta?.scheduledHours ?? scheduledInfo?.hours ?? wiseconnScheduledHours[key]);
-  const wiseconnProgrammedTotalHours = Number(sourceInfo.meta?.scheduledTotalHours ?? scheduledInfo?.totalHours);
   const realHours = Number(value);
   const hasWiseconnProgram = context.kind === "real" && Number.isFinite(wiseconnProgrammedHours) && wiseconnProgrammedHours > 0;
   const hasAgrocoreProgram = context.kind === "real" && Number.isFinite(agrocoreProgrammedHours) && agrocoreProgrammedHours > 0;
@@ -3804,7 +3795,6 @@ function irrigationCellPopoverHtml(context, block) {
         <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
         <span><small>Duración registrada</small><b>${Number(sourceInfo.meta?.durationHours) > 0 ? `${number(sourceInfo.meta.durationHours, 2)} h` : "Sin dato"}</b></span>
         <span><small>Programado WiseConn (día)</small><b>${hasWiseconnProgram ? `${number(wiseconnProgrammedHours, 2)} h` : "Sin programación asociada"}</b></span>
-        ${Number.isFinite(wiseconnProgrammedTotalHours) && wiseconnProgrammedTotalHours > wiseconnProgrammedHours + 0.01 ? `<span><small>Programación completa</small><b>${number(wiseconnProgrammedTotalHours, 2)} h</b></span>` : ""}
         <span class="${hoursDifference === null ? "" : hoursDifference < 0 ? "is-under" : "is-complete"}"><small>Balance vs WiseConn</small><b>${hoursDifferenceLabel}</b></span>
         ${hasAgrocoreProgram ? `<span><small>Programa AgroCore</small><b>${number(agrocoreProgrammedHours, 2)} h</b></span>` : ""}
       </div>
@@ -3817,7 +3807,7 @@ function irrigationCellPopoverHtml(context, block) {
           ${agrocoreProgrammedMonthHours > 0 ? `<span><small>Programa AgroCore</small><b>${number(agrocoreProgrammedMonthHours, 2)} h</b></span>` : ""}
         </div>
       </div>
-      <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Día operativo 06:00 a 05:59</small>
+      <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Fecha según inicio del riego</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
     ${events.length ? `<div class="irrigation-cell-popover-events">
       ${events.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b aria-hidden="true">!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
