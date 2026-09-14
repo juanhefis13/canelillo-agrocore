@@ -431,6 +431,7 @@ let irrigationFipAssignments = new Map();
 let irrigationFipAssignmentsLoaded = false;
 let irrigationFipAssignmentsError = "";
 let irrigationCellPopoverTarget = null;
+let irrigationCellPopoverHideTimer = null;
 let irrigationAuditsPruned = false;
 let irrigationGanttResizeObserver = null;
 let expandedCalicataKeys = new Set();
@@ -3387,6 +3388,9 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const sourceInfo = kind === "real" ? irrigationRealSourceInfo(block.id, date) : { source: "", meta: null };
   const auditClass = Number(value) > 0 && audit ? "has-audit" : "";
   const wiseconnClass = sourceInfo.source === "wiseconn" ? "has-wiseconn" : "";
+  const fertigationClass = kind === "real" && normalizeWiseconnFertigations(sourceInfo.meta?.fertigations).length
+    ? "has-fertirriego"
+    : "";
   const manualClass = sourceInfo.source === "manual" || sourceInfo.adjusted ? "has-manual-override" : "";
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const cellEvents = irrigationCellEvents(block.id, date);
@@ -3397,9 +3401,9 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const activeEventClass = diagnostics?.hydraulic || cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
-  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
+  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${fertigationClass ? ", con fertirriego" : ""}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
-  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${fertigationClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = [], options = {}) {
@@ -3971,6 +3975,7 @@ function irrigationCellPopoverHtml(context, block) {
   const observation = irrigationCellObservation(context.kind, context.blockId, context.date);
   const events = irrigationCellEvents(context.blockId, context.date);
   const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
+  const hasFertigation = context.kind === "real" && normalizeWiseconnFertigations(sourceInfo.meta?.fertigations).length > 0;
   const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
   const agrocoreProgrammedHours = Number(irrigationProgramHours[key]);
   const diagnostics = context.kind === "real"
@@ -3997,7 +4002,7 @@ function irrigationCellPopoverHtml(context, block) {
     : (audit?.updatedAt ? new Date(audit.updatedAt).toLocaleString("es-CL") : "Sin registro");
   return `
     <div class="irrigation-cell-popover-head">
-      <span>${context.kind === "program" ? "Programa" : "Riego real"}</span>
+      <span>${context.kind === "program" ? "Programa" : hasFertigation ? "Riego real · Fertirriego" : "Riego real"}</span>
       <strong>${escapeHtml(potreroLabel(block.potrero))} · Bloque ${escapeHtml(block.block)}</strong>
     </div>
     <div class="irrigation-cell-popover-metrics">
@@ -4030,9 +4035,25 @@ function irrigationCellPopoverHtml(context, block) {
     <small class="irrigation-cell-popover-help">Doble clic o Alt + O para editar la observación</small>`;
 }
 
+function ensureIrrigationCellPopover() {
+  let popover = document.getElementById("irrigationCellPopover");
+  if (popover) return popover;
+  popover = document.createElement("div");
+  popover.id = "irrigationCellPopover";
+  popover.className = "irrigation-cell-popover";
+  popover.setAttribute("role", "tooltip");
+  popover.setAttribute("aria-hidden", "true");
+  popover.hidden = true;
+  popover.onpointerenter = cancelIrrigationCellPopoverHide;
+  popover.onpointerleave = () => scheduleIrrigationCellPopoverHide(950);
+  document.body.appendChild(popover);
+  return popover;
+}
+
 function showIrrigationCellPopover(input, context, block) {
-  const popover = document.getElementById("irrigationCellPopover");
-  if (!popover || !input || !context || !block) return;
+  const popover = ensureIrrigationCellPopover();
+  if (!input || !context || !block) return;
+  cancelIrrigationCellPopoverHide();
   if (irrigationCellPopoverTarget !== input || popover.dataset.signature !== input.dataset.titleSignature) {
     popover.innerHTML = irrigationCellPopoverHtml(context, block);
     popover.dataset.signature = input.dataset.titleSignature || "";
@@ -4041,17 +4062,31 @@ function showIrrigationCellPopover(input, context, block) {
   popover.hidden = false;
   popover.setAttribute("aria-hidden", "false");
   const rect = input.getBoundingClientRect();
-  const width = Math.min(400, window.innerWidth - 16);
+  const viewportPadding = 12;
+  const width = Math.min(470, window.innerWidth - (viewportPadding * 2));
   popover.style.width = `${width}px`;
   const measuredHeight = popover.offsetHeight || 180;
-  const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2));
-  const above = rect.top - measuredHeight - 8;
-  const top = above >= 8 ? above : Math.min(window.innerHeight - measuredHeight - 8, rect.bottom + 8);
+  const left = Math.min(window.innerWidth - width - viewportPadding, Math.max(viewportPadding, rect.left + rect.width / 2 - width / 2));
+  const above = rect.top - measuredHeight - 10;
+  const top = above >= viewportPadding
+    ? above
+    : Math.min(window.innerHeight - measuredHeight - viewportPadding, rect.bottom + 10);
   popover.style.left = `${left}px`;
-  popover.style.top = `${Math.max(8, top)}px`;
+  popover.style.top = `${Math.max(viewportPadding, top)}px`;
+}
+
+function cancelIrrigationCellPopoverHide() {
+  clearTimeout(irrigationCellPopoverHideTimer);
+  irrigationCellPopoverHideTimer = null;
+}
+
+function scheduleIrrigationCellPopoverHide(delay = 850) {
+  cancelIrrigationCellPopoverHide();
+  irrigationCellPopoverHideTimer = setTimeout(hideIrrigationCellPopover, delay);
 }
 
 function hideIrrigationCellPopover() {
+  cancelIrrigationCellPopoverHide();
   const popover = document.getElementById("irrigationCellPopover");
   if (popover) {
     popover.hidden = true;
@@ -11964,6 +11999,7 @@ function setIrrigationFiltersOpen(open) {
 }
 
 function renderIrrigation() {
+  hideIrrigationCellPopover();
   if (irrigationTab !== "gantt") {
     irrigationGanttResizeObserver?.disconnect?.();
     irrigationGanttResizeObserver = null;
@@ -12292,7 +12328,6 @@ function renderIrrigation() {
       </div>
       </div>
       `}
-      ${irrigationTab === "gantt" ? '<div id="irrigationCellPopover" class="irrigation-cell-popover" role="tooltip" aria-hidden="true" hidden></div>' : ""}
     </section>
   `;
   document.getElementById("irrigationBalancePotreroFilter")?.addEventListener("change", (event) => {
@@ -12367,7 +12402,7 @@ function renderIrrigation() {
   views.irrigation.onpointerout = (event) => {
     const input = event.target.closest?.(irrigationCellSelector());
     if (!input || input.contains(event.relatedTarget)) return;
-    hideIrrigationCellPopover();
+    scheduleIrrigationCellPopoverHide();
   };
   views.irrigation.onfocusin = (event) => {
     const input = hydrateCellFromEvent(event);
@@ -12390,7 +12425,7 @@ function renderIrrigation() {
     const input = event.target.closest?.(irrigationCellSelector());
     if (!input || !views.irrigation.contains(input) || !isIrrigationCellEditor(input)) return;
     createIrrigationCellFromEditor(input);
-    hideIrrigationCellPopover();
+    scheduleIrrigationCellPopoverHide();
   };
   views.irrigation.onkeydown = (event) => {
     const input = event.target.closest?.(irrigationCellSelector());
@@ -12481,6 +12516,7 @@ function renderIrrigation() {
     target.classList.toggle("has-hours", nextValue > 0);
     target.classList.toggle("has-audit", Boolean(irrigationAudit[key]));
     target.classList.toggle("has-wiseconn", currentSourceInfo.source === "wiseconn");
+    target.classList.toggle("has-fertirriego", normalizeWiseconnFertigations(currentSourceInfo.meta?.fertigations).length > 0);
     target.classList.toggle("has-manual-override", currentSourceInfo.source === "manual" || currentSourceInfo.adjusted);
     delete target.dataset.titleSignature;
     hydrateIrrigationInputTitle(target, context, block);

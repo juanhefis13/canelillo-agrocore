@@ -6351,6 +6351,19 @@ td span,
   background: linear-gradient(0deg, rgba(31, 111, 74, 0.10), rgba(31, 111, 74, 0.10)), #fdecec;
 }
 
+.irrigation-hour-input.has-fertirriego,
+.irrigation-hour-input.has-fertirriego.is-weekend,
+.irrigation-hour-input.has-fertirriego.is-holiday {
+  border-color: #16845e;
+  background: #dff5e9;
+  color: #075f43;
+  box-shadow: inset 0 -3px 0 #16845e;
+}
+
+.irrigation-hour-input.has-fertirriego.has-manual-override {
+  box-shadow: inset 0 -3px 0 #d97706, inset 0 0 0 1px #16845e;
+}
+
 .irrigation-program-cell {
   display: grid;
   width: 28px;
@@ -7559,10 +7572,10 @@ td span,
 
 .irrigation-cell-popover {
   position: fixed;
-  z-index: 240;
+  z-index: 10000;
   display: grid;
   gap: 8px;
-  max-height: min(500px, calc(100dvh - 16px));
+  max-height: calc(100dvh - 24px);
   padding: 11px;
   overflow: auto;
   border: 1px solid #9fc8ba;
@@ -7570,7 +7583,9 @@ td span,
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 14px 36px rgba(18, 58, 46, 0.22);
   color: #173c31;
-  pointer-events: none;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  scrollbar-gutter: stable;
 }
 
 .irrigation-cell-popover[hidden] {
@@ -7596,10 +7611,11 @@ td span,
 }
 
 .irrigation-cell-popover-head strong {
-  overflow: hidden;
+  min-width: 0;
   font-size: 0.76rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
 }
 
 .irrigation-cell-popover-metrics {
@@ -7625,10 +7641,9 @@ td span,
 }
 
 .irrigation-cell-popover-metrics strong {
-  overflow: hidden;
   font-size: 0.68rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .irrigation-cell-popover-wiseconn {
@@ -7671,11 +7686,10 @@ td span,
 }
 
 .irrigation-cell-popover-wiseconn-grid b {
-  overflow: hidden;
   color: #123f54;
   font-size: 0.66rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .irrigation-cell-popover-wiseconn-grid span.is-under {
