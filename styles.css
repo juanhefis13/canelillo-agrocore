@@ -7570,6 +7570,29 @@ td span,
   background: #dc2626;
 }
 
+.irrigation-hour-cell.has-fip-alert {
+  position: relative;
+}
+
+.irrigation-hour-cell.has-fip-alert::after {
+  content: "F";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  z-index: 3;
+  display: grid;
+  width: 10px;
+  height: 10px;
+  place-items: center;
+  border-radius: 3px;
+  background: #16845e;
+  box-shadow: 0 0 0 1px #fff;
+  color: #fff;
+  font-size: 7px;
+  font-weight: 950;
+  line-height: 1;
+}
+
 .irrigation-cell-popover {
   position: fixed;
   z-index: 10000;

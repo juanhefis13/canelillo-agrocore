@@ -2534,6 +2534,10 @@ function normalizeWiseconnFertigations(value = []) {
   }
   return (Array.isArray(rows) ? rows : []).map((item) => ({
     tankId: Number(item?.tankId ?? item?.tank_id),
+    tankName: String(item?.tankName ?? item?.tank_name ?? "").trim(),
+    fipNumber: Number.isFinite(Number(item?.fipNumber ?? item?.fip_number))
+      ? Number(item?.fipNumber ?? item?.fip_number)
+      : null,
     volume: Number(item?.volume ?? item?.volumen) || 0,
     unit: item?.unit || item?.unidad || "l",
     count: Number(item?.count ?? item?.eventos) || 0,
@@ -2553,6 +2557,8 @@ function mergeWiseconnFertigations(rows = []) {
     const key = String(item.tankId);
     const current = grouped.get(key) || {
       tankId: item.tankId,
+      tankName: item.tankName || "",
+      fipNumber: item.fipNumber,
       volume: 0,
       unit: item.unit || "l",
       count: 0,
@@ -2564,6 +2570,8 @@ function mergeWiseconnFertigations(rows = []) {
     };
     current.volume += Number(item.volume) || 0;
     current.count += Number(item.count) || 0;
+    if (!current.tankName && item.tankName) current.tankName = item.tankName;
+    if ((current.fipNumber === null || current.fipNumber === undefined) && item.fipNumber !== null && item.fipNumber !== undefined) current.fipNumber = item.fipNumber;
     if (item.firstStart && (!current.firstStart || item.firstStart < current.firstStart)) current.firstStart = item.firstStart;
     if (item.lastEnd && (!current.lastEnd || item.lastEnd > current.lastEnd)) current.lastEnd = item.lastEnd;
     item.fertilizerNames.forEach((name) => current.fertilizerNames.add(name));
@@ -2578,6 +2586,14 @@ function mergeWiseconnFertigations(rows = []) {
     types: [...item.types],
     scheduledFertigationIds: [...item.scheduledFertigationIds]
   }));
+}
+
+function wiseconnFipLabel(item = {}) {
+  const fipNumber = Number(item.fipNumber);
+  const tankName = String(item.tankName || "").trim();
+  if (item.fipNumber !== null && item.fipNumber !== undefined && Number.isFinite(fipNumber)) return `FIP ${fipNumber}${tankName ? ` · ${tankName}` : ""}`;
+  if (tankName) return tankName;
+  return `FIP ID ${item.tankId}`;
 }
 
 function wiseconnMapScheduledRow(item = {}) {
@@ -3369,13 +3385,13 @@ function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
   const actualFipRows = diagnostics.actualFips.map((item) => {
     const volume = Number(item.volume) > 0 ? `${number(item.volume, 1)} ${escapeHtml(item.unit || "L")}` : `0 ${escapeHtml(item.unit || "L")}`;
     const types = item.types.length ? ` · ${escapeHtml(item.types.join(", "))}` : "";
-    return `<span><b>FIP DropControl ${escapeHtml(item.tankId)}</b><small>Real ${volume} · ${escapeHtml(fipTime(item))}${types}</small></span>`;
+    return `<span><b>${escapeHtml(wiseconnFipLabel(item))}</b><small>ID ${escapeHtml(item.tankId)} · Real ${volume} · ${escapeHtml(fipTime(item))}${types}</small></span>`;
   }).join("");
   const scheduledFipRows = diagnostics.fipComparisons.map((item) => {
     const plannedVolume = `${number(item.scheduled.volume, 1)} ${escapeHtml(item.scheduled.unit || "L")}`;
     const actualVolume = item.actual ? `${number(item.actual.volume, 1)} ${escapeHtml(item.actual.unit || item.scheduled.unit || "L")}` : "Sin ejecución detectada";
     const difference = Number.isFinite(item.percent) ? `${item.percent > 0 ? "+" : ""}${number(item.percent, 1)}%` : "Sin comparación";
-    return `<span class="${item.risk ? "is-risk" : "is-ok"}"><b>FIP DropControl ${escapeHtml(item.tankId)}</b><small>Programado ${plannedVolume} · Real ${actualVolume} · ${difference}</small></span>`;
+    return `<span class="${item.risk ? "is-risk" : "is-ok"}"><b>${escapeHtml(wiseconnFipLabel(item.scheduled))}</b><small>ID ${escapeHtml(item.tankId)} · Programado ${plannedVolume} · Real ${actualVolume} · ${difference}</small></span>`;
   }).join("");
   const hasFipData = diagnostics.actualFips.length || diagnostics.scheduledFips.length;
   const fipCard = hasFipData ? `
@@ -3406,15 +3422,16 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const cellEvents = irrigationCellEvents(block.id, date);
   const diagnostics = kind === "real" ? irrigationWiseconnDiagnostics(block.id, date, sourceInfo, value) : null;
-  const automaticEventCount = Number(Boolean(diagnostics?.hydraulic)) + Number(Boolean(diagnostics?.fipRisk));
-  const eventCount = cellEvents.length + automaticEventCount;
-  const eventClass = eventCount ? "has-event" : "";
+  const irrigationEventCount = cellEvents.length + Number(Boolean(diagnostics?.hydraulic));
+  const eventCount = irrigationEventCount + Number(Boolean(diagnostics?.fipRisk));
+  const eventClass = irrigationEventCount ? "has-event" : "";
   const activeEventClass = diagnostics?.hydraulic || cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
+  const fipAlertClass = diagnostics?.fipRisk ? "has-fip-alert" : "";
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
   const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${fertigationClass ? ", con fertirriego" : ""}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
-  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${fertigationClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${fertigationClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${fipAlertClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = [], options = {}) {

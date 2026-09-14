@@ -164,6 +164,66 @@ function summarizeFertigations(rows = []) {
   }));
 }
 
+function fipNumberFromTankName(name = "") {
+  const value = String(name || "").trim();
+  const explicit = value.match(/\bfip\s*(?:n(?:ro)?\.?|#)?\s*(\d+)\b/i);
+  if (explicit) return Number(explicit[1]);
+  const tank = value.match(/\bestanque\s*(?:n(?:ro)?\.?|#)?\s*(\d+)\b/i);
+  if (tank) return Number(tank[1]);
+  const trailingNumber = value.match(/(\d+)(?!.*\d)/);
+  if (trailingNumber) return Number(trailingNumber[1]);
+  return null;
+}
+
+function minimalTank(tank = {}, pumpSystemId = null) {
+  const id = Number(tank.id);
+  const name = String(tank.name || "").trim();
+  return {
+    id,
+    pumpSystemId: Number(pumpSystemId) || null,
+    name,
+    fipNumber: fipNumberFromTankName(name),
+    enabled: tank.enabled !== false
+  };
+}
+
+async function irrigationTankCatalog(events = [], scheduled = []) {
+  const pumpSystemIds = [...new Set([...events, ...scheduled]
+    .filter((item) => item?.fertigations?.length)
+    .map((item) => Number(item.pumpSystemId))
+    .filter(Number.isFinite))];
+  const results = await Promise.all(pumpSystemIds.map(async (pumpSystemId) => {
+    try {
+      const result = await cached(`tanks:${pumpSystemId}`, async () => {
+        const rows = await wiseconnGet(`/pumpSystems/${pumpSystemId}/tanks`);
+        return (Array.isArray(rows) ? rows : []).map((tank) => minimalTank(tank, pumpSystemId));
+      });
+      return result.value;
+    } catch {
+      return [];
+    }
+  }));
+  return results.flat().filter((tank) => Number.isFinite(tank.id));
+}
+
+function enrichIrrigationFertigations(item = {}, tanksByKey = new Map(), tanksById = new Map()) {
+  const pumpSystemId = Number(item.pumpSystemId);
+  return {
+    ...item,
+    fertigations: (Array.isArray(item.fertigations) ? item.fertigations : []).map((fertigation) => {
+      const tankId = Number(fertigation.tankId);
+      const tank = tanksByKey.get(`${pumpSystemId}:${tankId}`) || tanksById.get(String(tankId));
+      return {
+        ...fertigation,
+        tankName: tank?.name || "",
+        fipNumber: tank?.fipNumber !== null && tank?.fipNumber !== undefined && Number.isFinite(Number(tank.fipNumber))
+          ? Number(tank.fipNumber)
+          : null
+      };
+    })
+  };
+}
+
 function minimalScheduledIrrigation(irrigation = {}) {
   const numeric = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
   const initMs = new Date(irrigation.initTime).getTime();
@@ -255,7 +315,14 @@ async function irrigationBundle(farmId, from, to) {
     to,
     events.map((event) => event.scheduledIrrigationId)
   );
-  return { events, scheduled };
+  const tanks = await irrigationTankCatalog(events, scheduled);
+  const tanksByKey = new Map(tanks.map((tank) => [`${tank.pumpSystemId}:${tank.id}`, tank]));
+  const tanksById = new Map(tanks.map((tank) => [String(tank.id), tank]));
+  return {
+    events: events.map((item) => enrichIrrigationFertigations(item, tanksByKey, tanksById)),
+    scheduled: scheduled.map((item) => enrichIrrigationFertigations(item, tanksByKey, tanksById)),
+    tanks
+  };
 }
 
 export default async (req) => {
@@ -285,7 +352,7 @@ export default async (req) => {
     const forceRefresh = url.searchParams.get("refresh") === "1";
     if (!from || !to || from > to) return json(400, { message: "Rango de fechas invalido" });
     if (rangeDays(from, to) > 62) return json(400, { message: "El rango maximo permitido es de 62 dias" });
-    const result = await cached(`irrigation-bundle-v3:${farmId}:${from}:${to}`, () => irrigationBundle(farmId, from, to), forceRefresh);
+    const result = await cached(`irrigation-bundle-v4:${farmId}:${from}:${to}`, () => irrigationBundle(farmId, from, to), forceRefresh);
     return json(200, {
       farmId,
       from,
@@ -293,7 +360,8 @@ export default async (req) => {
       cache: result.cache,
       syncedAt: new Date().toISOString(),
       events: result.value.events,
-      scheduledIrrigations: result.value.scheduled
+      scheduledIrrigations: result.value.scheduled,
+      tanks: result.value.tanks
     });
   } catch (error) {
     return json(Number(error?.status) || 502, { message: error?.message || "No se pudo consultar WiseConn" });
