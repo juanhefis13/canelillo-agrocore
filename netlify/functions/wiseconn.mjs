@@ -121,6 +121,45 @@ function minimalEvent(event = {}) {
   };
 }
 
+function summarizeScheduledFertigations(rows = []) {
+  const grouped = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((item) => {
+    const tankId = Number(item?.tankId);
+    if (!Number.isFinite(tankId)) return;
+    const key = String(tankId);
+    const volume = Number(item?.volume?.value ?? item?.volume);
+    const current = grouped.get(key) || {
+      tankId,
+      volume: 0,
+      unit: item?.volume?.unitAbrev || "l",
+      count: 0,
+      firstStart: "",
+      lastEnd: "",
+      fertilizerNames: new Set(),
+      types: new Set()
+    };
+    if (Number.isFinite(volume) && volume > 0) current.volume += volume;
+    current.count += 1;
+    const initTime = item?.initTime || "";
+    const endTime = item?.endTime || "";
+    if (initTime && (!current.firstStart || initTime < current.firstStart)) current.firstStart = initTime;
+    if (endTime && (!current.lastEnd || endTime > current.lastEnd)) current.lastEnd = endTime;
+    if (item?.fertilizer?.name) current.fertilizerNames.add(item.fertilizer.name);
+    if (item?.fertigationType) current.types.add(item.fertigationType);
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].map((item) => ({
+    tankId: item.tankId,
+    volume: Number(item.volume.toFixed(3)),
+    unit: item.unit,
+    count: item.count,
+    firstStart: item.firstStart,
+    lastEnd: item.lastEnd,
+    fertilizerNames: [...item.fertilizerNames],
+    types: [...item.types]
+  }));
+}
+
 function minimalScheduledIrrigation(irrigation = {}) {
   const numeric = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
   const initMs = new Date(irrigation.initTime).getTime();
@@ -139,7 +178,8 @@ function minimalScheduledIrrigation(irrigation = {}) {
     programmedHours: Number.isFinite(initMs) && Number.isFinite(endMs) && endMs > initMs
       ? (endMs - initMs) / 3600000
       : null,
-    programmedBy: irrigation.programmedByUser?.name || ""
+    programmedBy: irrigation.programmedByUser?.name || "",
+    fertigations: summarizeScheduledFertigations(irrigation.scheduledFertigations)
   };
 }
 

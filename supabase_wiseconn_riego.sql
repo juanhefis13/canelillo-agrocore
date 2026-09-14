@@ -84,12 +84,16 @@ create table if not exists public.wiseconn_riegos_programados (
   volumen_programado_m3 numeric(16, 3),
   caudal_teorico_m3_h numeric(14, 3),
   programado_por text,
+  fertirriego_programado jsonb not null default '[]'::jsonb,
   sincronizado_en timestamptz not null default now(),
   constraint wiseconn_programado_periodo_ck check (termino >= inicio)
 );
 
 create index if not exists wiseconn_riegos_programados_zone_inicio_idx
   on public.wiseconn_riegos_programados (farm_id, zone_id, inicio);
+
+alter table public.wiseconn_riegos_programados
+  add column if not exists fertirriego_programado jsonb not null default '[]'::jsonb;
 
 -- Copia operativa en la tabla principal de riego. Los campos auxiliares
 -- permiten conservar el valor WiseConn aunque exista una correccion manual.

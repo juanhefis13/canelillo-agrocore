@@ -427,6 +427,9 @@ let irrigationProgramObservations = loadJsonMap(IRRIGATION_PROGRAM_OBSERVATIONS_
 let irrigationEventCellIndex = new Map();
 let irrigationEventsCloudAvailable = true;
 let irrigationEventStatusFilter = "Todos";
+let irrigationFipAssignments = new Map();
+let irrigationFipAssignmentsLoaded = false;
+let irrigationFipAssignmentsError = "";
 let irrigationCellPopoverTarget = null;
 let irrigationAuditsPruned = false;
 let irrigationGanttResizeObserver = null;
@@ -2521,6 +2524,57 @@ function wiseconnMapEventRow(item = {}) {
   };
 }
 
+function normalizeWiseconnFertigations(value = []) {
+  let rows = value;
+  if (typeof rows === "string") {
+    try {
+      rows = JSON.parse(rows);
+    } catch {
+      rows = [];
+    }
+  }
+  return (Array.isArray(rows) ? rows : []).map((item) => ({
+    tankId: Number(item?.tankId ?? item?.tank_id),
+    volume: Number(item?.volume ?? item?.volumen) || 0,
+    unit: item?.unit || item?.unidad || "l",
+    count: Number(item?.count ?? item?.eventos) || 0,
+    firstStart: item?.firstStart || item?.inicio || "",
+    lastEnd: item?.lastEnd || item?.termino || "",
+    fertilizerNames: Array.isArray(item?.fertilizerNames) ? item.fertilizerNames.filter(Boolean) : [],
+    types: Array.isArray(item?.types) ? item.types.filter(Boolean) : []
+  })).filter((item) => Number.isFinite(item.tankId));
+}
+
+function mergeWiseconnFertigations(rows = []) {
+  const grouped = new Map();
+  rows.flatMap((item) => normalizeWiseconnFertigations(item)).forEach((item) => {
+    const key = String(item.tankId);
+    const current = grouped.get(key) || {
+      tankId: item.tankId,
+      volume: 0,
+      unit: item.unit || "l",
+      count: 0,
+      firstStart: "",
+      lastEnd: "",
+      fertilizerNames: new Set(),
+      types: new Set()
+    };
+    current.volume += Number(item.volume) || 0;
+    current.count += Number(item.count) || 0;
+    if (item.firstStart && (!current.firstStart || item.firstStart < current.firstStart)) current.firstStart = item.firstStart;
+    if (item.lastEnd && (!current.lastEnd || item.lastEnd > current.lastEnd)) current.lastEnd = item.lastEnd;
+    item.fertilizerNames.forEach((name) => current.fertilizerNames.add(name));
+    item.types.forEach((type) => current.types.add(type));
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].map((item) => ({
+    ...item,
+    volume: Number(item.volume.toFixed(3)),
+    fertilizerNames: [...item.fertilizerNames],
+    types: [...item.types]
+  }));
+}
+
 function wiseconnMapScheduledRow(item = {}) {
   const numeric = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
   const initTime = item.inicio || item.initTime || "";
@@ -2541,7 +2595,8 @@ function wiseconnMapScheduledRow(item = {}) {
     theoreticalFlowM3H: numeric(item.caudal_teorico_m3_h ?? item.theoreticalFlowM3H),
     programmedHours: numeric(item.horas_programadas ?? item.programmedHours)
       ?? (Number.isFinite(initMs) && Number.isFinite(endMs) && endMs > initMs ? (endMs - initMs) / 3600000 : null),
-    programmedBy: item.programado_por || item.programmedBy || ""
+    programmedBy: item.programado_por || item.programmedBy || "",
+    fertigations: normalizeWiseconnFertigations(item.fertirriego_programado ?? item.fertigations)
   };
 }
 
@@ -2578,6 +2633,7 @@ function wiseconnScheduledDbPayload(irrigation) {
     volumen_programado_m3: irrigation.volumeM3,
     caudal_teorico_m3_h: irrigation.theoreticalFlowM3H,
     programado_por: irrigation.programmedBy || null,
+    fertirriego_programado: normalizeWiseconnFertigations(irrigation.fertigations),
     sincronizado_en: new Date().toISOString()
   };
 }
@@ -2628,7 +2684,8 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
     scheduledById.set(Number(irrigation.id), {
       hours: programmedHours,
       volumeM3: Number.isFinite(volumeM3) && volumeM3 > 0 ? volumeM3 : null,
-      flowM3H: Number.isFinite(theoreticalFlow) && theoreticalFlow > 0 ? theoreticalFlow : null
+      flowM3H: Number.isFinite(theoreticalFlow) && theoreticalFlow > 0 ? theoreticalFlow : null,
+      fertigations: normalizeWiseconnFertigations(irrigation.fertigations)
     });
     wiseconnIntervalDailyParts(irrigation).forEach((part) => {
       if (monthPrefix && !part.date.startsWith(monthPrefix)) return;
@@ -2728,6 +2785,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
     const programmedFlowValues = linkedScheduled
       .map((item) => Number(item.flowM3H))
       .filter((value) => Number.isFinite(value) && value > 0);
+    const fertigations = mergeWiseconnFertigations(linkedScheduled.map((item) => item.fertigations));
     meta.set(key, {
       volumeM3: bucket.volumeM3,
       flowM3H: hasFlow ? flow : null,
@@ -2742,6 +2800,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
           ? programmedFlowValues.reduce((sum, value) => sum + value, 0) / programmedFlowValues.length
           : null,
       scheduledCount: linkedScheduled.length,
+      fertigations,
       eventCount: bucket.eventIds.size,
       statuses: [...bucket.statuses],
       zoneName: bucket.zoneName,
@@ -2819,11 +2878,21 @@ async function persistWiseconnScheduledIrrigations(irrigations) {
     .map(wiseconnScheduledDbPayload)
     .filter((item) => item.scheduled_id && item.zone_id && item.inicio && item.termino);
   for (let index = 0; index < rows.length; index += 300) {
-    await sbFetch("/rest/v1/wiseconn_riegos_programados?on_conflict=scheduled_id", {
-      method: "POST",
-      prefer: "resolution=merge-duplicates,return=minimal",
-      body: JSON.stringify(rows.slice(index, index + 300))
-    });
+    const batch = rows.slice(index, index + 300);
+    try {
+      await sbFetch("/rest/v1/wiseconn_riegos_programados?on_conflict=scheduled_id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: JSON.stringify(batch)
+      });
+    } catch (error) {
+      if (!isMissingSupabaseColumn(error, ["fertirriego_programado"])) throw error;
+      await sbFetch("/rest/v1/wiseconn_riegos_programados?on_conflict=scheduled_id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: JSON.stringify(batch.map(({ fertirriego_programado: _ignored, ...item }) => item))
+      });
+    }
   }
 }
 
@@ -2851,6 +2920,41 @@ async function persistWiseconnIrrigationDays(rows = [], range = null) {
     manualOverrides: Number(result?.manuales_preservados) || 0,
     deleted: Number(result?.automaticos_eliminados) || 0
   };
+}
+
+async function loadIrrigationFipAssignments(options = {}) {
+  if (irrigationFipAssignmentsLoaded && !options.force) return irrigationFipAssignments;
+  try {
+    const rows = await sbSelectAll(
+      "v_fertilizante_estanque_campos",
+      "select=campo_id,caseta,numero_estanque,fip&campo_id=not.is.null&order=caseta.asc,numero_estanque.asc,fip.asc",
+      5000
+    );
+    const assignments = new Map();
+    (rows || []).forEach((row) => {
+      const fieldId = String(row.campo_id || "");
+      if (!fieldId) return;
+      const current = assignments.get(fieldId) || [];
+      const assignment = {
+        caseta: row.caseta || "Sin caseta",
+        tank: row.numero_estanque || "Sin estanque",
+        fip: row.fip || "Sin FIP"
+      };
+      const signature = `${assignment.caseta}|${assignment.tank}|${assignment.fip}`.toLocaleLowerCase("es");
+      if (!current.some((item) => item.signature === signature)) current.push({ ...assignment, signature });
+      assignments.set(fieldId, current);
+    });
+    irrigationFipAssignments = new Map([...assignments.entries()].map(([fieldId, items]) => [
+      fieldId,
+      items.map(({ signature: _signature, ...item }) => item)
+    ]));
+    irrigationFipAssignmentsLoaded = true;
+    irrigationFipAssignmentsError = "";
+  } catch (error) {
+    irrigationFipAssignmentsError = error.message || "No se pudieron cargar los FIP asociados";
+    console.warn("No se pudieron relacionar los FIP con la carta Gantt", error);
+  }
+  return irrigationFipAssignments;
 }
 
 async function fetchWiseconnEvents(range, options = {}) {
@@ -2894,6 +2998,7 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
       block: item.bloque_agrocore || "",
       sync: item.sincronizar !== false
     }));
+    await loadIrrigationFipAssignments({ force: Boolean(options.force) });
     const queryStart = `${wiseconnShiftDate(range.start, -1)}T00:00:00Z`;
     const queryEnd = `${wiseconnShiftDate(range.end, 1)}T00:00:00Z`;
     const cachedRows = await sbSelectAll(
@@ -2908,8 +3013,17 @@ async function loadWiseconnIrrigationMonth(monthPrefix, options = {}) {
     });
     const cachedScheduledRows = await sbSelectAll(
       "wiseconn_riegos_programados",
-      `select=scheduled_id,farm_id,zone_id,pump_system_id,inicio,termino,estado,tipo_riego,tipo_programacion,horas_programadas,volumen_programado_m3,caudal_teorico_m3_h,programado_por&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
+      `select=scheduled_id,farm_id,zone_id,pump_system_id,inicio,termino,estado,tipo_riego,tipo_programacion,horas_programadas,volumen_programado_m3,caudal_teorico_m3_h,programado_por,fertirriego_programado&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
     ).catch((error) => {
+      if (isMissingSupabaseColumn(error, ["fertirriego_programado"])) {
+        return sbSelectAll(
+          "wiseconn_riegos_programados",
+          `select=scheduled_id,farm_id,zone_id,pump_system_id,inicio,termino,estado,tipo_riego,tipo_programacion,horas_programadas,volumen_programado_m3,caudal_teorico_m3_h,programado_por&farm_id=eq.${WISECONN_FARM_ID}&termino=gte.${encodeURIComponent(queryStart)}&inicio=lt.${encodeURIComponent(queryEnd)}&order=inicio.asc`
+        ).catch((fallbackError) => {
+          if (isMissingSupabaseRelation(fallbackError, ["wiseconn_riegos_programados"])) return null;
+          throw fallbackError;
+        });
+      }
       if (isMissingSupabaseRelation(error, ["wiseconn_riegos_programados"])) return null;
       throw error;
     });
@@ -3143,6 +3257,130 @@ function irrigationCellEvents(blockId, date) {
   return irrigationEventCellIndex.get(irrigationKey(blockId, date)) || [];
 }
 
+function wiseconnDailyBalance(sourceInfo, realValue) {
+  const programmedHours = Number(sourceInfo?.meta?.scheduledHours);
+  const fallbackHours = Number(sourceInfo?.meta?.hours);
+  const realHours = realValue === "" || realValue === null || realValue === undefined
+    ? fallbackHours
+    : Number(realValue);
+  if (sourceInfo?.source !== "wiseconn" || !(programmedHours > 0) || !Number.isFinite(realHours)) {
+    return { programmedHours: null, realHours: null, hours: null, percent: null, className: "" };
+  }
+  const rawDifference = realHours - programmedHours;
+  const hours = Math.abs(rawDifference) < 0.005 ? 0 : rawDifference;
+  const percent = (hours / programmedHours) * 100;
+  return {
+    programmedHours,
+    realHours,
+    hours,
+    percent: Math.abs(percent) < 0.05 ? 0 : percent,
+    className: hours < 0 ? "is-under" : hours > 0 ? "is-over" : "is-complete"
+  };
+}
+
+function wiseconnHydraulicDiagnostic(percent) {
+  if (!Number.isFinite(percent) || Math.abs(percent) < 0.05) return null;
+  if (percent <= -99.5) {
+    return {
+      title: "Riego sin entrega de agua",
+      description: "Déficit cercano a -100%. Revisar nivel del tranque y confirmar que el tablero no haya quedado apagado.",
+      severity: "critical"
+    };
+  }
+  if (percent <= -40) {
+    return {
+      title: "Déficit grave de riego",
+      description: "La diferencia supera el -40%. Es probable que una válvula no se haya abierto correctamente.",
+      severity: "critical"
+    };
+  }
+  if (percent < -30) {
+    return {
+      title: "Caudal muy inferior al programado",
+      description: "El déficit está entre -30% y -40%. Revisar caudal disponible y apertura de válvulas.",
+      severity: "warning"
+    };
+  }
+  if (percent < 0) {
+    return {
+      title: "Diferencia atribuible al caudal",
+      description: "El riego quedó hasta un 30% bajo lo programado. Revisar estabilidad y caudal real del sector.",
+      severity: "warning"
+    };
+  }
+  if (percent <= 20) {
+    return {
+      title: "Posible rotura leve",
+      description: "El riego superó lo programado hasta un 20%. Revisar pérdidas menores en terreno.",
+      severity: "warning"
+    };
+  }
+  return {
+    title: "Posible rotura fuerte",
+    description: "El riego superó en más de 20% lo programado. Revisar inmediatamente tuberías, matrices y válvulas.",
+    severity: "critical"
+  };
+}
+
+function irrigationWiseconnDiagnostics(blockId, date, sourceInfo = null, realValue = undefined) {
+  const source = sourceInfo || irrigationRealSourceInfo(blockId, date);
+  const value = realValue === undefined ? irrigationRealHoursValue(blockId, date) : realValue;
+  const balance = wiseconnDailyBalance(source, value);
+  const hydraulic = wiseconnHydraulicDiagnostic(balance.percent);
+  const scheduledFips = normalizeWiseconnFertigations(source?.meta?.fertigations);
+  const fipRisk = Number.isFinite(balance.percent) && balance.percent <= -30 && scheduledFips.length > 0;
+  return {
+    balance,
+    hydraulic,
+    fipRisk,
+    scheduledFips,
+    fips: fipRisk ? (irrigationFipAssignments.get(String(blockId)) || []) : []
+  };
+}
+
+function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
+  if (!diagnostics?.hydraulic && !diagnostics?.fipRisk) return "";
+  const signedPercent = Number.isFinite(diagnostics.balance?.percent)
+    ? `${diagnostics.balance.percent > 0 ? "+" : ""}${number(diagnostics.balance.percent, 1)}%`
+    : "";
+  const hydraulicCard = diagnostics.hydraulic ? `
+    <article class="irrigation-wiseconn-alert-card is-hydraulic ${diagnostics.hydraulic.severity === "critical" ? "is-critical" : ""}">
+      <b aria-hidden="true">!</b>
+      <div>
+        <span><strong>Evento automático WiseConn</strong><em>${signedPercent}</em></span>
+        <h4>${escapeHtml(diagnostics.hydraulic.title)}</h4>
+        <p>${escapeHtml(diagnostics.hydraulic.description)}</p>
+      </div>
+    </article>` : "";
+  const scheduledFipRows = diagnostics.scheduledFips.map((item) => {
+    const start = String(item.firstStart || "").slice(11, 16);
+    const end = String(item.lastEnd || "").slice(11, 16);
+    const time = start && end ? `${start}-${end}` : "Horario no informado";
+    const volume = Number(item.volume) > 0 ? `${number(item.volume, 1)} ${escapeHtml(item.unit || "L")}` : "Volumen no informado";
+    return `<span><b>FIP WiseConn ID ${escapeHtml(item.tankId)}</b><small>${volume} · ${escapeHtml(time)} · ${number(item.count, 0)} etapa${Number(item.count) === 1 ? "" : "s"}</small></span>`;
+  }).join("");
+  const relatedFipRows = diagnostics.fips.length
+    ? diagnostics.fips.map((item) => {
+      const tankLabel = /^estanque\b/i.test(String(item.tank || "")) ? item.tank : `Estanque ${item.tank}`;
+      return `<span><b>${escapeHtml(item.fip)}</b><small>${escapeHtml(item.caseta)} · ${escapeHtml(tankLabel)}</small></span>`;
+    }).join("")
+    : `<span><b>Sin FIP relacionado en AgroCore</b><small>${escapeHtml(irrigationFipAssignmentsError || "Revisa la relación del bloque con fertilizante_estanques.")}</small></span>`;
+  const fipCard = diagnostics.fipRisk ? `
+    <article class="irrigation-wiseconn-alert-card is-fip">
+      <b aria-hidden="true">F</b>
+      <div>
+        <span><strong>Alerta de fertirriego</strong><em>${signedPercent}</em></span>
+        <h4>Posible paso insuficiente de fertilizante</h4>
+        <p>WiseConn tenía fertirriego programado y el agua quedó 30% o más bajo lo esperado. Los FIP pueden no haber aplicado correctamente.</p>
+        <strong class="irrigation-wiseconn-fip-subtitle">Programación WiseConn</strong>
+        <div class="irrigation-wiseconn-fip-list">${scheduledFipRows}</div>
+        <strong class="irrigation-wiseconn-fip-subtitle">FIP asociados en AgroCore</strong>
+        <div class="irrigation-wiseconn-fip-list">${relatedFipRows}</div>
+      </div>
+    </article>` : "";
+  return `<div class="irrigation-wiseconn-alerts">${hydraulicCard}${fipCard}</div>`;
+}
+
 function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) {
   const key = irrigationKey(block.id, date);
   const audit = kind === "program" ? irrigationProgramAudit[key] : irrigationAudit[key];
@@ -3152,13 +3390,16 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const manualClass = sourceInfo.source === "manual" || sourceInfo.adjusted ? "has-manual-override" : "";
   const observationClass = irrigationObservationClass(kind, block.id, date);
   const cellEvents = irrigationCellEvents(block.id, date);
-  const eventClass = cellEvents.length ? "has-event" : "";
-  const activeEventClass = cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
+  const diagnostics = kind === "real" ? irrigationWiseconnDiagnostics(block.id, date, sourceInfo, value) : null;
+  const automaticEventCount = Number(Boolean(diagnostics?.hydraulic)) + Number(Boolean(diagnostics?.fipRisk));
+  const eventCount = cellEvents.length + automaticEventCount;
+  const eventClass = eventCount ? "has-event" : "";
+  const activeEventClass = diagnostics?.hydraulic || cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
-  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${cellEvents.length ? `, ${cellEvents.length} evento${cellEvents.length === 1 ? "" : "s"}` : ""}`;
+  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
-  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${cellEvents.length}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = [], options = {}) {
@@ -3713,6 +3954,7 @@ function hydrateIrrigationInputTitle(input, context = irrigationInputContext(inp
     sourceInfo.meta?.measuredFlowM3H ?? "",
     sourceInfo.meta?.durationHours ?? "",
     sourceInfo.meta?.scheduledHours ?? "",
+    JSON.stringify(sourceInfo.meta?.fertigations || []),
     sourceInfo.meta?.eventCount ?? "",
     cellEvents.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join(",")
   ].join("|");
@@ -3731,20 +3973,15 @@ function irrigationCellPopoverHtml(context, block) {
   const sourceInfo = context.kind === "real" ? irrigationRealSourceInfo(context.blockId, context.date) : { source: "", meta: null };
   const value = context.kind === "program" ? irrigationProgramHours[key] : irrigationRealHoursValue(context.blockId, context.date);
   const agrocoreProgrammedHours = Number(irrigationProgramHours[key]);
-  const wiseconnProgrammedHours = Number(sourceInfo.meta?.scheduledHours);
-  const realHours = Number(value);
-  const hasWiseconnProgram = context.kind === "real" && Number.isFinite(wiseconnProgrammedHours) && wiseconnProgrammedHours > 0;
+  const diagnostics = context.kind === "real"
+    ? irrigationWiseconnDiagnostics(context.blockId, context.date, sourceInfo, value)
+    : { balance: { programmedHours: null, hours: null, percent: null, className: "" }, hydraulic: null, fipRisk: false, fips: [] };
+  const wiseconnProgrammedHours = diagnostics.balance.programmedHours;
+  const hoursDifference = diagnostics.balance.hours;
+  const hoursDifferencePercent = diagnostics.balance.percent;
+  const differenceClass = diagnostics.balance.className;
+  const hasWiseconnProgram = Number.isFinite(wiseconnProgrammedHours) && wiseconnProgrammedHours > 0;
   const hasAgrocoreProgram = context.kind === "real" && Number.isFinite(agrocoreProgrammedHours) && agrocoreProgrammedHours > 0;
-  const rawHoursDifference = hasWiseconnProgram && Number.isFinite(realHours) ? realHours - wiseconnProgrammedHours : null;
-  const hoursDifference = rawHoursDifference !== null && Math.abs(rawHoursDifference) < 0.005 ? 0 : rawHoursDifference;
-  const hoursDifferencePercent = hoursDifference === null ? null : (hoursDifference / wiseconnProgrammedHours) * 100;
-  const differenceClass = hoursDifference === null
-    ? ""
-    : hoursDifference < 0
-      ? "is-under"
-      : hoursDifference > 0
-        ? "is-over"
-        : "is-complete";
   const hoursDifferenceLabel = hoursDifference === null
     ? "Sin programación WiseConn"
     : `${hoursDifference > 0 ? "+" : ""}${number(hoursDifference, 2)} h`;
@@ -3784,6 +4021,7 @@ function irrigationCellPopoverHtml(context, block) {
       </div>
       <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Fecha según inicio del riego</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
+    ${irrigationWiseconnDiagnosticCardsHtml(diagnostics)}
     ${events.length ? `<div class="irrigation-cell-popover-events">
       ${events.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b aria-hidden="true">!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
     </div>` : ""}
