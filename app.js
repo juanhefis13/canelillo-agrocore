@@ -427,7 +427,11 @@ let irrigationObservations = loadJsonMap(IRRIGATION_OBSERVATIONS_KEY);
 let irrigationProgramObservations = loadJsonMap(IRRIGATION_PROGRAM_OBSERVATIONS_KEY);
 let irrigationEventCellIndex = new Map();
 let irrigationEventsCloudAvailable = true;
+let irrigationAlertManagementAvailable = true;
 let irrigationEventStatusFilter = "Todos";
+let irrigationAlertStatusFilter = "abiertas";
+let irrigationAutomaticAlertIndex = new Map();
+let irrigationEventsReportContext = { alerts: [], events: [] };
 let irrigationCellPopoverTarget = null;
 let irrigationCellPopoverHideTimer = null;
 let irrigationAuditsPruned = false;
@@ -3240,8 +3244,24 @@ function mapIrrigationEventRow(item = {}) {
     block: item.bloque || item.block || "",
     type: item.tipo_evento || item.type || "otro",
     description: item.descripcion || item.description || "",
-    status: item.estado === "resuelto" || item.status === "resuelto" ? "resuelto" : "activo",
+    status: item.estado === "resuelto" || item.status === "resuelto"
+      ? "resuelto"
+      : item.estado === "en_revision" || item.status === "en_revision"
+        ? "en_revision"
+        : "activo",
     resolvedAt: item.fecha_resolucion || item.resolvedAt || "",
+    origin: item.origen || item.origin || "manual",
+    alertKey: item.alerta_clave || item.alertKey || "",
+    priority: item.prioridad || item.priority || "",
+    alertTitle: item.titulo_alerta || item.alertTitle || "",
+    problemDetail: item.detalle_problema || item.problemDetail || "",
+    solution: item.solucion || item.solution || "",
+    differencePercent: item.porcentaje_diferencia ?? item.differencePercent ?? null,
+    programmedValue: item.valor_programado ?? item.programmedValue ?? null,
+    realValue: item.valor_real ?? item.realValue ?? null,
+    programmedVolume: item.volumen_programado ?? item.programmedVolume ?? null,
+    realVolume: item.volumen_real ?? item.realVolume ?? null,
+    unit: item.unidad || item.unit || "",
     createdById: item.creado_por || item.createdById || null,
     createdByName: item.creado_por_nombre || item.createdByName || "",
     updatedById: item.actualizado_por || item.updatedById || null,
@@ -3253,7 +3273,7 @@ function mapIrrigationEventRow(item = {}) {
 
 function buildIrrigationEventCellIndex(events = state.irrigationEvents || []) {
   const index = new Map();
-  events.forEach((event) => {
+  events.filter((event) => !event.origin || event.origin === "manual").forEach((event) => {
     if (!event?.fieldId || !event.date) return;
     const key = irrigationKey(event.fieldId, event.date);
     if (!index.has(key)) index.set(key, []);
@@ -11781,10 +11801,100 @@ function irrigationEventsCanEdit() {
 function irrigationFilteredEvents(filteredBlocks, monthPrefix) {
   const visibleIds = new Set(filteredBlocks.map((block) => String(block.id)));
   return (state.irrigationEvents || [])
+    .filter((item) => !item.origin || item.origin === "manual")
     .filter((item) => String(item.date || "").startsWith(monthPrefix))
     .filter((item) => visibleIds.has(String(item.fieldId)))
     .filter((item) => irrigationEventStatusFilter === "Todos" || item.status === irrigationEventStatusFilter)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || Number(a.status === "resuelto") - Number(b.status === "resuelto") || String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+const IRRIGATION_ALERT_STATUS_LABELS = Object.freeze({
+  activo: "Nueva",
+  en_revision: "En revisión",
+  resuelto: "Cerrada"
+});
+
+const IRRIGATION_ALERT_PRIORITY_LABELS = Object.freeze({
+  P1: "P1 Crítica",
+  P2: "P2 Alta",
+  P3: "P3 Atención"
+});
+
+function irrigationAlertStatusLabel(value = "activo") {
+  return IRRIGATION_ALERT_STATUS_LABELS[value] || IRRIGATION_ALERT_STATUS_LABELS.activo;
+}
+
+function irrigationAlertPriority(item, kind) {
+  const percent = Number(item?.percent);
+  if (kind === "fertilizer") {
+    if (!Number.isFinite(percent) || Math.abs(percent) >= 50) return "P1";
+    return "P2";
+  }
+  if (!Number.isFinite(percent) || percent <= -40 || percent > 20) return "P1";
+  if (percent < -30) return "P2";
+  return "P3";
+}
+
+function irrigationAlertMatchesStatus(item) {
+  const status = item?.status || "activo";
+  if (irrigationAlertStatusFilter === "Todas") return true;
+  if (irrigationAlertStatusFilter === "abiertas") return status !== "resuelto";
+  return status === irrigationAlertStatusFilter;
+}
+
+function irrigationAlertFromTrackedEvent(event) {
+  const kind = event.origin === "wiseconn_fertilizante" ? "fertilizer" : "irrigation";
+  const field = (state.blocks || []).find((block) => String(block.id) === String(event.fieldId));
+  return {
+    id: event.alertKey,
+    alertKey: event.alertKey,
+    date: event.date,
+    block: field || { id: event.fieldId, potrero: event.potrero, block: event.block },
+    type: event.alertTitle || irrigationEventTypeLabel(event.type),
+    description: event.description,
+    severity: event.priority === "P1" ? "critical" : "warning",
+    priority: event.priority || "P3",
+    percent: event.differencePercent,
+    realVolume: event.realVolume,
+    programmedVolume: event.programmedVolume,
+    realValue: event.realValue,
+    programmedValue: event.programmedValue,
+    unit: event.unit,
+    status: event.status,
+    tracking: event,
+    kind
+  };
+}
+
+function irrigationAttachAlertTracking(groups, filteredBlocks, monthPrefix) {
+  const visibleIds = new Set(filteredBlocks.map((block) => String(block.id)));
+  const tracked = (state.irrigationEvents || [])
+    .filter((item) => item.origin && item.origin !== "manual" && item.alertKey)
+    .filter((item) => String(item.date || "").startsWith(monthPrefix))
+    .filter((item) => visibleIds.has(String(item.fieldId)));
+  const trackedByKey = new Map(tracked.map((item) => [item.alertKey, item]));
+  const seen = new Set();
+  [groups.irrigation, groups.fertilizer].forEach((rows) => rows.forEach((item) => {
+    item.alertKey = item.alertKey || item.id;
+    item.tracking = trackedByKey.get(item.alertKey) || null;
+    item.status = item.tracking?.status || "activo";
+    item.priority = item.tracking?.priority || irrigationAlertPriority(item, item.kind);
+    seen.add(item.alertKey);
+  }));
+  tracked.filter((item) => !seen.has(item.alertKey)).forEach((event) => {
+    const alert = irrigationAlertFromTrackedEvent(event);
+    groups[alert.kind === "fertilizer" ? "fertilizer" : "irrigation"].push(alert);
+  });
+  const priorityOrder = { P1: 0, P2: 1, P3: 2 };
+  const statusOrder = { activo: 0, en_revision: 1, resuelto: 2 };
+  const sortAlerts = (a, b) => (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3)
+    || (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3)
+    || String(b.date).localeCompare(String(a.date))
+    || comparePotrero(a.block?.potrero, b.block?.potrero)
+    || String(a.block?.block || "").localeCompare(String(b.block?.block || ""), "es", { numeric: true });
+  groups.irrigation.sort(sortAlerts);
+  groups.fertilizer.sort(sortAlerts);
+  return groups;
 }
 
 function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
@@ -11800,6 +11910,8 @@ function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
       if (diagnostics.hydraulic) {
         irrigation.push({
           id: `riego-${block.id}-${date}`,
+          alertKey: `riego-${block.id}-${date}`,
+          kind: "irrigation",
           date,
           block,
           type: diagnostics.hydraulic.title,
@@ -11819,6 +11931,8 @@ function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
         const unit = comparison.actual?.unit || comparison.scheduled?.unit || "L";
         fertilizer.push({
           id: `fip-${block.id}-${date}-${comparison.tankId}`,
+          alertKey: `fip-${block.id}-${date}-${comparison.tankId}`,
+          kind: "fertilizer",
           date,
           block,
           type: !comparison.actual
@@ -11837,16 +11951,13 @@ function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
       });
     }
   });
-  const sortAlerts = (a, b) => String(b.date).localeCompare(String(a.date))
-    || comparePotrero(a.block?.potrero, b.block?.potrero)
-    || String(a.block?.block || "").localeCompare(String(b.block?.block || ""), "es", { numeric: true });
-  irrigation.sort(sortAlerts);
-  fertilizer.sort(sortAlerts);
-  return { irrigation, fertilizer };
+  return irrigationAttachAlertTracking({ irrigation, fertilizer }, filteredBlocks, monthPrefix);
 }
 
 function irrigationAutomaticAlertCardHtml(item, kind) {
   const isFertilizer = kind === "fertilizer";
+  const status = item.status || "activo";
+  const priority = item.priority || irrigationAlertPriority(item, kind);
   const percentLabel = Number.isFinite(Number(item.percent))
     ? `${Number(item.percent) > 0 ? "+" : ""}${number(item.percent, 1)}%`
     : "Sin comparación";
@@ -11857,7 +11968,7 @@ function irrigationAutomaticAlertCardHtml(item, kind) {
     ? `${programmedVolume} / ${realVolume}`
     : `${Number(item.programmedValue) > 0 ? `${number(item.programmedValue, 2)} h` : "Sin dato"} / ${Number.isFinite(Number(item.realValue)) ? `${number(item.realValue, 2)} h` : "Sin dato"}`;
   return `
-    <article class="irrigation-auto-alert-card ${isFertilizer ? "is-fertilizer" : "is-irrigation"} ${item.severity === "critical" ? "is-critical" : ""}">
+    <article class="irrigation-auto-alert-card ${isFertilizer ? "is-fertilizer" : "is-irrigation"} priority-${priority.toLowerCase()} status-${status}">
       <div class="irrigation-auto-alert-sector">
         <strong>${escapeHtml(potreroLabel(item.block?.potrero))}</strong>
         <b>Bloque ${escapeHtml(item.block?.block || "-")}</b>
@@ -11866,27 +11977,242 @@ function irrigationAutomaticAlertCardHtml(item, kind) {
         <header class="irrigation-auto-alert-head">
           <span class="irrigation-auto-alert-marker" aria-hidden="true">${isFertilizer ? "F" : "!"}</span>
           <time datetime="${htmlAttr(String(item.date || "").slice(0, 10))}">${escapeHtml(irrigationEventDateLabel(item.date))}</time>
+          <span class="irrigation-alert-priority">${escapeHtml(IRRIGATION_ALERT_PRIORITY_LABELS[priority] || priority)}</span>
         </header>
         <h4>${escapeHtml(item.type)}</h4>
         ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+        ${item.tracking?.problemDetail ? `<p class="irrigation-alert-detail"><strong>Detalle:</strong> ${escapeHtml(item.tracking.problemDetail)}</p>` : ""}
+        ${item.tracking?.solution ? `<p class="irrigation-alert-solution"><strong>Solución:</strong> ${escapeHtml(item.tracking.solution)}</p>` : ""}
         <div class="irrigation-auto-alert-metrics">
           <span><small>Volumen real</small><b>${realVolume}</b></span>
           <span><small>Diferencia</small><b>${escapeHtml(percentLabel)}</b></span>
           <span><small>Programa / real</small><b>${programReal}</b></span>
         </div>
+        <footer class="irrigation-auto-alert-footer">
+          <span class="irrigation-alert-status status-${status}">${escapeHtml(irrigationAlertStatusLabel(status))}</span>
+          ${item.tracking?.updatedByName ? `<small>${escapeHtml(item.tracking.updatedByName)}</small>` : ""}
+          ${irrigationEventsCanEdit() ? `<button class="secondary-button" type="button" data-action="manage-irrigation-alert" data-alert-key="${htmlAttr(item.alertKey || item.id)}">${status === "resuelto" ? "Ver cierre" : status === "en_revision" ? "Continuar atención" : "Marcar atendida"}</button>` : ""}
+        </footer>
       </div>
     </article>`;
+}
+
+function openIrrigationAlertAttentionDialog(alertKey = "") {
+  const item = irrigationAutomaticAlertIndex.get(String(alertKey));
+  if (!item || !irrigationEventsCanEdit()) return;
+  if (!irrigationAlertManagementAvailable) {
+    showToast("Ejecuta supabase_riego_alertas_gestion.sql para gestionar alertas");
+    return;
+  }
+  const tracking = item.tracking || null;
+  const status = tracking?.status || "resuelto";
+  const dialog = document.getElementById("irrigationEventDialog");
+  if (!dialog) return;
+  dialog.innerHTML = `
+    <form id="irrigationAlertAttentionForm" class="dialog-card irrigation-event-dialog irrigation-alert-attention-dialog">
+      <div class="dialog-header">
+        <div><span>${item.kind === "fertilizer" ? "Alerta de fertilizante" : "Alerta de riego"}</span><h3>Atender alerta</h3></div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar" aria-label="Cerrar">x</button>
+      </div>
+      <input type="hidden" name="alerta_clave" value="${htmlAttr(item.alertKey || item.id)}">
+      <div class="irrigation-alert-attention-summary ${item.kind === "fertilizer" ? "is-fertilizer" : "is-irrigation"}">
+        <strong>${escapeHtml(potreroLabel(item.block?.potrero))} · Bloque ${escapeHtml(item.block?.block || "-")}</strong>
+        <span>${escapeHtml(irrigationEventDateLabel(item.date))}</span>
+        <b>${escapeHtml(IRRIGATION_ALERT_PRIORITY_LABELS[item.priority] || item.priority)}</b>
+        <p>${escapeHtml(item.type)}${item.description ? ` · ${escapeHtml(item.description)}` : ""}</p>
+      </div>
+      <label class="irrigation-event-description">Detalle del problema
+        <textarea name="detalle_problema" maxlength="1600" rows="5" placeholder="Agrega causa probable, observaciones de terreno, equipo afectado u otros antecedentes">${escapeHtml(tracking?.problemDetail || "")}</textarea>
+      </label>
+      <label class="irrigation-event-description">Solución o acción realizada
+        <textarea name="solucion" maxlength="1600" rows="5" placeholder="Describe qué se hizo para corregir el problema y cuál fue el resultado">${escapeHtml(tracking?.solution || "")}</textarea>
+      </label>
+      <label class="irrigation-event-status-control">Estado
+        <select name="estado">
+          <option value="activo" ${status === "activo" ? "selected" : ""}>Nueva</option>
+          <option value="en_revision" ${status === "en_revision" ? "selected" : ""}>En revisión</option>
+          <option value="resuelto" ${status === "resuelto" ? "selected" : ""}>Cerrada</option>
+        </select>
+      </label>
+      ${tracking?.updatedByName ? `<div class="irrigation-alert-attention-audit">Última actualización: <strong>${escapeHtml(tracking.updatedByName)}</strong>${tracking.updatedAt ? ` · ${escapeHtml(new Date(tracking.updatedAt).toLocaleString("es-CL"))}` : ""}</div>` : ""}
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">Cancelar</button>
+        <button class="primary-button" type="submit">Guardar atención</button>
+      </div>
+    </form>`;
+  const form = dialog.querySelector("form");
+  form?.addEventListener("submit", saveIrrigationAlertAttention);
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+  form?.elements.detalle_problema?.focus();
+}
+
+async function saveIrrigationAlertAttention(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const alertKey = String(data.get("alerta_clave") || "");
+  const item = irrigationAutomaticAlertIndex.get(alertKey);
+  if (!item) {
+    showToast("La alerta ya no está disponible con los filtros actuales");
+    return;
+  }
+  const problemDetail = String(data.get("detalle_problema") || "").trim();
+  const solution = String(data.get("solucion") || "").trim();
+  const status = ["activo", "en_revision", "resuelto"].includes(String(data.get("estado"))) ? String(data.get("estado")) : "activo";
+  if (status === "resuelto" && !solution) {
+    showToast("Describe la solución antes de cerrar la alerta");
+    form.elements.solucion?.focus();
+    return;
+  }
+  const user = currentAuditUser();
+  const finiteOrNull = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
+  const payload = {
+    fecha: item.date,
+    campo_id: item.block?.id,
+    potrero: item.block?.potrero || "",
+    bloque: item.block?.block || "",
+    tipo_evento: "otro",
+    descripcion: item.description || item.type,
+    origen: item.kind === "fertilizer" ? "wiseconn_fertilizante" : "wiseconn_riego",
+    alerta_clave: alertKey,
+    prioridad: item.priority || irrigationAlertPriority(item, item.kind),
+    titulo_alerta: item.type,
+    detalle_problema: problemDetail || null,
+    solucion: solution || null,
+    porcentaje_diferencia: finiteOrNull(item.percent),
+    valor_programado: finiteOrNull(item.programmedValue),
+    valor_real: finiteOrNull(item.realValue),
+    volumen_programado: finiteOrNull(item.programmedVolume),
+    volumen_real: finiteOrNull(item.realVolume),
+    unidad: item.unit || (item.kind === "fertilizer" ? "L" : "h"),
+    estado: status,
+    fecha_resolucion: status === "resuelto" ? new Date().toISOString() : null,
+    actualizado_por: user.id,
+    actualizado_por_nombre: user.name
+  };
+  if (!item.tracking?.id) {
+    payload.creado_por = user.id;
+    payload.creado_por_nombre = user.name;
+  }
+  const submit = form.querySelector('[type="submit"]');
+  setButtonBusy(submit, true, "Guardando...");
+  try {
+    const rows = await sbFetch(item.tracking?.id
+      ? `/rest/v1/riego_eventos?id=eq.${encodeURIComponent(item.tracking.id)}`
+      : "/rest/v1/riego_eventos?on_conflict=alerta_clave", {
+      method: item.tracking?.id ? "PATCH" : "POST",
+      prefer: item.tracking?.id ? "return=representation" : "resolution=merge-duplicates,return=representation",
+      body: JSON.stringify(payload)
+    });
+    const saved = mapIrrigationEventRow(Array.isArray(rows) ? rows[0] : rows);
+    const existingIndex = (state.irrigationEvents || []).findIndex((row) => row.id === saved.id || row.alertKey === alertKey);
+    if (existingIndex >= 0) state.irrigationEvents.splice(existingIndex, 1, saved);
+    else state.irrigationEvents = [saved, ...(state.irrigationEvents || [])];
+    document.getElementById("irrigationEventDialog")?.close();
+    renderIrrigation();
+    showToast(status === "resuelto" ? "Alerta cerrada con su solución" : status === "en_revision" ? "Alerta marcada en revisión" : "Alerta guardada como nueva");
+  } catch (error) {
+    console.warn("No se pudo guardar la atención de la alerta", error);
+    if (isMissingSupabaseColumn(error, ["alerta_clave", "detalle_problema", "solucion", "origen"])) irrigationAlertManagementAvailable = false;
+    showToast(irrigationAlertManagementAvailable ? `No se pudo guardar: ${error.message}` : "Ejecuta supabase_riego_alertas_gestion.sql en Supabase");
+  } finally {
+    setButtonBusy(submit, false);
+  }
+}
+
+async function exportIrrigationIncidentsExcel(button = null) {
+  if (!window.XLSX) {
+    showToast("No se pudo cargar el exportador Excel");
+    return;
+  }
+  const { alerts = [], events = [] } = irrigationEventsReportContext;
+  if (!alerts.length && !events.length) {
+    showToast("No hay alertas ni eventos para exportar con estos filtros");
+    return;
+  }
+  setButtonBusy(button, true, "Generando...");
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  try {
+    const exportNumber = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : "";
+    const alertRows = alerts.map((item) => ({
+      "Origen": item.kind === "fertilizer" ? "WiseConn · Fertilizante" : "WiseConn · Riego",
+      "Estado": irrigationAlertStatusLabel(item.status),
+      "Prioridad": IRRIGATION_ALERT_PRIORITY_LABELS[item.priority] || item.priority,
+      "Fecha": item.date,
+      "Potrero": potreroLabel(item.block?.potrero),
+      "Bloque": item.block?.block || "",
+      "Problema": item.type,
+      "Descripción automática": item.description || "",
+      "Detalle ingresado": item.tracking?.problemDetail || "",
+      "Diferencia %": exportNumber(item.percent),
+      "Valor programado": exportNumber(item.programmedValue),
+      "Valor real": exportNumber(item.realValue),
+      "Volumen programado": exportNumber(item.programmedVolume),
+      "Volumen real": exportNumber(item.realVolume),
+      "Unidad": item.unit || "",
+      "Solución": item.tracking?.solution || "",
+      "Responsable": item.tracking?.updatedByName || item.tracking?.createdByName || "",
+      "Fecha cierre": item.tracking?.resolvedAt || ""
+    }));
+    const eventRows = events.map((item) => ({
+      "Origen": "Evento externo",
+      "Estado": item.status === "resuelto" ? "Resuelto" : item.status === "en_revision" ? "En revisión" : "Activo",
+      "Prioridad": item.priority || "",
+      "Fecha": item.date,
+      "Potrero": potreroLabel(item.potrero),
+      "Bloque": item.block || "",
+      "Problema": irrigationEventTypeLabel(item.type),
+      "Descripción automática": item.description || "",
+      "Detalle ingresado": item.problemDetail || "",
+      "Diferencia %": "",
+      "Valor programado": "",
+      "Valor real": "",
+      "Volumen programado": "",
+      "Volumen real": "",
+      "Unidad": "",
+      "Solución": item.solution || "",
+      "Responsable": item.updatedByName || item.createdByName || "",
+      "Fecha cierre": item.resolvedAt || ""
+    }));
+    const rows = [...alertRows, ...eventRows].sort((a, b) => String(b.Fecha).localeCompare(String(a.Fecha)) || String(a.Prioridad).localeCompare(String(b.Prioridad)));
+    const workbook = window.XLSX.utils.book_new();
+    const sheet = window.XLSX.utils.json_to_sheet(rows);
+    sheet["!cols"] = [20, 14, 14, 12, 18, 10, 28, 42, 42, 14, 17, 14, 18, 15, 10, 42, 24, 22].map((wch) => ({ wch }));
+    sheet["!autofilter"] = { ref: sheet["!ref"] };
+    window.XLSX.utils.book_append_sheet(workbook, sheet, "Alertas y eventos");
+    window.XLSX.writeFile(workbook, `alertas_eventos_riego_${irrigationYear}-${irrigationMonth}.xlsx`);
+    showToast("Reporte de alertas y eventos generado");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, year }) {
   const events = irrigationFilteredEvents(filteredBlocks, monthPrefix);
   const automaticAlerts = irrigationAutomaticAlerts(filteredBlocks, monthPrefix);
-  const activeCount = events.filter((item) => item.status === "activo").length;
+  const allAlerts = [...automaticAlerts.irrigation, ...automaticAlerts.fertilizer];
+  const visibleAutomaticAlerts = {
+    irrigation: automaticAlerts.irrigation.filter(irrigationAlertMatchesStatus),
+    fertilizer: automaticAlerts.fertilizer.filter(irrigationAlertMatchesStatus)
+  };
+  irrigationAutomaticAlertIndex = new Map(allAlerts.map((item) => [item.alertKey || item.id, item]));
+  const visibleIds = new Set(filteredBlocks.map((block) => String(block.id)));
+  irrigationEventsReportContext = {
+    alerts: allAlerts,
+    events: (state.irrigationEvents || []).filter((item) => (!item.origin || item.origin === "manual")
+      && String(item.date || "").startsWith(monthPrefix)
+      && visibleIds.has(String(item.fieldId)))
+  };
   const affectedBlocks = new Set([
     ...events.map((item) => String(item.fieldId)),
-    ...automaticAlerts.irrigation.map((item) => String(item.block?.id || "")),
-    ...automaticAlerts.fertilizer.map((item) => String(item.block?.id || ""))
+    ...allAlerts.map((item) => String(item.block?.id || ""))
   ].filter(Boolean)).size;
+  const priorityCounts = allAlerts.reduce((counts, item) => {
+    if (item.status === "resuelto") counts.closed += 1;
+    else counts[item.priority] = (counts[item.priority] || 0) + 1;
+    return counts;
+  }, { P1: 0, P2: 0, P3: 0, closed: 0 });
   const canEdit = irrigationEventsCanEdit();
   return `
     <section class="irrigation-events-panel">
@@ -11895,12 +12221,15 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           <span class="irrigation-events-eyebrow">${escapeHtml(monthLabel)} ${escapeHtml(year)}</span>
           <h2>Eventos y alertas</h2>
         </div>
-        ${canEdit ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento</button>' : ""}
+        <div class="irrigation-events-actions">
+          <button class="secondary-button" type="button" data-action="export-irrigation-incidents">Exportar Excel</button>
+          ${canEdit ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento externo</button>' : ""}
+        </div>
       </header>
-      ${!irrigationEventsCloudAvailable ? `
+      ${!irrigationEventsCloudAvailable || !irrigationAlertManagementAvailable ? `
         <div class="irrigation-events-setup" role="status">
-          <strong>Falta habilitar Eventos en Supabase</strong>
-          <span>Ejecuta <code>supabase_riego_eventos.sql</code> una vez.</span>
+          <strong>Falta actualizar la gestión de alertas en Supabase</strong>
+          <span>Ejecuta <code>supabase_riego_alertas_gestion.sql</code> una vez.</span>
         </div>` : ""}
       ${wiseconnSyncState.loading ? `
         <div class="irrigation-events-loading" role="status" aria-live="polite">
@@ -11910,22 +12239,34 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           <strong>No se pudieron actualizar las alertas</strong><span>${escapeHtml(wiseconnSyncState.error)}</span>
         </div>` : ""}
       <div class="irrigation-event-kpis" aria-label="Resumen de eventos">
-        <span class="is-alert"><small>Alertas de riego</small><strong>${automaticAlerts.irrigation.length}</strong></span>
-        <span class="is-fertilizer"><small>Alertas fertilizante</small><strong>${automaticAlerts.fertilizer.length}</strong></span>
-        <span><small>Eventos activos</small><strong>${activeCount}</strong></span>
-        <span><small>Bloques afectados</small><strong>${affectedBlocks}</strong></span>
+        <span class="priority-p1"><small>P1 Críticas</small><strong>${priorityCounts.P1}</strong></span>
+        <span class="priority-p2"><small>P2 Altas</small><strong>${priorityCounts.P2}</strong></span>
+        <span class="priority-p3"><small>P3 Atención</small><strong>${priorityCounts.P3}</strong></span>
+        <span class="is-closed"><small>Alertas cerradas</small><strong>${priorityCounts.closed}</strong></span>
+      </div>
+      <div class="irrigation-alert-toolbar">
+        <div><strong>Bandeja de alertas</strong><small>${affectedBlocks} bloques con registros en el período.</small></div>
+        <label>Estado
+          <select id="irrigationAlertStatusFilter">
+            <option value="abiertas" ${irrigationAlertStatusFilter === "abiertas" ? "selected" : ""}>Pendientes y en revisión</option>
+            <option value="activo" ${irrigationAlertStatusFilter === "activo" ? "selected" : ""}>Nuevas</option>
+            <option value="en_revision" ${irrigationAlertStatusFilter === "en_revision" ? "selected" : ""}>En revisión</option>
+            <option value="resuelto" ${irrigationAlertStatusFilter === "resuelto" ? "selected" : ""}>Cerradas</option>
+            <option value="Todas" ${irrigationAlertStatusFilter === "Todas" ? "selected" : ""}>Todas</option>
+          </select>
+        </label>
       </div>
       <div class="irrigation-alerts-dashboard">
-        <section class="irrigation-alert-group is-irrigation ${automaticAlerts.irrigation.length ? "has-alerts" : "is-clear"}">
-          <header><span class="irrigation-alert-group-icon" aria-hidden="true">!</span><div><strong>Alertas de riego</strong><small>Diferencias hidráulicas detectadas por WiseConn</small></div><b>${automaticAlerts.irrigation.length}</b></header>
+        <section class="irrigation-alert-group is-irrigation ${visibleAutomaticAlerts.irrigation.length ? "has-alerts" : "is-clear"}">
+          <header><span class="irrigation-alert-group-icon" aria-hidden="true">!</span><div><strong>Alertas de riego</strong><small>Diferencias hidráulicas detectadas por WiseConn</small></div><b>${visibleAutomaticAlerts.irrigation.length}</b></header>
           <div class="irrigation-auto-alert-list">
-            ${automaticAlerts.irrigation.map((item) => irrigationAutomaticAlertCardHtml(item, "irrigation")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de riego</strong><span>No hay diferencias hidráulicas para los filtros seleccionados.</span></div>'}
+            ${visibleAutomaticAlerts.irrigation.map((item) => irrigationAutomaticAlertCardHtml(item, "irrigation")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de riego</strong><span>No hay alertas con el estado seleccionado.</span></div>'}
           </div>
         </section>
-        <section class="irrigation-alert-group is-fertilizer ${automaticAlerts.fertilizer.length ? "has-alerts" : "is-clear"}">
-          <header><span class="irrigation-alert-group-icon" aria-hidden="true">F</span><div><strong>Alertas de fertilizante</strong><small>FIP fuera del umbral permitido de ±30%</small></div><b>${automaticAlerts.fertilizer.length}</b></header>
+        <section class="irrigation-alert-group is-fertilizer ${visibleAutomaticAlerts.fertilizer.length ? "has-alerts" : "is-clear"}">
+          <header><span class="irrigation-alert-group-icon" aria-hidden="true">F</span><div><strong>Alertas de fertilizante</strong><small>FIP fuera del umbral permitido de ±30%</small></div><b>${visibleAutomaticAlerts.fertilizer.length}</b></header>
           <div class="irrigation-auto-alert-list">
-            ${automaticAlerts.fertilizer.map((item) => irrigationAutomaticAlertCardHtml(item, "fertilizer")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de fertilizante</strong><span>Todos los FIP comparables están dentro del umbral.</span></div>'}
+            ${visibleAutomaticAlerts.fertilizer.map((item) => irrigationAutomaticAlertCardHtml(item, "fertilizer")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de fertilizante</strong><span>No hay alertas con el estado seleccionado.</span></div>'}
           </div>
         </section>
       </div>
@@ -11935,6 +12276,7 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           <select id="irrigationEventStatusFilter">
             <option value="Todos" ${irrigationEventStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
             <option value="activo" ${irrigationEventStatusFilter === "activo" ? "selected" : ""}>Activos</option>
+            <option value="en_revision" ${irrigationEventStatusFilter === "en_revision" ? "selected" : ""}>En revisión</option>
             <option value="resuelto" ${irrigationEventStatusFilter === "resuelto" ? "selected" : ""}>Resueltos</option>
           </select>
         </label>
@@ -11946,21 +12288,24 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           const block = field?.block || item.block;
           const user = item.updatedByName || item.createdByName || "Sin responsable";
           return `
-            <article class="irrigation-event-card ${item.status === "activo" ? "is-active" : "is-resolved"}">
+            <article class="irrigation-event-card ${item.status === "activo" ? "is-active" : item.status === "en_revision" ? "is-review" : "is-resolved"}">
               <div class="irrigation-event-date"><strong>${escapeHtml(String(item.date || "").slice(8, 10) || "-")}</strong><span>${escapeHtml(irrigationEventDateLabel(item.date))}</span></div>
               <div class="irrigation-event-main">
                 <div class="irrigation-event-card-title">
                   <span class="irrigation-event-type">${escapeHtml(irrigationEventTypeLabel(item.type))}</span>
-                  <span class="irrigation-event-status">${item.status === "activo" ? "Activo" : "Resuelto"}</span>
+                  <span class="irrigation-event-priority ${String(item.priority || "P2").toLowerCase()}">${escapeHtml(IRRIGATION_ALERT_PRIORITY_LABELS[item.priority || "P2"])}</span>
+                  <span class="irrigation-event-status">${escapeHtml(item.status === "resuelto" ? "Resuelto" : item.status === "en_revision" ? "En revisión" : "Activo")}</span>
                 </div>
                 <strong>${escapeHtml(potreroLabel(potrero))} · Bloque ${escapeHtml(block || "-")}</strong>
                 <p>${escapeHtml(item.description)}</p>
+                ${item.problemDetail ? `<p><strong>Detalle:</strong> ${escapeHtml(item.problemDetail)}</p>` : ""}
+                ${item.solution ? `<p class="irrigation-event-solution"><strong>Solución:</strong> ${escapeHtml(item.solution)}</p>` : ""}
                 <small>${escapeHtml(user)}${item.updatedAt ? ` · ${escapeHtml(new Date(item.updatedAt).toLocaleString("es-CL"))}` : ""}</small>
               </div>
               ${canEdit ? `
                 <div class="irrigation-event-actions">
                   <button class="icon-button" type="button" data-action="open-irrigation-event-dialog" data-id="${htmlAttr(item.id)}" title="Editar evento" aria-label="Editar evento">&#9998;</button>
-                  <button class="secondary-button" type="button" data-action="toggle-irrigation-event-status" data-id="${htmlAttr(item.id)}">${item.status === "activo" ? "Resolver" : "Reabrir"}</button>
+                  <button class="secondary-button" type="button" data-action="toggle-irrigation-event-status" data-id="${htmlAttr(item.id)}">${item.status === "resuelto" ? "Reabrir" : "Marcar atendido"}</button>
                   <button class="danger-button" type="button" data-action="delete-irrigation-event" data-id="${htmlAttr(item.id)}">Eliminar</button>
                 </div>` : ""}
             </article>`;
@@ -11988,7 +12333,7 @@ function updateIrrigationEventBlockOptions(form, preferredFieldId = "") {
   select.innerHTML = blocks.map((block) => `<option value="${htmlAttr(block.id)}" ${String(block.id) === String(preferredFieldId) ? "selected" : ""}>Bloque ${escapeHtml(block.block)} · ${number(block.hectares)} ha</option>`).join("");
 }
 
-function openIrrigationEventDialog(eventId = "") {
+function openIrrigationEventDialog(eventId = "", attentionMode = false) {
   if (!irrigationEventsCanEdit()) {
     showToast("Tu perfil solo puede consultar eventos");
     return;
@@ -12004,7 +12349,7 @@ function openIrrigationEventDialog(eventId = "") {
       <div class="dialog-header">
         <div>
           <span>Riego · ${escapeHtml(irrigationSpeciesFilter)}</span>
-          <h3>${item ? "Editar evento" : "Registrar evento"}</h3>
+          <h3>${item ? (attentionMode ? "Atender evento" : "Editar evento") : "Registrar evento externo"}</h3>
         </div>
         <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar" aria-label="Cerrar">x</button>
       </div>
@@ -12016,6 +12361,13 @@ function openIrrigationEventDialog(eventId = "") {
         <label>Tipo de problema
           <select name="tipo_evento" required>${Object.entries(IRRIGATION_EVENT_TYPES).map(([value, label]) => `<option value="${value}" ${item?.type === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>
         </label>
+        <label>Prioridad
+          <select name="prioridad" required>
+            <option value="P1" ${item?.priority === "P1" ? "selected" : ""}>P1 · Crítica</option>
+            <option value="P2" ${!item || item.priority === "P2" || !item.priority ? "selected" : ""}>P2 · Alta</option>
+            <option value="P3" ${item?.priority === "P3" ? "selected" : ""}>P3 · Atención</option>
+          </select>
+        </label>
         <label>Potrero
           <select name="potrero" required>${potreros.map((potrero) => `<option value="${htmlAttr(potrero)}" ${potrero === selectedField?.potrero ? "selected" : ""}>${escapeHtml(potreroLabel(potrero))}</option>`).join("")}</select>
         </label>
@@ -12023,12 +12375,19 @@ function openIrrigationEventDialog(eventId = "") {
           <select name="campo_id" required></select>
         </label>
       </div>
-      <label class="irrigation-event-description">Descripción del suceso
-        <textarea name="descripcion" maxlength="800" rows="5" required placeholder="Describe qué ocurrió y cómo impidió o afectó el riego">${escapeHtml(item?.description || "")}</textarea>
+      <label class="irrigation-event-description">Resumen del problema
+        <textarea name="descripcion" maxlength="800" rows="3" required placeholder="Describe brevemente qué ocurrió y cómo afectó el riego">${escapeHtml(item?.description || "")}</textarea>
+      </label>
+      <label class="irrigation-event-description">Detalle del problema
+        <textarea name="detalle_problema" maxlength="1600" rows="4" placeholder="Agrega antecedentes, causa probable, equipo afectado o información observada en terreno">${escapeHtml(item?.problemDetail || "")}</textarea>
+      </label>
+      <label class="irrigation-event-description">Solución o acción realizada
+        <textarea name="solucion" maxlength="1600" rows="4" placeholder="Indica qué se hizo, quién intervino y el resultado obtenido">${escapeHtml(item?.solution || "")}</textarea>
       </label>
       <label class="irrigation-event-status-control">Estado
         <select name="estado">
-          <option value="activo" ${item?.status !== "resuelto" ? "selected" : ""}>Activo</option>
+          <option value="activo" ${!item || item.status === "activo" ? "selected" : ""}>Activo</option>
+          <option value="en_revision" ${item?.status === "en_revision" ? "selected" : ""}>En revisión</option>
           <option value="resuelto" ${item?.status === "resuelto" ? "selected" : ""}>Resuelto</option>
         </select>
       </label>
@@ -12041,9 +12400,10 @@ function openIrrigationEventDialog(eventId = "") {
   updateIrrigationEventBlockOptions(form, selectedField?.id || item?.fieldId || "");
   form.elements.potrero?.addEventListener("change", () => updateIrrigationEventBlockOptions(form));
   form.addEventListener("submit", saveIrrigationEvent);
+  if (attentionMode && form.elements.estado) form.elements.estado.value = "resuelto";
   if (dialog.open) dialog.close();
   dialog.showModal();
-  form.elements.descripcion?.focus();
+  (attentionMode ? form.elements.solucion : form.elements.descripcion)?.focus();
 }
 
 async function saveIrrigationEvent(event) {
@@ -12054,12 +12414,23 @@ async function saveIrrigationEvent(event) {
   const fieldId = String(data.get("campo_id") || "");
   const field = state.blocks.find((block) => String(block.id) === fieldId);
   const description = String(data.get("descripcion") || "").trim();
+  const problemDetail = String(data.get("detalle_problema") || "").trim();
+  const solution = String(data.get("solucion") || "").trim();
   if (!field || !data.get("fecha") || !description) {
     showToast("Completa fecha, potrero, bloque y descripción");
     return;
   }
   const user = currentAuditUser();
-  const status = data.get("estado") === "resuelto" ? "resuelto" : "activo";
+  const status = ["activo", "en_revision", "resuelto"].includes(String(data.get("estado"))) ? String(data.get("estado")) : "activo";
+  if (status === "resuelto" && !solution) {
+    showToast("Describe la solución antes de cerrar el evento");
+    form.elements.solucion?.focus();
+    return;
+  }
+  if (!irrigationAlertManagementAvailable) {
+    showToast("Ejecuta supabase_riego_alertas_gestion.sql antes de guardar detalles y soluciones");
+    return;
+  }
   const payload = {
     fecha: data.get("fecha"),
     campo_id: field.id,
@@ -12067,6 +12438,10 @@ async function saveIrrigationEvent(event) {
     bloque: field.block,
     tipo_evento: data.get("tipo_evento") || "otro",
     descripcion: description,
+    detalle_problema: problemDetail || null,
+    solucion: solution || null,
+    origen: "manual",
+    prioridad: data.get("prioridad") || "P2",
     estado: status,
     fecha_resolucion: status === "resuelto" ? new Date().toISOString() : null,
     actualizado_por: user.id,
@@ -12104,6 +12479,10 @@ async function saveIrrigationEvent(event) {
 async function toggleIrrigationEventStatus(id) {
   const item = (state.irrigationEvents || []).find((event) => String(event.id) === String(id));
   if (!item) return;
+  if (item.status !== "resuelto") {
+    openIrrigationEventDialog(id, true);
+    return;
+  }
   const nextStatus = item.status === "activo" ? "resuelto" : "activo";
   const user = currentAuditUser();
   try {
@@ -12529,6 +12908,10 @@ function renderIrrigation() {
   });
   document.getElementById("irrigationEventStatusFilter")?.addEventListener("change", (event) => {
     irrigationEventStatusFilter = event.target.value || "Todos";
+    renderIrrigation();
+  });
+  document.getElementById("irrigationAlertStatusFilter")?.addEventListener("change", (event) => {
+    irrigationAlertStatusFilter = event.target.value || "abiertas";
     renderIrrigation();
   });
   document.getElementById("irrigationYearFilter")?.addEventListener("change", (event) => {
@@ -21816,9 +22199,16 @@ async function loadCloudData(options = {}) {
         irrigationObservationsCloudAvailable = !message.includes("could not find the table") && !message.includes("schema cache");
         return null;
       }) : Promise.resolve(null),
-    loadIrrigation ? sbSelectAll("riego_eventos", `select=id,fecha,campo_id,potrero,bloque,tipo_evento,descripcion,estado,fecha_resolucion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en${irrigationDateQuery}&order=fecha.desc,creado_en.desc`)
-      .then((rows) => {
+    loadIrrigation ? sbSelectAll("riego_eventos", `select=id,fecha,campo_id,potrero,bloque,tipo_evento,descripcion,estado,fecha_resolucion,origen,alerta_clave,prioridad,titulo_alerta,detalle_problema,solucion,porcentaje_diferencia,valor_programado,valor_real,volumen_programado,volumen_real,unidad,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en${irrigationDateQuery}&order=fecha.desc,creado_en.desc`)
+      .then((rows) => ({ rows, extended: true }))
+      .catch((error) => {
+        if (!isMissingSupabaseColumn(error, ["origen", "alerta_clave", "prioridad", "titulo_alerta", "detalle_problema", "solucion", "porcentaje_diferencia", "valor_programado", "valor_real", "volumen_programado", "volumen_real", "unidad"])) throw error;
+        return sbSelectAll("riego_eventos", `select=id,fecha,campo_id,potrero,bloque,tipo_evento,descripcion,estado,fecha_resolucion,creado_por,creado_por_nombre,actualizado_por,actualizado_por_nombre,creado_en,actualizado_en${irrigationDateQuery}&order=fecha.desc,creado_en.desc`)
+          .then((rows) => ({ rows, extended: false }));
+      })
+      .then(({ rows, extended }) => {
         irrigationEventsCloudAvailable = true;
+        irrigationAlertManagementAvailable = extended;
         return rows;
       })
       .catch((error) => {
@@ -29726,6 +30116,13 @@ document.addEventListener("click", async (event) => {
   if (action === "open-irrigation-event-dialog") {
     setIrrigationFiltersOpen(false);
     openIrrigationEventDialog(id || "");
+  }
+  if (action === "manage-irrigation-alert") {
+    setIrrigationFiltersOpen(false);
+    openIrrigationAlertAttentionDialog(actionTarget.dataset.alertKey || "");
+  }
+  if (action === "export-irrigation-incidents") {
+    await exportIrrigationIncidentsExcel(actionTarget);
   }
   if (action === "toggle-irrigation-event-status") {
     await toggleIrrigationEventStatus(id);

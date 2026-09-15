@@ -8026,6 +8026,12 @@ td span,
   gap: 1px;
 }
 
+.irrigation-events-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .irrigation-events-head h2 {
   margin: 0;
   color: #173c31;
@@ -8140,7 +8146,80 @@ td span,
   color: #a91d16;
 }
 
+.irrigation-event-kpis > span.priority-p1 {
+  border-color: #efaaa3;
+  background: #fff2f0;
+}
+
+.irrigation-event-kpis > span.priority-p1 strong {
+  color: #b42318;
+}
+
+.irrigation-event-kpis > span.priority-p2 {
+  border-color: #f3c37b;
+  background: #fff8e8;
+}
+
+.irrigation-event-kpis > span.priority-p2 strong {
+  color: #a55305;
+}
+
+.irrigation-event-kpis > span.priority-p3 {
+  border-color: #ead985;
+  background: #fffde9;
+}
+
+.irrigation-event-kpis > span.priority-p3 strong {
+  color: #836308;
+}
+
+.irrigation-event-kpis > span.is-closed {
+  border-color: #9fd0bb;
+  background: #edf9f3;
+}
+
+.irrigation-event-kpis > span.is-closed strong {
+  color: #08775a;
+}
+
 .irrigation-event-kpis select {
+  min-height: 28px;
+  padding: 3px 6px;
+}
+
+.irrigation-alert-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 2px 0;
+}
+
+.irrigation-alert-toolbar > div {
+  display: grid;
+  gap: 1px;
+}
+
+.irrigation-alert-toolbar strong {
+  color: #173c31;
+  font-size: 0.76rem;
+}
+
+.irrigation-alert-toolbar small,
+.irrigation-alert-toolbar label {
+  color: #61766e;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.irrigation-alert-toolbar label {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 210px);
+  align-items: center;
+  gap: 6px;
+}
+
+.irrigation-alert-toolbar select {
   min-height: 28px;
   padding: 3px 6px;
 }
@@ -8157,6 +8236,15 @@ td span,
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
+  overflow: hidden;
+  border: 1px solid #9fc5ed;
+  border-radius: 7px;
+  background: #eff6ff;
+}
+
+.irrigation-alert-group.is-fertilizer {
+  border-color: #94d5b5;
+  background: #effaf4;
 }
 
 .irrigation-alert-group > header {
@@ -8165,7 +8253,8 @@ td span,
   gap: 7px;
   align-items: center;
   padding: 7px 8px;
-  border-bottom: 2px solid #e4aaa4;
+  border-bottom: 2px solid #79aee3;
+  background: #dcecff;
 }
 
 .irrigation-alert-group > header > div {
@@ -8175,7 +8264,7 @@ td span,
 }
 
 .irrigation-alert-group > header strong {
-  color: #173c31;
+  color: #174a7e;
   font-size: 0.72rem;
 }
 
@@ -8193,7 +8282,7 @@ td span,
   padding: 3px 5px;
   border-radius: 5px;
   background: #fff;
-  color: #a91d16;
+  color: #17568f;
   font-size: 0.67rem;
   text-align: center;
 }
@@ -8204,19 +8293,29 @@ td span,
   height: 22px;
   place-items: center;
   border-radius: 5px;
-  background: #c9362a;
+  background: #246da8;
   color: #fff;
   font-size: 0.7rem;
   font-weight: 950;
 }
 
 .irrigation-alert-group.is-fertilizer > header {
-  border-bottom-color: #d7a29c;
+  border-bottom-color: #69b78f;
+  background: #dff4e8;
 }
 
 .irrigation-alert-group.is-fertilizer {
-  padding-left: 8px;
-  border-left: 1px solid #dce8e4;
+  padding-left: 0;
+}
+
+.irrigation-alert-group.is-fertilizer > header strong,
+.irrigation-alert-group.is-fertilizer > header > b {
+  color: #17633f;
+}
+
+.irrigation-alert-group.is-fertilizer .irrigation-alert-group-icon,
+.irrigation-auto-alert-card.is-fertilizer .irrigation-auto-alert-marker {
+  background: #238457;
 }
 
 .irrigation-alert-group.is-clear .irrigation-alert-group-icon {
@@ -8237,7 +8336,7 @@ td span,
   gap: 5px;
   max-height: clamp(300px, 38dvh, 420px);
   min-height: 110px;
-  padding: 6px;
+  padding: 7px;
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -8248,16 +8347,30 @@ td span,
   gap: 9px;
   min-width: 0;
   padding: 7px;
-  border: 1px solid #ecc1bc;
-  border-left: 3px solid #d05a4f;
+  border: 1px solid #c5d9ea;
+  border-left: 4px solid #d4a80b;
   border-radius: 6px;
   background: #fff;
 }
 
-.irrigation-auto-alert-card.is-critical {
+.irrigation-auto-alert-card.priority-p1 {
   border-color: #e5968e;
   border-left-color: #ad1f16;
   background: #fff7f6;
+}
+
+.irrigation-auto-alert-card.priority-p2 {
+  border-left-color: #d97706;
+}
+
+.irrigation-auto-alert-card.priority-p3 {
+  border-left-color: #d4a80b;
+}
+
+.irrigation-auto-alert-card.status-resuelto {
+  border-color: #9bcdb7;
+  border-left-color: #16845e;
+  background: #fbfefc;
 }
 
 .irrigation-auto-alert-marker {
@@ -8278,7 +8391,7 @@ td span,
   align-content: center;
   gap: 4px;
   padding: 5px 9px 5px 4px;
-  border-right: 1px solid #e6c2bd;
+  border-right: 1px solid #b9d3e9;
   line-height: 1.08;
 }
 
@@ -8290,9 +8403,17 @@ td span,
 }
 
 .irrigation-auto-alert-sector b {
-  color: #a5271e;
+  color: #23679d;
   font-size: 0.8rem;
   font-weight: 900;
+}
+
+.irrigation-auto-alert-card.is-fertilizer .irrigation-auto-alert-sector {
+  border-right-color: #afd9c2;
+}
+
+.irrigation-auto-alert-card.is-fertilizer .irrigation-auto-alert-sector b {
+  color: #23704c;
 }
 
 .irrigation-auto-alert-content {
@@ -8314,6 +8435,26 @@ td span,
   line-height: 1.2;
 }
 
+.irrigation-alert-priority {
+  margin-left: auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #fff3d5;
+  color: #8a5c00;
+  font-size: 0.54rem;
+  font-weight: 950;
+}
+
+.priority-p1 .irrigation-alert-priority {
+  background: #fee2e2;
+  color: #a71912;
+}
+
+.priority-p2 .irrigation-alert-priority {
+  background: #ffedd5;
+  color: #a84e05;
+}
+
 .irrigation-auto-alert-content h4,
 .irrigation-auto-alert-content p {
   margin: 0;
@@ -8333,7 +8474,20 @@ td span,
 }
 
 .irrigation-auto-alert-card.is-fertilizer h4 {
-  color: #a5271e;
+  color: #17633f;
+}
+
+.irrigation-alert-detail,
+.irrigation-alert-solution {
+  padding: 4px 6px;
+  border-left: 2px solid #7caed6;
+  background: #f2f7fb;
+}
+
+.irrigation-alert-solution {
+  border-left-color: #49a979;
+  background: #eef9f3;
+  color: #285e45 !important;
 }
 
 .irrigation-auto-alert-metrics {
@@ -8366,6 +8520,49 @@ td span,
 
 .irrigation-auto-alert-metrics > span:nth-child(2) b {
   color: #b42318;
+}
+
+.irrigation-auto-alert-footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.irrigation-auto-alert-footer > small {
+  overflow: hidden;
+  color: #687c74;
+  font-size: 0.54rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-auto-alert-footer button {
+  min-height: 25px;
+  margin-left: auto;
+  padding: 3px 7px;
+  font-size: 0.58rem;
+}
+
+.irrigation-alert-status {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #fff3d5;
+  color: #876000;
+  font-size: 0.54rem;
+  font-weight: 950;
+}
+
+.irrigation-alert-status.status-en_revision {
+  background: #ffedd5;
+  color: #9a4e08;
+}
+
+.irrigation-alert-status.status-resuelto {
+  background: #dff4e8;
+  color: #17633f;
 }
 
 .irrigation-alert-empty {
@@ -8454,6 +8651,11 @@ td span,
   background: #fffdfb;
 }
 
+.irrigation-event-card.is-review {
+  border-left-color: #d97706;
+  background: #fffaf0;
+}
+
 .irrigation-event-date {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -8492,7 +8694,8 @@ td span,
 }
 
 .irrigation-event-type,
-.irrigation-event-status {
+.irrigation-event-status,
+.irrigation-event-priority {
   padding: 2px 6px;
   border-radius: 999px;
   background: #e7f3ef;
@@ -8504,6 +8707,30 @@ td span,
 .irrigation-event-card.is-active .irrigation-event-status {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.irrigation-event-priority.p1 {
+  background: #fee2e2;
+  color: #a71912;
+}
+
+.irrigation-event-priority.p2 {
+  background: #ffedd5;
+  color: #9a4e08;
+}
+
+.irrigation-event-priority.p3 {
+  background: #fff7cc;
+  color: #806200;
+}
+
+.irrigation-event-card.is-review .irrigation-event-status {
+  background: #ffedd5;
+  color: #9a4e08;
+}
+
+.irrigation-event-solution {
+  color: #286247 !important;
 }
 
 .irrigation-event-main > strong {
@@ -8587,6 +8814,50 @@ td span,
   width: min(210px, 100%);
 }
 
+.irrigation-alert-attention-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 5px 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #9fc5ed;
+  border-left: 4px solid #246da8;
+  border-radius: 7px;
+  background: #eff6ff;
+}
+
+.irrigation-alert-attention-summary.is-fertilizer {
+  border-color: #94d5b5;
+  border-left-color: #238457;
+  background: #effaf4;
+}
+
+.irrigation-alert-attention-summary > strong {
+  color: #123e32;
+  font-size: 0.92rem;
+}
+
+.irrigation-alert-attention-summary > span,
+.irrigation-alert-attention-summary > b {
+  color: #536c63;
+  font-size: 0.62rem;
+}
+
+.irrigation-alert-attention-summary > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #3d554c;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.irrigation-alert-attention-audit {
+  padding: 7px 9px;
+  border-top: 1px solid #d9e6e1;
+  color: #61766e;
+  font-size: 0.61rem;
+}
+
 @media (max-width: 760px) {
   .irrigation-events-panel {
     height: auto;
@@ -8599,6 +8870,11 @@ td span,
     padding-right: 22px;
   }
 
+  .irrigation-events-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .irrigation-event-kpis {
     grid-template-columns: 1fr 1fr;
   }
@@ -8607,11 +8883,18 @@ td span,
     grid-template-columns: 1fr;
   }
 
+  .irrigation-alert-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .irrigation-alert-toolbar label {
+    grid-template-columns: 1fr;
+  }
+
   .irrigation-alert-group.is-fertilizer {
     padding-top: 5px;
     padding-left: 0;
-    border-top: 1px solid #dce8e4;
-    border-left: 0;
   }
 
   .irrigation-auto-alert-list {
@@ -8642,6 +8925,16 @@ td span,
     grid-column: 1 / -1;
   }
 
+  .irrigation-auto-alert-footer {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .irrigation-auto-alert-footer button {
+    flex: 1 0 100%;
+    margin-left: 0;
+  }
+
   .irrigation-registered-head {
     align-items: stretch;
   }
@@ -8662,6 +8955,14 @@ td span,
 
   .irrigation-event-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .irrigation-alert-attention-summary {
+    grid-template-columns: 1fr auto;
+  }
+
+  .irrigation-alert-attention-summary > b {
+    grid-column: 1 / -1;
   }
 }
 

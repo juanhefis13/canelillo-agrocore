@@ -13,8 +13,20 @@ create table if not exists public.riego_eventos (
     tipo_evento in ('matriz', 'terreno', 'bomba', 'energia', 'valvula', 'mantencion', 'otro')
   ),
   descripcion text not null check (char_length(btrim(descripcion)) between 1 and 800),
-  estado text not null default 'activo' check (estado in ('activo', 'resuelto')),
+  estado text not null default 'activo' check (estado in ('activo', 'en_revision', 'resuelto')),
   fecha_resolucion timestamptz,
+  origen text not null default 'manual' check (origen in ('manual', 'wiseconn_riego', 'wiseconn_fertilizante')),
+  alerta_clave text,
+  prioridad text check (prioridad is null or prioridad in ('P1', 'P2', 'P3')),
+  titulo_alerta text,
+  detalle_problema text check (detalle_problema is null or char_length(btrim(detalle_problema)) <= 1600),
+  solucion text check (solucion is null or char_length(btrim(solucion)) <= 1600),
+  porcentaje_diferencia numeric,
+  valor_programado numeric,
+  valor_real numeric,
+  volumen_programado numeric,
+  volumen_real numeric,
+  unidad text,
   creado_por uuid,
   creado_por_nombre text,
   actualizado_por uuid,
@@ -31,6 +43,9 @@ create index if not exists riego_eventos_campo_fecha_idx
 
 create index if not exists riego_eventos_estado_fecha_idx
   on public.riego_eventos (estado, fecha desc);
+
+create unique index if not exists riego_eventos_alerta_clave_uidx
+  on public.riego_eventos (alerta_clave);
 
 create or replace function public.set_riego_evento_actualizado()
 returns trigger
