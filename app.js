@@ -12778,7 +12778,11 @@ function renderIrrigation() {
 
   views.irrigation.innerHTML = `
     <section class="panel irrigation-panel ${irrigationTab === "gantt" ? "irrigation-panel-gantt" : ""} ${irrigationTab === "satellite" ? "irrigation-panel-satellite" : ""}">
-      ${showIrrigationFilterDrawer ? `
+      ${irrigationTab === "gantt" ? `
+      <div class="irrigation-gantt-filter-bar">
+        ${irrigationHeaderControls}
+      </div>
+      ` : showIrrigationFilterDrawer ? `
       <button
         class="irrigation-filter-toggle ${irrigationFiltersOpen ? "is-open" : ""}"
         type="button"
@@ -12843,6 +12847,8 @@ function renderIrrigation() {
             </div>
             <div class="irrigation-total-head">Total</div>
             <div class="irrigation-reposition-head" title="Reposicion programada con bandeja historica promedio">Repos. %</div>
+            <div class="irrigation-program-compare-slot is-head" aria-hidden="true"></div>
+            <div class="irrigation-program-compare-slot is-head" aria-hidden="true"></div>
           </div>
           ${blockGroups.map((group) => `
             <div class="irrigation-potrero-group irrigation-potrero-group-compact">
@@ -12880,6 +12886,8 @@ function renderIrrigation() {
                   </div>
                   <div class="irrigation-total" data-program-total="${block.id}">${number(programTotal)}</div>
                   <div class="irrigation-reposition" data-program-reposition="${block.id}">${irrigationReposicionLabel(programReposition)}</div>
+                  <div class="irrigation-program-compare-slot" aria-hidden="true"></div>
+                  <div class="irrigation-program-compare-slot" aria-hidden="true"></div>
                 </div>
               `;
             }).join("")}

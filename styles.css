@@ -29825,3 +29825,184 @@ body.auth-locked {
     min-height: 180px;
   }
 }
+
+/* Riego v459: filtros siempre visibles y mes completo en escritorio. */
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+  padding-top: 12px !important;
+}
+
+.irrigation-gantt-filter-bar {
+  position: sticky;
+  top: var(--agrocore-sticky-filter-top, 8px);
+  z-index: 34;
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid rgba(23, 105, 170, 0.25);
+  border-radius: 7px;
+  background: #f4f9fc;
+  box-shadow: 0 4px 12px rgba(14, 75, 125, 0.08);
+}
+
+.irrigation-gantt-filter-bar .irrigation-gantt-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 10px;
+  align-items: end;
+  justify-self: stretch !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  position: static !important;
+}
+
+.irrigation-gantt-filter-bar .irrigation-filter-fields {
+  grid-template-columns: 92px minmax(120px, 0.85fr) minmax(135px, 1fr) minmax(160px, 1.15fr);
+}
+
+.irrigation-gantt-filter-bar .irrigation-filter-actions {
+  flex-wrap: nowrap;
+}
+
+.irrigation-program-compare-slot {
+  min-height: max(25px, var(--irrigation-day-size));
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.irrigation-program-compare-slot.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 31;
+}
+
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+    --irrigation-block-col: clamp(238px, 18vw, 300px);
+    --irrigation-total-col: 52px;
+    --irrigation-reposition-col: 60px;
+    --irrigation-diff-hours-col: 60px;
+    --irrigation-diff-reposition-col: 64px;
+    --irrigation-day-gap: 1px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt {
+    overflow-x: hidden;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program .irrigation-row {
+    grid-template-columns:
+      var(--irrigation-block-col)
+      minmax(0, 1fr)
+      var(--irrigation-total-col)
+      var(--irrigation-reposition-col)
+      var(--irrigation-diff-hours-col)
+      var(--irrigation-diff-reposition-col) !important;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding-right: 0;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-days {
+    grid-template-columns: repeat(var(--days), minmax(0, 1fr)) !important;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt :is(
+    .irrigation-date-cell,
+    .irrigation-hour-input,
+    .irrigation-hour-cell,
+    .irrigation-program-cell,
+    .calicata-day-cell
+  ) {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-hour-input,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-hour-cell,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-program-cell {
+    min-height: 30px !important;
+    padding-inline: 1px;
+    font-size: clamp(0.52rem, 0.54vw, 0.66rem);
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell em {
+    font-size: clamp(0.56rem, 0.56vw, 0.68rem);
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell span {
+    font-size: clamp(0.46rem, 0.45vw, 0.55rem);
+  }
+}
+
+@media (max-width: 1320px) and (min-width: 1101px) {
+  .irrigation-gantt-filter-bar .irrigation-gantt-filters {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .irrigation-gantt-filter-bar .irrigation-filter-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 1100px) {
+  .irrigation-gantt-filter-bar .irrigation-gantt-filters {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .irrigation-gantt-filter-bar .irrigation-filter-actions {
+    flex-wrap: wrap;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program .irrigation-row {
+    grid-template-columns:
+      var(--irrigation-block-col)
+      max-content
+      var(--irrigation-total-col)
+      var(--irrigation-reposition-col)
+      var(--irrigation-diff-hours-col)
+      var(--irrigation-diff-reposition-col) !important;
+    padding-right: 0;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program :is(.irrigation-total-head, .irrigation-total) {
+    right: calc(var(--irrigation-diff-reposition-col) + var(--irrigation-diff-hours-col) + var(--irrigation-reposition-col) + (var(--irrigation-gap) * 3)) !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program :is(.irrigation-reposition-head, .irrigation-reposition) {
+    right: calc(var(--irrigation-diff-reposition-col) + var(--irrigation-diff-hours-col) + (var(--irrigation-gap) * 2)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+    padding-top: 8px !important;
+  }
+
+  .irrigation-gantt-filter-bar {
+    margin-bottom: 8px;
+    padding: 8px;
+  }
+
+  .irrigation-gantt-filter-bar .irrigation-filter-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-gantt-filter-bar .irrigation-filter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
