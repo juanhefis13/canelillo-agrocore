@@ -30006,3 +30006,187 @@ body.auth-locked {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Riego v460: ocho bloques visibles y vistas separadas de incidencias. */
+.irrigation-events-head {
+  display: grid;
+  grid-template-columns: auto minmax(320px, 1fr) auto;
+}
+
+.irrigation-events-view-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  justify-self: center;
+  width: min(100%, 520px);
+  padding: 3px;
+  border: 1px solid #b9d4c9;
+  border-radius: 7px;
+  background: #edf5f1;
+}
+
+.irrigation-events-view-switch button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #456158;
+  font-size: 0.69rem;
+  font-weight: 900;
+}
+
+.irrigation-events-view-switch button b {
+  min-width: 22px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #d7e7df;
+  color: #315247;
+  font-size: 0.61rem;
+}
+
+.irrigation-events-view-switch button.is-active {
+  background: #176da4;
+  box-shadow: 0 3px 9px rgba(23, 109, 164, 0.2);
+  color: #ffffff;
+}
+
+.irrigation-events-view-switch button.is-active b {
+  background: #ffffff;
+  color: #155f91;
+}
+
+.irrigation-events-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.irrigation-events-workspace.is-alerts-view .irrigation-alerts-dashboard {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.irrigation-events-workspace.is-alerts-view .irrigation-alert-group {
+  min-height: 0;
+}
+
+.irrigation-events-workspace.is-alerts-view .irrigation-auto-alert-list {
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+}
+
+.irrigation-events-workspace.is-registered-view .irrigation-registered-head {
+  margin-top: 0;
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.irrigation-events-workspace.is-registered-view .irrigation-events-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-real {
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    contain: layout style;
+    scrollbar-gutter: auto;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt {
+    gap: 2px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row {
+    gap: 2px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label {
+    min-height: 30px;
+    padding: 3px 5px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-data,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program .irrigation-block-data {
+    display: block !important;
+    min-width: 0;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-metric {
+    display: flex !important;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 2px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-metric span {
+    padding-inline: 2px;
+    font-size: clamp(0.48rem, 0.48vw, 0.56rem);
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+    height: 18px;
+    min-height: 18px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .irrigation-block-label {
+    padding-block: 1px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row :is(strong, span, button) {
+    font-size: 0.5rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group-compact {
+    min-height: 25px;
+    padding-block: 3px;
+  }
+}
+
+@media (max-width: 900px) {
+  .irrigation-events-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .irrigation-events-view-switch {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    order: 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .irrigation-events-head {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-events-view-switch,
+  .irrigation-events-actions {
+    grid-column: 1;
+  }
+
+  .irrigation-events-view-switch {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-events-workspace.is-alerts-view .irrigation-alerts-dashboard {
+    overflow: visible;
+  }
+
+  .irrigation-events-workspace.is-alerts-view .irrigation-auto-alert-list {
+    max-height: 55dvh;
+  }
+}

@@ -430,6 +430,7 @@ let irrigationEventsCloudAvailable = true;
 let irrigationAlertManagementAvailable = true;
 let irrigationEventStatusFilter = "Todos";
 let irrigationAlertStatusFilter = "abiertas";
+let irrigationEventsView = "alerts";
 let irrigationAutomaticAlertIndex = new Map();
 let irrigationEventsReportContext = { alerts: [], events: [] };
 let irrigationCellPopoverTarget = null;
@@ -3623,6 +3624,14 @@ function irrigationBaseHours(block, fallback = 0) {
 function irrigationBaseHoursLabel(block) {
   const base = Number(block?.baseHours);
   return Number.isFinite(base) && base > 0 ? `${number(base, 1)} h base` : "Sin horas base";
+}
+
+function irrigationBlockTechnicalMetricsHtml(block) {
+  return `<small class="irrigation-block-metric">
+    <span title="Precipitación del bloque">Precip. ${irrigationBandejaLabel(block?.precipitation)}</span>
+    <span title="Caudal teórico del bloque">Caudal ${irrigationBandejaLabel(block?.flow)}</span>
+    <span title="Horas base del bloque">${irrigationBaseHoursLabel(block)}</span>
+  </small>`;
 }
 
 function irrigationBlockSnapshot(block) {
@@ -11913,7 +11922,9 @@ function irrigationFilteredEvents(filteredBlocks, monthPrefix) {
     .filter((item) => String(item.date || "").startsWith(monthPrefix))
     .filter((item) => visibleIds.has(String(item.fieldId)))
     .filter((item) => irrigationEventStatusFilter === "Todos" || item.status === irrigationEventStatusFilter)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || Number(a.status === "resuelto") - Number(b.status === "resuelto") || String(b.createdAt).localeCompare(String(a.createdAt)));
+    .sort((a, b) => String(b.date).localeCompare(String(a.date))
+      || String(b.createdAt || b.updatedAt || "").localeCompare(String(a.createdAt || a.updatedAt || ""))
+      || Number(a.status === "resuelto") - Number(b.status === "resuelto"));
 }
 
 const IRRIGATION_ALERT_STATUS_LABELS = Object.freeze({
@@ -11995,9 +12006,17 @@ function irrigationAttachAlertTracking(groups, filteredBlocks, monthPrefix) {
   });
   const priorityOrder = { P1: 0, P2: 1, P3: 2 };
   const statusOrder = { activo: 0, en_revision: 1, resuelto: 2 };
-  const sortAlerts = (a, b) => (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3)
+  const alertChronology = (item) => {
+    const start = item.startTime || item.tracking?.updatedAt || item.tracking?.createdAt || "";
+    const parsed = new Date(start).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+    const date = String(item.date || "").slice(0, 10);
+    const fallback = new Date(`${date}T00:00:00`).getTime();
+    return Number.isFinite(fallback) ? fallback : 0;
+  };
+  const sortAlerts = (a, b) => alertChronology(b) - alertChronology(a)
+    || (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3)
     || (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3)
-    || String(b.date).localeCompare(String(a.date))
     || comparePotrero(a.block?.potrero, b.block?.potrero)
     || String(a.block?.block || "").localeCompare(String(b.block?.block || ""), "es", { numeric: true });
   groups.irrigation.sort(sortAlerts);
@@ -12247,6 +12266,7 @@ async function exportIrrigationIncidentsExcel(button = null) {
   try {
     const exportNumber = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value) : "";
     const alertRows = alerts.map((item) => ({
+      "_orden_fecha": item.startTime || item.tracking?.updatedAt || item.tracking?.createdAt || `${item.date || ""}T00:00:00`,
       "Origen": item.kind === "fertilizer" ? "WiseConn · Fertilizante" : "WiseConn · Riego",
       "Estado": irrigationAlertStatusLabel(item.status),
       "Prioridad": IRRIGATION_ALERT_PRIORITY_LABELS[item.priority] || item.priority,
@@ -12267,6 +12287,7 @@ async function exportIrrigationIncidentsExcel(button = null) {
       "Fecha cierre": item.tracking?.resolvedAt || ""
     }));
     const eventRows = events.map((item) => ({
+      "_orden_fecha": item.updatedAt || item.createdAt || `${item.date || ""}T00:00:00`,
       "Origen": "Evento externo",
       "Estado": item.status === "resuelto" ? "Resuelto" : item.status === "en_revision" ? "En revisión" : "Activo",
       "Prioridad": item.priority || "",
@@ -12286,7 +12307,9 @@ async function exportIrrigationIncidentsExcel(button = null) {
       "Responsable": item.updatedByName || item.createdByName || "",
       "Fecha cierre": item.resolvedAt || ""
     }));
-    const rows = [...alertRows, ...eventRows].sort((a, b) => String(b.Fecha).localeCompare(String(a.Fecha)) || String(a.Prioridad).localeCompare(String(b.Prioridad)));
+    const rows = [...alertRows, ...eventRows]
+      .sort((a, b) => String(b._orden_fecha).localeCompare(String(a._orden_fecha)) || String(a.Prioridad).localeCompare(String(b.Prioridad)))
+      .map(({ _orden_fecha, ...row }) => row);
     const workbook = window.XLSX.utils.book_new();
     const sheet = window.XLSX.utils.json_to_sheet(rows);
     sheet["!cols"] = [20, 14, 14, 12, 18, 10, 28, 42, 42, 14, 17, 14, 18, 15, 10, 42, 24, 22].map((wch) => ({ wch }));
@@ -12315,48 +12338,24 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
       && String(item.date || "").startsWith(monthPrefix)
       && visibleIds.has(String(item.fieldId)))
   };
-  const affectedBlocks = new Set([
-    ...events.map((item) => String(item.fieldId)),
-    ...allAlerts.map((item) => String(item.block?.id || ""))
-  ].filter(Boolean)).size;
+  const affectedBlocks = new Set(allAlerts.map((item) => String(item.block?.id || "")).filter(Boolean)).size;
   const priorityCounts = allAlerts.reduce((counts, item) => {
     if (item.status === "resuelto") counts.closed += 1;
     else counts[item.priority] = (counts[item.priority] || 0) + 1;
     return counts;
   }, { P1: 0, P2: 0, P3: 0, closed: 0 });
   const canEdit = irrigationEventsCanEdit();
-  return `
-    <section class="irrigation-events-panel">
-      <header class="irrigation-events-head">
-        <div>
-          <span class="irrigation-events-eyebrow">${escapeHtml(monthLabel)} ${escapeHtml(year)}</span>
-          <h2>Eventos y alertas</h2>
-        </div>
-        <div class="irrigation-events-actions">
-          <button class="secondary-button" type="button" data-action="export-irrigation-incidents">Exportar Excel</button>
-          ${canEdit ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento externo</button>' : ""}
-        </div>
-      </header>
-      ${!irrigationEventsCloudAvailable || !irrigationAlertManagementAvailable ? `
-        <div class="irrigation-events-setup" role="status">
-          <strong>Falta actualizar la gestión de alertas en Supabase</strong>
-          <span>Ejecuta <code>supabase_riego_alertas_gestion.sql</code> una vez.</span>
-        </div>` : ""}
-      ${wiseconnSyncState.loading ? `
-        <div class="irrigation-events-loading" role="status" aria-live="polite">
-          <i aria-hidden="true"></i><span>Actualizando alertas desde WiseConn...</span>
-        </div>` : wiseconnSyncState.error ? `
-        <div class="irrigation-events-source-error" role="alert">
-          <strong>No se pudieron actualizar las alertas</strong><span>${escapeHtml(wiseconnSyncState.error)}</span>
-        </div>` : ""}
-      <div class="irrigation-event-kpis" aria-label="Resumen de eventos">
+  const alertsView = irrigationEventsView === "alerts";
+  const alertWorkspace = `
+    <div class="irrigation-events-workspace is-alerts-view">
+      <div class="irrigation-event-kpis" aria-label="Resumen de alertas WiseConn">
         <span class="priority-p1"><small>P1 Críticas</small><strong>${priorityCounts.P1}</strong></span>
         <span class="priority-p2"><small>P2 Altas</small><strong>${priorityCounts.P2}</strong></span>
         <span class="priority-p3"><small>P3 Atención</small><strong>${priorityCounts.P3}</strong></span>
         <span class="is-closed"><small>Alertas cerradas</small><strong>${priorityCounts.closed}</strong></span>
       </div>
       <div class="irrigation-alert-toolbar">
-        <div><strong>Bandeja de alertas</strong><small>${affectedBlocks} bloques con registros en el período.</small></div>
+        <div><strong>Alertas detectadas por WiseConn</strong><small>${affectedBlocks} bloques con alertas en el período, ordenadas desde la más reciente.</small></div>
         <label>Estado
           <select id="irrigationAlertStatusFilter">
             <option value="abiertas" ${irrigationAlertStatusFilter === "abiertas" ? "selected" : ""}>Pendientes y en revisión</option>
@@ -12381,8 +12380,11 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           </div>
         </section>
       </div>
+    </div>`;
+  const registeredWorkspace = `
+    <div class="irrigation-events-workspace is-registered-view">
       <div class="irrigation-registered-head">
-        <div><strong>Eventos registrados</strong><small>Sucesos ingresados manualmente desde terreno.</small></div>
+        <div><strong>Eventos registrados</strong><small>Sucesos ingresados manualmente desde terreno, ordenados por fecha y hora.</small></div>
         <label>Estado
           <select id="irrigationEventStatusFilter">
             <option value="Todos" ${irrigationEventStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
@@ -12420,8 +12422,38 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
                   <button class="danger-button" type="button" data-action="delete-irrigation-event" data-id="${htmlAttr(item.id)}">Eliminar</button>
                 </div>` : ""}
             </article>`;
-        }).join("") || `<div class="empty-state"><strong>Sin eventos para este filtro.</strong><p>Los problemas registrados para el bloque y el mes aparecerán aquí y en la Carta Gantt.</p></div>`}
+        }).join("") || `<div class="empty-state"><strong>Sin eventos registrados para este filtro.</strong><p>Los problemas ingresados desde terreno aparecerán en esta vista.</p></div>`}
       </div>
+    </div>`;
+  return `
+    <section class="irrigation-events-panel ${alertsView ? "is-alerts-view" : "is-registered-view"}">
+      <header class="irrigation-events-head">
+        <div>
+          <span class="irrigation-events-eyebrow">${escapeHtml(monthLabel)} ${escapeHtml(year)}</span>
+          <h2>${alertsView ? "Alertas WiseConn" : "Eventos registrados"}</h2>
+        </div>
+        <div class="irrigation-events-view-switch" role="tablist" aria-label="Tipo de registro">
+          <button type="button" role="tab" aria-selected="${alertsView}" class="${alertsView ? "is-active" : ""}" data-action="set-irrigation-events-view" data-view="alerts">Alertas WiseConn <b>${allAlerts.length}</b></button>
+          <button type="button" role="tab" aria-selected="${!alertsView}" class="${!alertsView ? "is-active" : ""}" data-action="set-irrigation-events-view" data-view="registered">Eventos registrados <b>${events.length}</b></button>
+        </div>
+        <div class="irrigation-events-actions">
+          <button class="secondary-button" type="button" data-action="export-irrigation-incidents">Exportar Excel</button>
+          ${canEdit && !alertsView ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento externo</button>' : ""}
+        </div>
+      </header>
+      ${!irrigationEventsCloudAvailable || !irrigationAlertManagementAvailable ? `
+        <div class="irrigation-events-setup" role="status">
+          <strong>Falta actualizar la gestión de alertas en Supabase</strong>
+          <span>Ejecuta <code>supabase_riego_alertas_gestion.sql</code> una vez.</span>
+        </div>` : ""}
+      ${alertsView && wiseconnSyncState.loading ? `
+        <div class="irrigation-events-loading" role="status" aria-live="polite">
+          <i aria-hidden="true"></i><span>Actualizando alertas desde WiseConn...</span>
+        </div>` : alertsView && wiseconnSyncState.error ? `
+        <div class="irrigation-events-source-error" role="alert">
+          <strong>No se pudieron actualizar las alertas</strong><span>${escapeHtml(wiseconnSyncState.error)}</span>
+        </div>` : ""}
+      ${alertsView ? alertWorkspace : registeredWorkspace}
     </section>`;
 }
 
@@ -12863,19 +12895,13 @@ function renderIrrigation() {
               const programTotal = programMonthTotals.get(block.id) || 0;
               const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
               const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
-              const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
               return `
                 <div class="irrigation-row irrigation-program-row">
                   <div class="irrigation-block-label">
                     <strong>${block.block}</strong>
                     <span>${number(block.hectares)} ha</span>
                     <div class="irrigation-block-data">
-                      <small class="irrigation-crop-variety" title="${htmlAttr(blockCropLabel)}">${escapeHtml(blockCropLabel)}</small>
-                      <small class="irrigation-block-metric">
-                        <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
-                        <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
-                        <span>${irrigationBaseHoursLabel(block)}</span>
-                      </small>
+                      ${irrigationBlockTechnicalMetricsHtml(block)}
                     </div>
                   </div>
                   <div class="irrigation-days irrigation-program-days">
@@ -12933,19 +12959,13 @@ function renderIrrigation() {
           const calicatas = calicataIndex.byBlock.get(calicataKey) || [];
           const calicata = calicataIndex.summaryByBlock.get(calicataKey) || EMPTY_CALICATA_SUMMARY;
           const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
-          const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
           return `
             <div class="irrigation-row">
               <div class="irrigation-block-label">
                 <strong>${block.block}</strong>
                 <span>${number(block.hectares)} ha</span>
                 <div class="irrigation-block-data">
-                  <small class="irrigation-crop-variety" title="${htmlAttr(blockCropLabel)}">${escapeHtml(blockCropLabel)}</small>
-                  <small class="irrigation-block-metric">
-                    <span>Presipitacion ${irrigationBandejaLabel(block.precipitation)}</span>
-                    <span>Caudal ${irrigationBandejaLabel(block.flow)}</span>
-                    <span>${irrigationBaseHoursLabel(block)}</span>
-                  </small>
+                  ${irrigationBlockTechnicalMetricsHtml(block)}
                 </div>
               </div>
               <div class="irrigation-days">
@@ -30188,6 +30208,10 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "export-irrigation-incidents") {
     await exportIrrigationIncidentsExcel(actionTarget);
+  }
+  if (action === "set-irrigation-events-view") {
+    irrigationEventsView = actionTarget.dataset.view === "registered" ? "registered" : "alerts";
+    renderIrrigation();
   }
   if (action === "toggle-irrigation-event-status") {
     await toggleIrrigationEventStatus(id);
