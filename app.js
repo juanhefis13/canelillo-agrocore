@@ -11858,11 +11858,14 @@ function irrigationAutomaticAlertCardHtml(item, kind) {
     : `${Number(item.programmedValue) > 0 ? `${number(item.programmedValue, 2)} h` : "Sin dato"} / ${Number.isFinite(Number(item.realValue)) ? `${number(item.realValue, 2)} h` : "Sin dato"}`;
   return `
     <article class="irrigation-auto-alert-card ${isFertilizer ? "is-fertilizer" : "is-irrigation"} ${item.severity === "critical" ? "is-critical" : ""}">
-      <div class="irrigation-auto-alert-marker" aria-hidden="true">${isFertilizer ? "F" : "!"}</div>
+      <div class="irrigation-auto-alert-sector">
+        <strong>${escapeHtml(potreroLabel(item.block?.potrero))}</strong>
+        <b>Bloque ${escapeHtml(item.block?.block || "-")}</b>
+      </div>
       <div class="irrigation-auto-alert-content">
-        <header>
-          <span>${escapeHtml(irrigationEventDateLabel(item.date))}</span>
-          <strong>${escapeHtml(potreroLabel(item.block?.potrero))} · B${escapeHtml(item.block?.block || "-")}</strong>
+        <header class="irrigation-auto-alert-head">
+          <span class="irrigation-auto-alert-marker" aria-hidden="true">${isFertilizer ? "F" : "!"}</span>
+          <time datetime="${htmlAttr(String(item.date || "").slice(0, 10))}">${escapeHtml(irrigationEventDateLabel(item.date))}</time>
         </header>
         <h4>${escapeHtml(item.type)}</h4>
         ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}

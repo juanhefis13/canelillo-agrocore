@@ -8149,6 +8149,7 @@ td span,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  flex: 0 0 auto;
   min-height: 0;
 }
 
@@ -8234,8 +8235,8 @@ td span,
   display: grid;
   align-content: start;
   gap: 5px;
-  max-height: 220px;
-  min-height: 70px;
+  max-height: clamp(300px, 38dvh, 420px);
+  min-height: 110px;
   padding: 6px;
   overflow: auto;
   overscroll-behavior: contain;
@@ -8243,8 +8244,8 @@ td span,
 
 .irrigation-auto-alert-card {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: minmax(104px, 128px) minmax(0, 1fr);
+  gap: 9px;
   min-width: 0;
   padding: 7px;
   border: 1px solid #ecc1bc;
@@ -8271,25 +8272,46 @@ td span,
   font-weight: 950;
 }
 
+.irrigation-auto-alert-sector {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+  padding: 5px 9px 5px 4px;
+  border-right: 1px solid #e6c2bd;
+  line-height: 1.08;
+}
+
+.irrigation-auto-alert-sector strong {
+  overflow-wrap: anywhere;
+  color: #123e32;
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.irrigation-auto-alert-sector b {
+  color: #a5271e;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
 .irrigation-auto-alert-content {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.irrigation-auto-alert-content > header {
+.irrigation-auto-alert-head {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
   color: #64786f;
-  font-size: 0.56rem;
   font-weight: 800;
 }
 
-.irrigation-auto-alert-content > header strong {
-  overflow-wrap: anywhere;
-  color: #263f36;
-  text-align: right;
+.irrigation-auto-alert-head time {
+  font-size: 0.58rem;
+  line-height: 1.2;
 }
 
 .irrigation-auto-alert-content h4,
@@ -8371,7 +8393,8 @@ td span,
   align-items: end;
   justify-content: space-between;
   gap: 10px;
-  padding-top: 2px;
+  margin-top: 18px;
+  padding-top: 9px;
   border-top: 1px solid #d9e6e1;
 }
 
@@ -8592,7 +8615,23 @@ td span,
   }
 
   .irrigation-auto-alert-list {
-    max-height: 260px;
+    max-height: 340px;
+  }
+
+  .irrigation-auto-alert-card {
+    grid-template-columns: minmax(92px, 112px) minmax(0, 1fr);
+  }
+
+  .irrigation-auto-alert-sector {
+    padding-right: 7px;
+  }
+
+  .irrigation-auto-alert-sector strong {
+    font-size: 0.84rem;
+  }
+
+  .irrigation-auto-alert-sector b {
+    font-size: 0.74rem;
   }
 
   .irrigation-auto-alert-metrics {
