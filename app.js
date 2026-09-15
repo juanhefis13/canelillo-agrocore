@@ -436,7 +436,6 @@ let irrigationCellPopoverTarget = null;
 let irrigationCellPopoverHideTimer = null;
 let irrigationAuditsPruned = false;
 let irrigationGanttResizeObserver = null;
-let expandedCalicataKeys = new Set();
 let irrigationSaveTimers = new Map();
 let irrigationCloudAvailable = true;
 let irrigationProgramSaveTimers = new Map();
@@ -2709,6 +2708,9 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
     const theoreticalFlow = Number(irrigation.theoreticalFlowM3H);
     const programmedHours = Number.isFinite(fullHours) && fullHours > 0 ? fullHours : null;
     scheduledById.set(Number(irrigation.id), {
+      id: Number(irrigation.id),
+      initTime: irrigation.initTime,
+      endTime: irrigation.endTime,
       hours: programmedHours,
       volumeM3: Number.isFinite(volumeM3) && volumeM3 > 0 ? volumeM3 : null,
       flowM3H: Number.isFinite(theoreticalFlow) && theoreticalFlow > 0 ? theoreticalFlow : null,
@@ -2766,6 +2768,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
         scheduledIds: new Set(),
         statuses: new Set(),
         fertigations: [],
+        events: [],
         fieldId: mapping.fieldId,
         date: part.date,
         zoneName: mapping.zoneName
@@ -2787,6 +2790,16 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
       }
       if (event.status) bucket.statuses.add(event.status);
       bucket.fertigations.push(event.fertigations);
+      bucket.events.push({
+        id: event.id,
+        initTime: event.initTime,
+        endTime: event.endTime,
+        volumeM3: part.volume,
+        durationHours: part.durationHours,
+        flowM3H: measuredFlow,
+        scheduledIrrigationId: event.scheduledIrrigationId,
+        fertigations: normalizeWiseconnFertigations(event.fertigations)
+      });
       buckets.set(key, bucket);
     });
   });
@@ -2816,6 +2829,18 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
       .filter((value) => Number.isFinite(value) && value > 0);
     const actualFertigations = mergeWiseconnFertigations(bucket.fertigations);
     const scheduledFertigations = mergeWiseconnFertigations(linkedScheduled.map((item) => item.fertigations));
+    const eventDetails = bucket.events
+      .map((event) => {
+        const scheduled = scheduledById.get(Number(event.scheduledIrrigationId)) || null;
+        const calculatedHours = hasFlow ? Number(event.volumeM3) / flow : null;
+        return {
+          ...event,
+          calculatedHours,
+          programmedHours: Number(scheduled?.hours) > 0 ? Number(scheduled.hours) : null,
+          programmedVolumeM3: Number(scheduled?.volumeM3) > 0 ? Number(scheduled.volumeM3) : null
+        };
+      })
+      .sort((a, b) => String(a.initTime || "").localeCompare(String(b.initTime || "")));
     meta.set(key, {
       volumeM3: bucket.volumeM3,
       flowM3H: hasFlow ? flow : null,
@@ -2833,6 +2858,7 @@ function rebuildWiseconnIrrigationHours(monthPrefix = "", options = {}) {
       fertigations: actualFertigations,
       scheduledFertigations,
       eventCount: bucket.eventIds.size,
+      eventDetails,
       statuses: [...bucket.statuses],
       zoneName: bucket.zoneName,
       missingFlow: !hasFlow
@@ -3304,12 +3330,12 @@ function wiseconnDailyBalance(sourceInfo, realValue) {
     realHours,
     hours,
     percent: Math.abs(percent) < 0.05 ? 0 : percent,
-    className: hours < 0 ? "is-under" : hours > 0 ? "is-over" : "is-complete"
+    className: Math.abs(percent) <= 5 ? "is-complete" : hours < 0 ? "is-under" : "is-over"
   };
 }
 
 function wiseconnHydraulicDiagnostic(percent) {
-  if (!Number.isFinite(percent) || Math.abs(percent) < 0.05) return null;
+  if (!Number.isFinite(percent) || Math.abs(percent) <= 5) return null;
   if (percent <= -99.5) {
     return {
       title: "Riego sin entrega de agua",
@@ -3416,6 +3442,58 @@ function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
       </div>
     </article>` : "";
   return `<div class="irrigation-wiseconn-alerts">${hydraulicCard}${fipCard}</div>`;
+}
+
+function wiseconnTimeLabel(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return new Intl.DateTimeFormat("es-CL", {
+    timeZone: WISECONN_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(parsed);
+}
+
+function irrigationHoursDifferenceLabel(value) {
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) return "-";
+  const normalized = Math.abs(hours) < 0.005 ? 0 : hours;
+  return `${normalized > 0 ? "+" : ""}${number(normalized, 2)} h`;
+}
+
+function irrigationWiseconnRunsHtml(sourceInfo) {
+  const runs = Array.isArray(sourceInfo?.meta?.eventDetails) ? sourceInfo.meta.eventDetails : [];
+  if (!runs.length) return "";
+  return `<section class="irrigation-wiseconn-runs">
+    <header><strong>${runs.length === 1 ? "Detalle del riego" : `${runs.length} riegos en el día`}</strong><small>El total diario corresponde a la suma de todos los riegos.</small></header>
+    <div class="irrigation-wiseconn-runs-track">
+      ${runs.map((run, index) => {
+        const calculatedHours = Number(run.calculatedHours);
+        const programmedHours = Number(run.programmedHours);
+        const differenceHours = Number.isFinite(calculatedHours) && Number.isFinite(programmedHours) && programmedHours > 0
+          ? calculatedHours - programmedHours
+          : null;
+        const differencePercent = Number.isFinite(differenceHours) && programmedHours > 0
+          ? (differenceHours / programmedHours) * 100
+          : null;
+        const differenceClass = !Number.isFinite(differencePercent) || Math.abs(differencePercent) <= 5
+          ? "is-complete"
+          : differencePercent < 0 ? "is-under" : "is-over";
+        return `<article class="irrigation-wiseconn-run-card">
+          <div><strong>Riego ${index + 1}</strong><span>${wiseconnTimeLabel(run.initTime)} - ${wiseconnTimeLabel(run.endTime)}</span></div>
+          <dl>
+            <div><dt>Inicio</dt><dd>${wiseconnTimeLabel(run.initTime)}</dd></div>
+            <div><dt>Volumen</dt><dd>${number(run.volumeM3, 2)} m3</dd></div>
+            <div><dt>Caudal real</dt><dd>${Number(run.flowM3H) > 0 ? `${number(run.flowM3H, 2)} m3/h` : "Sin dato"}</dd></div>
+            <div><dt>Horas calculadas</dt><dd>${Number.isFinite(calculatedHours) ? `${number(calculatedHours, 2)} h` : "Sin dato"}</dd></div>
+            <div><dt>Horas programadas</dt><dd>${programmedHours > 0 ? `${number(programmedHours, 2)} h` : "Sin dato"}</dd></div>
+            <div class="${differenceClass}"><dt>Diferencia</dt><dd>${irrigationHoursDifferenceLabel(differenceHours)}</dd></div>
+          </dl>
+        </article>`;
+      }).join("")}
+    </div>
+  </section>`;
 }
 
 function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) {
@@ -4030,6 +4108,10 @@ function irrigationCellPopoverHtml(context, block) {
   const differenceClass = diagnostics.balance.className;
   const hasWiseconnProgram = Number.isFinite(wiseconnProgrammedHours) && wiseconnProgrammedHours > 0;
   const hasAgrocoreProgram = context.kind === "real" && Number.isFinite(agrocoreProgrammedHours) && agrocoreProgrammedHours > 0;
+  const wiseconnRuns = Array.isArray(sourceInfo.meta?.eventDetails) ? sourceInfo.meta.eventDetails : [];
+  const irrigationStartLabel = wiseconnRuns.length
+    ? [...new Set(wiseconnRuns.map((item) => wiseconnTimeLabel(item.initTime)).filter((item) => item !== "-"))].join(" / ")
+    : "";
   const hoursDifferenceLabel = hoursDifference === null
     ? "Sin programación WiseConn"
     : `${hoursDifference > 0 ? "+" : ""}${number(hoursDifference, 2)} h`;
@@ -4049,7 +4131,7 @@ function irrigationCellPopoverHtml(context, block) {
       <strong>${escapeHtml(potreroLabel(block.potrero))} · Bloque ${escapeHtml(block.block)}</strong>
     </div>
     <div class="irrigation-cell-popover-metrics">
-      <span><small>Fecha</small><strong>${escapeHtml(irrigationEventDateLabel(context.date))}</strong></span>
+      <span><small>Fecha${irrigationStartLabel ? " e inicio" : ""}</small><strong>${escapeHtml(irrigationEventDateLabel(context.date))}${irrigationStartLabel ? ` · ${escapeHtml(irrigationStartLabel)}` : ""}</strong></span>
       <span><small>${context.kind === "program" ? "Horas" : "Horas calculadas"}</small><strong>${value === "" || value === undefined ? "-" : `${escapeHtml(value)} h`}</strong></span>
     </div>
     ${sourceInfo.source === "wiseconn" ? `<div class="irrigation-cell-popover-wiseconn ${sourceInfo.adjusted ? "is-adjusted" : ""}">
@@ -4059,7 +4141,6 @@ function irrigationCellPopoverHtml(context, block) {
         <span><small>Volumen programado (día)</small><b>${Number(sourceInfo.meta?.scheduledVolumeM3) > 0 ? `${number(sourceInfo.meta.scheduledVolumeM3, 2)} m3` : "Sin dato"}</b></span>
         <span><small>Caudal medido</small><b>${Number(sourceInfo.meta?.measuredFlowM3H) > 0 ? `${number(sourceInfo.meta.measuredFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
         <span><small>Caudal teórico AgroCore</small><b>${number(sourceInfo.meta?.flowM3H, 2)} m3/h</b></span>
-        <span><small>Caudal programado WiseConn</small><b>${Number(sourceInfo.meta?.scheduledFlowM3H) > 0 ? `${number(sourceInfo.meta.scheduledFlowM3H, 2)} m3/h` : "Sin dato"}</b></span>
         <span><small>Horas calculadas</small><b>${number(sourceInfo.meta?.hours, 2)} h</b></span>
         <span><small>Duración registrada</small><b>${Number(sourceInfo.meta?.durationHours) > 0 ? `${number(sourceInfo.meta.durationHours, 2)} h` : "Sin dato"}</b></span>
         <span><small>Programado WiseConn (día)</small><b>${hasWiseconnProgram ? `${number(wiseconnProgrammedHours, 2)} h` : "Sin programación asociada"}</b></span>
@@ -4069,6 +4150,7 @@ function irrigationCellPopoverHtml(context, block) {
       </div>
       <small>${number(sourceInfo.meta?.eventCount, 0)} evento${sourceInfo.meta?.eventCount === 1 ? "" : "s"} · Fecha según inicio del riego</small>
     </div>` : sourceInfo.source === "manual" ? '<div class="irrigation-cell-popover-wiseconn is-manual"><strong>Ajuste manual</strong><small>Este valor reemplaza el cálculo de WiseConn para el día.</small></div>' : ""}
+    ${sourceInfo.source === "wiseconn" ? irrigationWiseconnRunsHtml(sourceInfo) : ""}
     ${irrigationWiseconnDiagnosticCardsHtml(diagnostics)}
     ${events.length ? `<div class="irrigation-cell-popover-events">
       ${events.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b aria-hidden="true">!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
@@ -4106,7 +4188,7 @@ function showIrrigationCellPopover(input, context, block) {
   popover.setAttribute("aria-hidden", "false");
   const rect = input.getBoundingClientRect();
   const viewportPadding = 12;
-  const width = Math.min(470, window.innerWidth - (viewportPadding * 2));
+  const width = Math.min(760, window.innerWidth - (viewportPadding * 2));
   popover.style.width = `${width}px`;
   const measuredHeight = popover.offsetHeight || 180;
   const horizontalGap = 18;
@@ -4425,17 +4507,6 @@ function calicataSummary(calicatas) {
   return { count: active.length, depth20, depth40, depth60, depth80, general };
 }
 
-function calicataDepthCell(calicatas, field) {
-  const value = calicataDepthAverage(calicatas.filter((item) => !item.empty).map((item) => item[field]));
-  return value === null ? "" : number(value);
-}
-
-function calicataTextCell(calicatas, field) {
-  const values = [...new Set(calicatas.map((item) => String(item[field] || "").trim()).filter(Boolean))];
-  if (!values.length) return "";
-  return values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0];
-}
-
 const EMPTY_CALICATA_SUMMARY = Object.freeze({
   count: 0,
   depth20: null,
@@ -4444,15 +4515,6 @@ const EMPTY_CALICATA_SUMMARY = Object.freeze({
   depth80: null,
   general: null
 });
-
-const IRRIGATION_CALICATA_DETAIL_ROWS = [
-  ["20 cm", "depth20", "depth"],
-  ["40 cm", "depth40", "depth"],
-  ["60 cm", "depth60", "depth"],
-  ["80 cm", "depth80", "depth"],
-  ["Trab.", "workerName", "text"],
-  ["Obs.", "observation", "text"]
-];
 
 function irrigationCalicataDayKey(blockKey, date) {
   return `${blockKey}__${date}`;
@@ -4477,45 +4539,6 @@ function buildIrrigationGanttCalicataIndex(blocks, monthPrefix) {
   const summaryByBlock = new Map([...byBlock.entries()].map(([key, rows]) => [key, calicataSummary(rows)]));
   const summaryByDay = new Map([...byDay.entries()].map(([key, rows]) => [key, calicataSummary(rows)]));
   return { byBlock, byDay, summaryByBlock, summaryByDay };
-}
-
-function renderIrrigationProgramCalicataDetailRows(calicataKey, monthDates, dayClassMap) {
-  return IRRIGATION_CALICATA_DETAIL_ROWS.map(([label]) => `
-    <div class="irrigation-row calicata-detail-row irrigation-program-spacer-row" data-calicata-detail="${htmlAttr(calicataKey)}">
-      <div class="irrigation-block-label calicata-label">
-        <strong>${label}</strong>
-      </div>
-      ${relatedEvents.length ? `<div class="irrigation-observation-event-summary">
-        ${relatedEvents.map((item) => `<span class="${item.status === "activo" ? "is-active" : "is-resolved"}"><b>!</b><span><strong>${escapeHtml(irrigationEventTypeLabel(item.type))}</strong><small>${escapeHtml(item.description)}</small></span></span>`).join("")}
-      </div>` : ""}
-      <div class="irrigation-days calicata-detail-days">
-        ${monthDates.map((date) => `<span class="calicata-detail-cell ${dayClassMap.get(date) || ""}"></span>`).join("")}
-      </div>
-      <div class="irrigation-total calicata-label"></div>
-      <div class="irrigation-reposition calicata-label"></div>
-    </div>
-  `).join("");
-}
-
-function renderIrrigationRealCalicataDetailRows(calicataKey, monthDates, dayClassMap, calicataIndex) {
-  return IRRIGATION_CALICATA_DETAIL_ROWS.map(([label, field, type]) => `
-    <div class="irrigation-row calicata-detail-row" data-calicata-detail="${htmlAttr(calicataKey)}">
-      <div class="irrigation-block-label calicata-label">
-        <strong>${label}</strong>
-      </div>
-      <div class="irrigation-days calicata-detail-days">
-        ${monthDates.map((date) => {
-          const dayCalicatas = calicataIndex.byDay.get(irrigationCalicataDayKey(calicataKey, date)) || [];
-          const value = type === "depth" ? calicataDepthCell(dayCalicatas, field) : calicataTextCell(dayCalicatas, field);
-          return `<span class="calicata-detail-cell ${dayClassMap.get(date) || ""} ${value ? "has-calicata" : ""}" title="${htmlAttr(value || "")}">${escapeHtml(value)}</span>`;
-        }).join("")}
-      </div>
-      <div class="irrigation-total calicata-label"></div>
-      <div class="irrigation-reposition calicata-label"></div>
-      <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
-      <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
-    </div>
-  `).join("");
 }
 
 function calicataMonthMatches(item, monthPrefix) {
@@ -4547,6 +4570,90 @@ function calicataDepthList(item) {
     ["60", item.depth60],
     ["80", item.depth80]
   ].map(([depth, value]) => `${depth}: ${calicataDepthLabel(value)}`).join(" / ");
+}
+
+function calicataDateTimeLabel(value) {
+  if (!value) return "Sin fecha informada";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat("es-CL", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
+function openIrrigationCalicataDetail(calicataKey, date = "") {
+  const dialog = document.getElementById("irrigationCalicataDetailDialog");
+  if (!dialog) return;
+  const records = (state.calicatas || [])
+    .filter((item) => calicataBlockKey(item.potrero, item.block) === calicataKey)
+    .filter((item) => !date || calicataDate(item) === date)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  if (!records.length) {
+    showToast("No hay mediciones de calicata para este bloque");
+    return;
+  }
+  const reference = records[0];
+  const summary = calicataSummary(records);
+  const dateTitle = date
+    ? new Date(`${date}T12:00:00`).toLocaleDateString("es-CL", { day: "2-digit", month: "long", year: "numeric" })
+    : "Historial del bloque";
+  dialog.innerHTML = `
+    <div class="modal-body irrigation-calicata-detail-shell">
+      <div class="dialog-header irrigation-calicata-detail-head">
+        <div>
+          <span class="irrigation-calicata-detail-kicker">Calicata de riego</span>
+          <h3>${escapeHtml(potreroLabel(reference.potrero))} · Bloque ${escapeHtml(reference.block || "-")}</h3>
+          <p>${escapeHtml(dateTitle)} · ${records.length} medicion${records.length === 1 ? "" : "es"}</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" title="Cerrar" aria-label="Cerrar">x</button>
+      </div>
+      <div class="irrigation-calicata-summary-strip">
+        <span><small>Promedio general</small><strong>${summary.general === null ? "Sin lectura" : number(summary.general)}</strong></span>
+        <span><small>Registros</small><strong>${records.length}</strong></span>
+        <span><small>Última medición</small><strong>${escapeHtml(calicataDate(reference) || "-")}</strong></span>
+      </div>
+      <div class="irrigation-calicata-record-list">
+        ${records.map((item, index) => {
+          const averageValue = calicataAverageValue(item);
+          const coordinates = Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
+            ? `${Number(item.latitude).toFixed(6)}, ${Number(item.longitude).toFixed(6)}`
+            : "Sin ubicación registrada";
+          return `<article class="irrigation-calicata-record">
+            <div class="irrigation-calicata-record-photo">
+              ${item.photoUrl
+                ? `<img src="${htmlAttr(item.photoUrl)}" alt="Fotografía de calicata ${index + 1}" loading="lazy">`
+                : `<div class="irrigation-calicata-photo-empty"><span>Sin fotografía</span><small>El registro no incluye imagen</small></div>`}
+            </div>
+            <div class="irrigation-calicata-record-content">
+              <div class="irrigation-calicata-record-meta">
+                <span><small>Fecha y hora</small><strong>${escapeHtml(calicataDateTimeLabel(item.createdAt))}</strong></span>
+                <span><small>Realizada por</small><strong>${escapeHtml(item.workerName || "Sin responsable informado")}</strong></span>
+                <span><small>Promedio</small><strong style="${htmlAttr(calicataColorStyle(averageValue))}">${averageValue === null ? "-" : number(averageValue)}</strong></span>
+              </div>
+              <div class="irrigation-calicata-depth-grid" aria-label="Mediciones por profundidad">
+                ${[["20 cm", item.depth20], ["40 cm", item.depth40], ["60 cm", item.depth60], ["80 cm", item.depth80]].map(([label, value]) => {
+                  const numeric = calicataDepthNumber(value);
+                  return `<span class="${numeric === null ? "is-empty" : ""}"${numeric === null ? "" : ` style="${htmlAttr(calicataColorStyle(numeric))}"`}><small>${label}</small><strong>${numeric === null ? "Sin lectura" : number(numeric)}</strong></span>`;
+                }).join("")}
+              </div>
+              <div class="irrigation-calicata-record-notes">
+                <span><small>Observación</small><strong>${escapeHtml(item.observation || (item.empty ? "Calicata registrada sin lectura" : "Sin observaciones"))}</strong></span>
+                <span><small>Ubicación</small><strong>${escapeHtml(coordinates)}</strong></span>
+              </div>
+            </div>
+          </article>`;
+        }).join("")}
+      </div>
+      <div class="dialog-actions">
+        <button class="primary-button" type="button" data-action="close-dialog">Cerrar detalle</button>
+      </div>
+    </div>`;
+  if (dialog.open) dialog.close();
+  dialog.showModal();
 }
 
 function irrigationStationLabel(value) {
@@ -4882,11 +4989,12 @@ function updateIrrigationComparisonCells(
   const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
   const realReposition = irrigationReposicion(realTotal, block.precipitation, monthEvaporationTotal);
   const hoursDiff = irrigationDifferencePercent(realTotal, programTotal);
+  const hoursDifference = realTotal - programTotal;
   const repositionDiff = irrigationDifferencePercent(realReposition, programReposition);
   const hoursCell = views.irrigation?.querySelector(`[data-block-hours-diff="${CSS.escape(blockId)}"]`);
   const repositionCell = views.irrigation?.querySelector(`[data-block-reposition-diff="${CSS.escape(blockId)}"]`);
   if (hoursCell) {
-    hoursCell.textContent = irrigationDifferenceLabel(hoursDiff);
+    hoursCell.textContent = irrigationHoursDifferenceLabel(hoursDifference);
     hoursCell.className = `irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}`;
     hoursCell.title = `Horas reales ${number(realTotal)} vs programa ${number(programTotal)}`;
   }
@@ -11907,12 +12015,14 @@ function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
       const sourceInfo = irrigationRealSourceInfo(block.id, date);
       if (sourceInfo.source !== "wiseconn") continue;
       const diagnostics = irrigationWiseconnDiagnostics(block.id, date, sourceInfo, irrigationRealHoursValue(block.id, date));
+      const firstRun = Array.isArray(sourceInfo.meta?.eventDetails) ? sourceInfo.meta.eventDetails[0] : null;
       if (diagnostics.hydraulic) {
         irrigation.push({
           id: `riego-${block.id}-${date}`,
           alertKey: `riego-${block.id}-${date}`,
           kind: "irrigation",
           date,
+          startTime: firstRun?.initTime || "",
           block,
           type: diagnostics.hydraulic.title,
           description: diagnostics.hydraulic.description,
@@ -11934,6 +12044,7 @@ function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
           alertKey: `fip-${block.id}-${date}-${comparison.tankId}`,
           kind: "fertilizer",
           date,
+          startTime: firstRun?.initTime || "",
           block,
           type: !comparison.actual
             ? "FIP sin ejecución real"
@@ -11976,7 +12087,7 @@ function irrigationAutomaticAlertCardHtml(item, kind) {
       <div class="irrigation-auto-alert-content">
         <header class="irrigation-auto-alert-head">
           <span class="irrigation-auto-alert-marker" aria-hidden="true">${isFertilizer ? "F" : "!"}</span>
-          <time datetime="${htmlAttr(String(item.date || "").slice(0, 10))}">${escapeHtml(irrigationEventDateLabel(item.date))}</time>
+          <time datetime="${htmlAttr(item.startTime || String(item.date || "").slice(0, 10))}">${escapeHtml(irrigationEventDateLabel(item.date))}${item.startTime ? ` · ${escapeHtml(wiseconnTimeLabel(item.startTime))}` : ""}</time>
           <span class="irrigation-alert-priority">${escapeHtml(IRRIGATION_ALERT_PRIORITY_LABELS[priority] || priority)}</span>
         </header>
         <h4>${escapeHtml(item.type)}</h4>
@@ -12139,7 +12250,7 @@ async function exportIrrigationIncidentsExcel(button = null) {
       "Origen": item.kind === "fertilizer" ? "WiseConn · Fertilizante" : "WiseConn · Riego",
       "Estado": irrigationAlertStatusLabel(item.status),
       "Prioridad": IRRIGATION_ALERT_PRIORITY_LABELS[item.priority] || item.priority,
-      "Fecha": item.date,
+      "Fecha y hora inicio": item.startTime ? `${item.date} ${wiseconnTimeLabel(item.startTime)}` : item.date,
       "Potrero": potreroLabel(item.block?.potrero),
       "Bloque": item.block?.block || "",
       "Problema": item.type,
@@ -12530,7 +12641,7 @@ function setIrrigationFiltersOpen(open) {
     toggle.classList.toggle("is-open", irrigationFiltersOpen);
     toggle.setAttribute("aria-expanded", String(irrigationFiltersOpen));
     toggle.setAttribute("title", irrigationFiltersOpen ? "Ocultar filtros" : "Mostrar filtros");
-    toggle.innerHTML = irrigationFiltersOpen ? "&#8250;" : "&#8249;";
+    toggle.innerHTML = irrigationFiltersOpen ? "&#9650;" : "&#9660;";
   }
 }
 
@@ -12553,9 +12664,16 @@ function renderIrrigation() {
   const varieties = ["Todas", ...new Set(speciesScoped.map((block) => block.variety || "Sin variedad").filter(Boolean))]
     .sort((a, b) => a === "Todas" ? -1 : b === "Todas" ? 1 : a.localeCompare(b, "es", { numeric: true }));
   if (irrigationVarietyFilter !== "Todas" && !varieties.includes(irrigationVarietyFilter)) irrigationVarietyFilter = "Todas";
-  const varietyScoped = speciesScoped.filter((block) => irrigationVarietyFilter === "Todas" || (block.variety || "Sin variedad") === irrigationVarietyFilter);
-  const potreros = ["Todos", ...new Set(varietyScoped.map((block) => block.potrero).filter(Boolean))].sort((a, b) => a === "Todos" ? -1 : b === "Todos" ? 1 : comparePotrero(a, b));
-  if (irrigationPotreroFilter !== "Todos" && !potreros.includes(irrigationPotreroFilter)) irrigationPotreroFilter = "Todos";
+  const varietyScoped = irrigationTab === "gantt"
+    ? speciesScoped
+    : speciesScoped.filter((block) => irrigationVarietyFilter === "Todas" || (block.variety || "Sin variedad") === irrigationVarietyFilter);
+  const potreroValues = [...new Set(varietyScoped.map((block) => block.potrero).filter(Boolean))].sort(comparePotrero);
+  const potreros = irrigationTab === "gantt" ? potreroValues : ["Todos", ...potreroValues];
+  if (irrigationTab === "gantt") {
+    if (!potreroValues.includes(irrigationPotreroFilter)) irrigationPotreroFilter = potreroValues[0] || "";
+  } else if (irrigationPotreroFilter !== "Todos" && !potreroValues.includes(irrigationPotreroFilter)) {
+    irrigationPotreroFilter = "Todos";
+  }
   const filteredBlocks = varietyScoped
     .filter((block) => irrigationPotreroFilter === "Todos" || block.potrero === irrigationPotreroFilter)
     .sort(blockSort);
@@ -12614,7 +12732,30 @@ function renderIrrigation() {
         <select id="irrigationBandejaMonthJump">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
       </label>
       <button class="secondary-button" type="button" data-action="focus-current-irrigation-bandeja">Hoy</button>
-    </div>` : `<div class="irrigation-bandeja-analysis-drawer-note"><strong>Comparación histórica</strong><span>Los años se seleccionan dentro de Gráficos y tablas.</span></div>`) : `
+    </div>` : `<div class="irrigation-bandeja-analysis-drawer-note"><strong>Comparación histórica</strong><span>Los años se seleccionan dentro de Gráficos y tablas.</span></div>`) : irrigationTab === "gantt" ? `
+    <div class="program-filters irrigation-filters irrigation-gantt-filters">
+      <div class="irrigation-filter-fields">
+        <label>Año
+          <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
+        </label>
+        <label>Mes
+          <select id="irrigationMonthFilter">${monthOptions().map((month) => `<option value="${month.value}" ${month.value === irrigationMonth ? "selected" : ""}>${month.label}</option>`).join("")}</select>
+        </label>
+        <label>Especie
+          <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
+        </label>
+        <label>Potrero
+          <select id="irrigationPotreroFilter" ${potreros.length ? "" : "disabled"}>${potreros.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationPotreroFilter ? "selected" : ""}>${escapeHtml(potreroLabel(item))}</option>`).join("")}</select>
+        </label>
+      </div>
+      <div class="irrigation-filter-actions">
+        <button class="secondary-button" type="button" data-action="open-irrigation-base-hours-dialog">Horas base</button>
+        <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
+        <button class="secondary-button irrigation-wiseconn-refresh" type="button" data-action="refresh-wiseconn-irrigation" ${wiseconnSyncState.loading ? "disabled" : ""}>${wiseconnSyncState.loading ? "Actualizando..." : "Actualizar WiseConn"}</button>
+        <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observación</button>
+        <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>
+      </div>
+    </div>` : `
     <div class="program-filters irrigation-filters">
       <label>Especie
         <select id="irrigationSpeciesFilter">${species.map((item) => `<option value="${htmlAttr(item)}" ${item === irrigationSpeciesFilter ? "selected" : ""}>${item}</option>`).join("")}</select>
@@ -12631,20 +12772,13 @@ function renderIrrigation() {
       <label>Ano
         <input id="irrigationYearFilter" type="number" min="2020" max="2100" step="1" value="${irrigationYear}">
       </label>
-      ${irrigationTab === "gantt" ? `
-        <button class="secondary-button" type="button" data-action="open-irrigation-base-hours-dialog">Horas base</button>
-        <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>` : ""}
       ${["gantt", "events"].includes(irrigationTab) ? `
         <button class="secondary-button irrigation-wiseconn-refresh" type="button" data-action="refresh-wiseconn-irrigation" ${wiseconnSyncState.loading ? "disabled" : ""}>${wiseconnSyncState.loading ? "Actualizando..." : "Actualizar WiseConn"}</button>` : ""}
-      ${irrigationTab === "gantt" ? `
-        <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>
-        <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>` : ""}
     </div>`;
 
   views.irrigation.innerHTML = `
     <section class="panel irrigation-panel ${irrigationTab === "gantt" ? "irrigation-panel-gantt" : ""} ${irrigationTab === "satellite" ? "irrigation-panel-satellite" : ""}">
       ${showIrrigationFilterDrawer ? `
-      ${irrigationTab === "gantt" ? `<button class="irrigation-current-species" type="button" data-action="toggle-irrigation-filters" title="Cambiar especie"><span>Especie</span><strong>${escapeHtml(irrigationSpeciesFilter)}</strong></button>` : ""}
       <button
         class="irrigation-filter-toggle ${irrigationFiltersOpen ? "is-open" : ""}"
         type="button"
@@ -12652,7 +12786,7 @@ function renderIrrigation() {
         aria-controls="irrigationFilterDrawer"
         aria-expanded="${irrigationFiltersOpen}"
         title="${irrigationFiltersOpen ? "Ocultar filtros" : "Mostrar filtros"}"
-      >${irrigationFiltersOpen ? "&#8250;" : "&#8249;"}</button>
+      >${irrigationFiltersOpen ? "&#9650;" : "&#9660;"}</button>
       <aside
         id="irrigationFilterDrawer"
         class="irrigation-filter-drawer ${irrigationFiltersOpen ? "is-open" : ""}"
@@ -12722,8 +12856,6 @@ function renderIrrigation() {
               });
               const programTotal = programMonthTotals.get(block.id) || 0;
               const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
-              const calicataKey = calicataBlockKey(block.potrero, block.block);
-              const expanded = expandedCalicataKeys.has(calicataKey);
               const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
               const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
               return `
@@ -12749,21 +12881,6 @@ function renderIrrigation() {
                   <div class="irrigation-total" data-program-total="${block.id}">${number(programTotal)}</div>
                   <div class="irrigation-reposition" data-program-reposition="${block.id}">${irrigationReposicionLabel(programReposition)}</div>
                 </div>
-                <div class="irrigation-row calicata-row irrigation-program-spacer-row">
-                  <div class="irrigation-block-label calicata-label">
-                    <strong>Calicatas</strong>
-                    <span>Referencia real</span>
-                  </div>
-                  <div class="irrigation-days calicata-days">
-                    ${Array.from({ length: daysInMonth }, (_, index) => {
-                      const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
-                      return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""}"></span>`;
-                    }).join("")}
-                  </div>
-                  <div class="irrigation-total calicata-label"></div>
-                  <div class="irrigation-reposition calicata-label"></div>
-                </div>
-                ${expanded ? renderIrrigationProgramCalicataDetailRows(calicataKey, monthDates, dayClassMap) : ""}
               `;
             }).join("")}
           `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
@@ -12788,7 +12905,7 @@ function renderIrrigation() {
           </div>
           <div class="irrigation-total-head">Total</div>
           <div class="irrigation-reposition-head" title="((Total horas bloque x precipitacion bloque) / suma bandeja mensual) x 100">Repos. %</div>
-          <div class="irrigation-difference-head irrigation-difference-hours" title="(Horas reales - horas programa) / horas programa">Dif. hrs</div>
+          <div class="irrigation-difference-head irrigation-difference-hours" title="Horas reales menos horas programadas">Dif. hrs</div>
           <div class="irrigation-difference-head irrigation-difference-reposition" title="(Reposicion real - reposicion programa) / reposicion programa">Dif. repos.</div>
         </div>
         ${blockGroups.map((group) => `
@@ -12802,11 +12919,11 @@ function renderIrrigation() {
           const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
           const reposition = irrigationReposicion(blockTotal, block.precipitation, monthEvaporationTotal);
           const hoursDiff = irrigationDifferencePercent(blockTotal, programTotal);
+          const hoursDifference = blockTotal - programTotal;
           const repositionDiff = irrigationDifferencePercent(reposition, programReposition);
           const calicataKey = calicataBlockKey(block.potrero, block.block);
           const calicatas = calicataIndex.byBlock.get(calicataKey) || [];
           const calicata = calicataIndex.summaryByBlock.get(calicataKey) || EMPTY_CALICATA_SUMMARY;
-          const expanded = expandedCalicataKeys.has(calicataKey);
           const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
           const blockCropLabel = `${block.crop || "-"}${block.variety ? ` - ${block.variety}` : ""}`;
           return `
@@ -12834,7 +12951,7 @@ function renderIrrigation() {
               </div>
               <div class="irrigation-total" data-block-total="${block.id}">${number(blockTotal)}</div>
               <div class="irrigation-reposition" data-block-reposition="${block.id}" title="Precipitacion ${irrigationBandejaLabel(block.precipitation)} / Bandeja mes ${irrigationBandejaLabel(monthEvaporationTotal)}">${irrigationReposicionLabel(reposition)}</div>
-              <div class="irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}" data-block-hours-diff="${block.id}" title="Horas reales ${number(blockTotal)} vs programa ${number(programTotal)}">${irrigationDifferenceLabel(hoursDiff)}</div>
+              <div class="irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}" data-block-hours-diff="${block.id}" title="Horas reales ${number(blockTotal)} vs programa ${number(programTotal)}">${irrigationHoursDifferenceLabel(hoursDifference)}</div>
               <div class="irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}" data-block-reposition-diff="${block.id}" title="Reposicion real ${irrigationReposicionLabel(reposition)} vs programa ${irrigationReposicionLabel(programReposition)}">${irrigationDifferenceLabel(repositionDiff)}</div>
             </div>
             <div class="irrigation-row calicata-row">
@@ -12851,15 +12968,16 @@ function renderIrrigation() {
                   const daySummary = calicataIndex.summaryByDay.get(dayKey) || EMPTY_CALICATA_SUMMARY;
                   const label = daySummary.general === null ? dayCalicatas.length : number(daySummary.general);
                   const style = daySummary.general === null ? "" : ` style="${htmlAttr(calicataColorStyle(daySummary.general))}"`;
-                  return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""} has-calicata"${style} title="${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</span>`;
+                  return `<button class="calicata-day-cell ${dayClassMap.get(date) || ""} has-calicata" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" data-date="${date}"${style} title="Ver ${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</button>`;
                 }).join("")}
               </div>
-              <button class="icon-button calicata-toggle" type="button" data-action="toggle-calicatas" data-key="${htmlAttr(calicataKey)}" aria-expanded="${expanded}" title="${expanded ? "Ocultar calicatas" : "Ver calicatas"}">${expanded ? "^" : "v"}</button>
+              <div class="irrigation-total calicata-label">
+                ${calicatas.length ? `<button class="calicata-detail-trigger" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" title="Ver historial de calicatas">Ver ${calicatas.length}</button>` : `<span class="calicata-no-records">Sin datos</span>`}
+              </div>
               <div class="irrigation-reposition calicata-label"></div>
               <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
               <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
             </div>
-            ${expanded ? renderIrrigationRealCalicataDetailRows(calicataKey, monthDates, dayClassMap, calicataIndex) : ""}
           `;
           }).join("")}
         `).join("") || `<div class="empty-state"><strong>No hay bloques para el filtro seleccionado.</strong><p>Revisa especie, potrero o la tabla public.campos.</p></div>`}
@@ -13192,67 +13310,6 @@ function syncIrrigationGanttScroll() {
   };
   program.addEventListener("scroll", () => applySync(program, real), { passive: true });
   real.addEventListener("scroll", () => applySync(real, program), { passive: true });
-}
-
-function irrigationGanttScrollSnapshot() {
-  const program = views.irrigation?.querySelector(".irrigation-gantt-program");
-  const real = views.irrigation?.querySelector(".irrigation-gantt-real");
-  const ratio = (element) => {
-    if (!element) return 0;
-    const max = Math.max(0, element.scrollHeight - element.clientHeight);
-    return max ? element.scrollTop / max : 0;
-  };
-  return {
-    programLeft: program?.scrollLeft || 0,
-    programTop: program?.scrollTop || 0,
-    programRatio: ratio(program),
-    realLeft: real?.scrollLeft || 0,
-    realTop: real?.scrollTop || 0,
-    realRatio: ratio(real)
-  };
-}
-
-function irrigationGanttAnchorSnapshot(target) {
-  const element = target?.closest?.(".irrigation-gantt");
-  if (!target || !element) return null;
-  const targetRect = target.getBoundingClientRect();
-  const elementRect = element.getBoundingClientRect();
-  return {
-    selector: `[data-action="toggle-calicatas"][data-key="${CSS.escape(target.dataset.key || "")}"]`,
-    ganttClass: element.classList.contains("irrigation-gantt-program") ? "irrigation-gantt-program" : "irrigation-gantt-real",
-    offsetTop: targetRect.top - elementRect.top,
-    scrollTop: element.scrollTop,
-    scrollLeft: element.scrollLeft
-  };
-}
-
-function restoreIrrigationGanttAnchor(snapshot) {
-  if (!snapshot) return;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const element = views.irrigation?.querySelector(`.${snapshot.ganttClass}`);
-    const target = element?.querySelector(snapshot.selector);
-    if (!element || !target) return;
-    element.scrollLeft = snapshot.scrollLeft || 0;
-    const elementRect = element.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    element.scrollTop += (targetRect.top - elementRect.top) - snapshot.offsetTop;
-  }));
-}
-
-function restoreIrrigationGanttScroll(snapshot) {
-  if (!snapshot) return;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const program = views.irrigation?.querySelector(".irrigation-gantt-program");
-    const real = views.irrigation?.querySelector(".irrigation-gantt-real");
-    const apply = (element, left, top, ratio) => {
-      if (!element) return;
-      const max = Math.max(0, element.scrollHeight - element.clientHeight);
-      element.scrollLeft = left || 0;
-      element.scrollTop = Number.isFinite(top) ? Math.min(top, max) : max * (ratio || 0);
-    };
-    apply(program, snapshot.programLeft, snapshot.programTop, snapshot.programRatio);
-    apply(real, snapshot.realLeft, snapshot.realTop, snapshot.realRatio);
-  }));
 }
 
 function normalizeFertilizerTankRow(row, canonical = null) {
@@ -30317,18 +30374,9 @@ document.addEventListener("click", async (event) => {
     irrigationBandejaFocusPending = true;
     renderIrrigation();
   }
-  if (action === "toggle-calicatas") {
+  if (action === "open-irrigation-calicata-detail") {
     event.preventDefault();
-    const key = actionTarget.dataset.key;
-    const scrollState = irrigationGanttScrollSnapshot();
-    const anchorState = irrigationGanttAnchorSnapshot(actionTarget);
-    const expanded = !expandedCalicataKeys.has(key);
-    if (expanded) expandedCalicataKeys.add(key);
-    else expandedCalicataKeys.delete(key);
-    actionTarget.blur?.();
-    renderIrrigation();
-    restoreIrrigationGanttScroll(scrollState);
-    restoreIrrigationGanttAnchor(anchorState);
+    openIrrigationCalicataDetail(actionTarget.dataset.key || "", actionTarget.dataset.date || "");
     return;
   }
   if (action === "focus-calicata") {

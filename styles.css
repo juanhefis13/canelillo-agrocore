@@ -29356,3 +29356,472 @@ body.auth-locked {
     transition: none !important;
   }
 }
+
+/* Riego v458: filtros superiores, Gantt ampliada y calicatas en detalle modal. */
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+  --irrigation-block-col: clamp(370px, 25vw, 470px);
+  --irrigation-day-size: clamp(30px, 1.8vw, 36px);
+  --irrigation-total-col: clamp(58px, 3.8vw, 70px);
+  --irrigation-reposition-col: clamp(70px, 4.5vw, 84px);
+  --irrigation-diff-hours-col: clamp(68px, 4.3vw, 80px);
+  --irrigation-diff-reposition-col: clamp(70px, 4.6vw, 84px);
+  box-sizing: border-box;
+  padding-top: 34px !important;
+}
+
+.irrigation-panel-gantt .irrigation-filter-toggle {
+  top: 0;
+  left: 50%;
+  right: auto;
+  width: 64px;
+  min-width: 64px;
+  height: 30px;
+  border: 1px solid #ffffff;
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: #1769aa;
+  box-shadow: 0 5px 15px rgba(14, 75, 125, 0.28);
+  color: #ffffff;
+  font-size: 1.15rem;
+  transform: translateX(-50%);
+}
+
+.irrigation-panel-gantt .irrigation-filter-toggle:hover,
+.irrigation-panel-gantt .irrigation-filter-toggle:focus-visible {
+  background: #0f4f86;
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -4px;
+}
+
+.irrigation-panel-gantt .irrigation-filter-toggle.is-open {
+  transform: translateX(-50%);
+}
+
+.irrigation-panel-gantt .irrigation-filter-drawer {
+  top: 30px;
+  left: 50%;
+  right: auto;
+  width: min(980px, calc(100% - 20px));
+  max-height: min(260px, calc(100svh - 76px));
+  border-color: rgba(23, 105, 170, 0.34);
+  border-radius: 0 0 8px 8px;
+  transform: translate3d(-50%, -10px, 0);
+}
+
+.irrigation-panel-gantt .irrigation-filter-drawer.is-open {
+  transform: translate3d(-50%, 0, 0);
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.irrigation-gantt-filters .irrigation-filter-fields {
+  display: grid;
+  grid-template-columns: 104px minmax(150px, 1fr) minmax(150px, 1fr) minmax(180px, 1.25fr);
+  gap: 8px;
+}
+
+.irrigation-gantt-filters .irrigation-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.irrigation-gantt-filters .irrigation-filter-actions button {
+  min-height: 34px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-hour-input,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-program-cell {
+  min-height: var(--irrigation-day-size) !important;
+  font-size: 0.72rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell em {
+  font-size: 0.7rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-date-cell span {
+  font-size: 0.61rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label {
+  min-height: 40px;
+  padding: 5px 7px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label > strong {
+  font-size: 0.9rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-crop-variety {
+  font-size: 0.68rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-metric span {
+  font-size: 0.57rem;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+  height: 30px;
+  min-height: 30px;
+}
+
+.calicata-day-cell:is(button) {
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.calicata-day-cell:is(button):hover,
+.calicata-day-cell:is(button):focus-visible {
+  z-index: 2;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--calicata-color, #1769aa) 30%, transparent);
+  outline: 2px solid var(--calicata-color, #1769aa);
+  outline-offset: 1px;
+}
+
+.calicata-detail-trigger {
+  width: 100%;
+  min-height: 22px;
+  padding: 3px 5px;
+  border: 1px solid #8db9d8;
+  border-radius: 5px;
+  background: #eaf4fb;
+  color: #155f96;
+  cursor: pointer;
+  font: 900 0.62rem/1 inherit;
+}
+
+.calicata-no-records {
+  color: #7a8b85;
+  font-size: 0.58rem;
+}
+
+.irrigation-calicata-detail-modal {
+  width: min(1040px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  border-radius: 8px;
+}
+
+.irrigation-calicata-detail-shell {
+  gap: 12px;
+  padding: 18px;
+}
+
+.irrigation-calicata-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.irrigation-calicata-detail-head h3,
+.irrigation-calicata-detail-head p {
+  margin: 0;
+}
+
+.irrigation-calicata-detail-head h3 {
+  color: #123d62;
+  font-size: 1.2rem;
+}
+
+.irrigation-calicata-detail-head p {
+  margin-top: 3px;
+  color: #60746b;
+  font-size: 0.78rem;
+}
+
+.irrigation-calicata-detail-kicker {
+  color: #1769aa;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.irrigation-calicata-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.irrigation-calicata-summary-strip > span,
+.irrigation-calicata-record-meta > span,
+.irrigation-calicata-record-notes > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #d5e3de;
+  border-radius: 6px;
+  background: #f7faf9;
+}
+
+.irrigation-calicata-summary-strip small,
+.irrigation-calicata-record small,
+.irrigation-calicata-record-notes small {
+  color: #61776f;
+  font-size: 0.63rem;
+  font-weight: 800;
+}
+
+.irrigation-calicata-summary-strip strong {
+  color: #123d62;
+  font-size: 0.9rem;
+}
+
+.irrigation-calicata-record-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(620px, calc(100dvh - 230px));
+  overflow: auto;
+  padding-right: 3px;
+  scrollbar-gutter: stable;
+}
+
+.irrigation-calicata-record {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1.6fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #bed5cc;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.irrigation-calicata-record-photo {
+  min-height: 210px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #eaf0ed;
+}
+
+.irrigation-calicata-record-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 330px;
+  object-fit: contain;
+  background: #edf2f0;
+}
+
+.irrigation-calicata-photo-empty {
+  display: grid;
+  height: 100%;
+  min-height: 210px;
+  place-content: center;
+  gap: 3px;
+  color: #61776f;
+  text-align: center;
+}
+
+.irrigation-calicata-record-content,
+.irrigation-calicata-record-meta,
+.irrigation-calicata-record-notes {
+  display: grid;
+  gap: 8px;
+}
+
+.irrigation-calicata-record-meta {
+  grid-template-columns: 1.1fr 1fr 90px;
+}
+
+.irrigation-calicata-record-meta strong,
+.irrigation-calicata-record-notes strong {
+  color: #183f33;
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.irrigation-calicata-record-meta > span:last-child strong {
+  border-left: 4px solid var(--calicata-color, #94a3b8);
+  padding-left: 7px;
+  color: var(--calicata-color, #334155);
+}
+
+.irrigation-calicata-depth-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.irrigation-calicata-depth-grid > span {
+  display: grid;
+  gap: 3px;
+  min-height: 62px;
+  align-content: center;
+  padding: 8px;
+  border: 1px solid var(--calicata-border, #cbd5e1);
+  border-left: 5px solid var(--calicata-color, #94a3b8);
+  border-radius: 6px;
+  background: var(--calicata-bg, #f8fafc);
+}
+
+.irrigation-calicata-depth-grid > span strong {
+  color: var(--calicata-color, #334155);
+  font-size: 0.9rem;
+}
+
+.irrigation-calicata-depth-grid > span.is-empty {
+  border-left-color: #94a3b8;
+  background: #f5f7f8;
+}
+
+.irrigation-calicata-depth-grid > span.is-empty strong {
+  color: #718078;
+  font-size: 0.7rem;
+}
+
+.irrigation-calicata-record-notes {
+  grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.8fr);
+}
+
+.irrigation-cell-popover {
+  max-width: calc(100vw - 24px);
+}
+
+.irrigation-wiseconn-runs {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.irrigation-wiseconn-runs > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.irrigation-wiseconn-runs > header strong {
+  color: #123d62;
+  font-size: 0.7rem;
+}
+
+.irrigation-wiseconn-runs-track {
+  display: grid;
+  grid-auto-columns: minmax(235px, 1fr);
+  grid-auto-flow: column;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 5px;
+  scrollbar-width: thin;
+}
+
+.irrigation-wiseconn-run-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #b7dbea;
+  border-top: 4px solid #3182a8;
+  border-radius: 6px;
+  background: #f4fafc;
+}
+
+.irrigation-wiseconn-run-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #174f69;
+  font-size: 0.68rem;
+}
+
+.irrigation-wiseconn-run-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+}
+
+.irrigation-wiseconn-run-card dl > div {
+  display: grid;
+  gap: 1px;
+  padding: 5px;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.irrigation-wiseconn-run-card dt {
+  color: #61776f;
+  font-size: 0.54rem;
+  font-weight: 800;
+}
+
+.irrigation-wiseconn-run-card dd {
+  margin: 0;
+  color: #153f54;
+  font-size: 0.65rem;
+  font-weight: 900;
+}
+
+.irrigation-wiseconn-run-card .is-under { background: #fff0ed; }
+.irrigation-wiseconn-run-card .is-over { background: #eaf7fb; }
+.irrigation-wiseconn-run-card .is-complete { background: #eef9f3; }
+
+@media (min-width: 1500px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+    --irrigation-block-col: clamp(430px, 26vw, 540px);
+    --irrigation-day-size: clamp(34px, 2vw, 42px);
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+    --irrigation-block-col: clamp(250px, 72vw, 310px);
+    --irrigation-day-size: 26px;
+    padding-top: 38px !important;
+  }
+
+  .irrigation-panel-gantt .irrigation-filter-toggle {
+    position: fixed;
+    top: 108px;
+    left: 50%;
+    right: auto;
+    width: 70px;
+    height: 34px;
+  }
+
+  .irrigation-panel-gantt .irrigation-filter-drawer {
+    position: fixed;
+    top: 142px;
+    left: 50%;
+    right: auto;
+    width: calc(100vw - 18px);
+    max-height: min(72svh, 520px);
+  }
+
+  .irrigation-gantt-filters .irrigation-filter-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-gantt-filters .irrigation-filter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-calicata-summary-strip,
+  .irrigation-calicata-record,
+  .irrigation-calicata-record-meta,
+  .irrigation-calicata-record-notes {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-calicata-depth-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .irrigation-calicata-record-photo,
+  .irrigation-calicata-photo-empty {
+    min-height: 180px;
+  }
+}
