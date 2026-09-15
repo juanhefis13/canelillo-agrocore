@@ -30190,3 +30190,92 @@ body.auth-locked {
     max-height: 55dvh;
   }
 }
+
+/* Riego v461: el programa ocupa menos alto y las calicatas permanecen visibles. */
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-compare-wrap {
+    grid-template-rows: auto minmax(0, 0.78fr) auto minmax(0, 1.22fr);
+  }
+}
+
+@media (min-width: 1101px) and (max-height: 850px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-compare-wrap {
+    gap: 2px;
+    grid-template-rows: auto minmax(0, 0.76fr) auto minmax(0, 1.24fr);
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-section-title {
+    min-height: 18px;
+    padding: 1px 5px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt {
+    gap: 1px;
+    padding-bottom: 1px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row {
+    gap: 1px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt :is(
+    .irrigation-date-cell,
+    .irrigation-hour-input,
+    .irrigation-hour-cell,
+    .irrigation-program-cell,
+    .irrigation-block-head,
+    .irrigation-block-label,
+    .irrigation-total-head,
+    .irrigation-total,
+    .irrigation-reposition-head,
+    .irrigation-reposition,
+    .irrigation-difference-head,
+    .irrigation-difference,
+    .irrigation-program-compare-slot
+  ) {
+    height: 20px;
+    min-height: 20px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label {
+    padding: 1px 4px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label > strong {
+    font-size: 0.64rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label > span {
+    font-size: 0.5rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-metric span {
+    padding: 0 2px;
+    font-size: 0.45rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group-compact {
+    min-height: 15px;
+    padding: 1px 5px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group-compact :is(strong, span) {
+    font-size: 0.5rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+    height: 12px;
+    min-height: 12px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .irrigation-block-label {
+    padding: 0 4px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row :is(strong, span, button) {
+    font-size: 0.42rem;
+    line-height: 1;
+  }
+}

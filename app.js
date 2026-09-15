@@ -4767,16 +4767,32 @@ function irrigationDifferenceClass(value) {
   return "is-even";
 }
 
-function irrigationBlockMonthTotal(source, blockId, monthPrefix, daysInMonth) {
-  return Array.from({ length: daysInMonth }, (_, index) => {
+function irrigationComparisonCutoffDay(monthPrefix, daysInMonth) {
+  const currentDate = todayChileIso();
+  const currentMonth = currentDate.slice(0, 7);
+  if (monthPrefix < currentMonth) return daysInMonth;
+  if (monthPrefix > currentMonth) return 0;
+  return Math.min(daysInMonth, Math.max(1, Number(currentDate.slice(8, 10)) || 1));
+}
+
+function irrigationComparisonDateLabel(monthPrefix, cutoffDay) {
+  if (!cutoffDay) return "sin fecha ejecutada";
+  const [year, month] = String(monthPrefix).split("-");
+  return `${String(cutoffDay).padStart(2, "0")}-${month}-${year}`;
+}
+
+function irrigationBlockMonthTotal(source, blockId, monthPrefix, daysInMonth, lastDay = daysInMonth) {
+  const dayLimit = Math.min(daysInMonth, Math.max(0, Number(lastDay) || 0));
+  return Array.from({ length: dayLimit }, (_, index) => {
     const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
     return Number(source[irrigationKey(blockId, date)]) || 0;
   }).reduce((sum, value) => sum + value, 0);
 }
 
-function irrigationMonthTotals(source, blocks, monthPrefix, daysInMonth) {
+function irrigationMonthTotals(source, blocks, monthPrefix, daysInMonth, lastDay = daysInMonth) {
   const blockIds = new Set((blocks || []).map((block) => block.id));
   const prefix = `${monthPrefix}-`;
+  const dayLimit = Math.min(daysInMonth, Math.max(0, Number(lastDay) || 0));
   const totals = new Map([...blockIds].map((blockId) => [blockId, 0]));
   Object.entries(source || {}).forEach(([key, value]) => {
     const separator = key.indexOf("__");
@@ -4785,7 +4801,7 @@ function irrigationMonthTotals(source, blocks, monthPrefix, daysInMonth) {
     const date = key.slice(separator + 2);
     if (!blockIds.has(blockId) || !date.startsWith(prefix)) return;
     const day = Number(date.slice(8, 10));
-    if (!Number.isInteger(day) || day < 1 || day > daysInMonth) return;
+    if (!Number.isInteger(day) || day < 1 || day > dayLimit) return;
     totals.set(blockId, (totals.get(blockId) || 0) + (Number(value) || 0));
   });
   return totals;
@@ -4981,20 +4997,22 @@ function irrigationVolumeLabel(value) {
 function updateIrrigationComparisonCells(
   blockId,
   daysInMonth,
-  monthPrefix,
-  historicalEvaporationTotal,
-  monthEvaporationTotal,
-  knownProgramTotal = null,
-  knownRealTotal = null
+  monthPrefix
 ) {
   const block = state.blocks.find((item) => item.id === blockId);
   if (!block) return;
-  const programTotal = Number.isFinite(knownProgramTotal)
-    ? knownProgramTotal
-    : irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth);
-  const realTotal = Number.isFinite(knownRealTotal)
-    ? knownRealTotal
-    : irrigationBlockMonthTotal(irrigationRealHoursSource(), blockId, monthPrefix, daysInMonth);
+  const cutoffDay = irrigationComparisonCutoffDay(monthPrefix, daysInMonth);
+  const comparisonDate = irrigationComparisonDateLabel(monthPrefix, cutoffDay);
+  const programTotal = irrigationBlockMonthTotal(irrigationProgramHours, blockId, monthPrefix, daysInMonth, cutoffDay);
+  const realTotal = irrigationBlockMonthTotal(irrigationRealHoursSource(), blockId, monthPrefix, daysInMonth, cutoffDay);
+  const historicalMap = historicalEvaporationByMonthDay(monthPrefix.slice(5, 7));
+  const historicalEvaporationTotal = Array.from({ length: cutoffDay }, (_, index) => Number(historicalMap.get(String(index + 1).padStart(2, "0"))) || 0)
+    .reduce((sum, value) => sum + value, 0);
+  const evaporationMap = evaporationByDateMap(irrigationEvaporationRowsForMonth(monthPrefix));
+  const monthEvaporationTotal = Array.from({ length: cutoffDay }, (_, index) => {
+    const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return Number(evaporationMap.get(date)?.evaporation) || 0;
+  }).reduce((sum, value) => sum + value, 0);
   const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
   const realReposition = irrigationReposicion(realTotal, block.precipitation, monthEvaporationTotal);
   const hoursDiff = irrigationDifferencePercent(realTotal, programTotal);
@@ -5005,12 +5023,12 @@ function updateIrrigationComparisonCells(
   if (hoursCell) {
     hoursCell.textContent = irrigationHoursDifferenceLabel(hoursDifference);
     hoursCell.className = `irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}`;
-    hoursCell.title = `Horas reales ${number(realTotal)} vs programa ${number(programTotal)}`;
+    hoursCell.title = `Acumulado al ${comparisonDate}: horas reales ${number(realTotal)} vs programa ${number(programTotal)}`;
   }
   if (repositionCell) {
     repositionCell.textContent = irrigationDifferenceLabel(repositionDiff);
     repositionCell.className = `irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}`;
-    repositionCell.title = `Reposicion real ${irrigationReposicionLabel(realReposition)} vs programa ${irrigationReposicionLabel(programReposition)}`;
+    repositionCell.title = `Acumulado al ${comparisonDate}: reposicion real ${irrigationReposicionLabel(realReposition)} vs programa ${irrigationReposicionLabel(programReposition)}`;
   }
 }
 
@@ -5184,7 +5202,7 @@ function applyAutomaticIrrigationProgram({ blocks, daysInMonth, monthPrefix, his
         if (hadValue) scheduleIrrigationProgramCellSave(block.id, date, "");
       }
     }
-    updateIrrigationComparisonCells(block.id, daysInMonth, monthPrefix, historicalEvaporationTotal, monthEvaporationTotal);
+    updateIrrigationComparisonCells(block.id, daysInMonth, monthPrefix);
   });
   saveIrrigationProgramHours();
   saveIrrigationProgramAudit();
@@ -12714,6 +12732,8 @@ function renderIrrigation() {
   const monthLabel = monthOptions().find((item) => item.value === irrigationMonth)?.label || irrigationMonth;
   const monthPrefix = `${irrigationYear}-${irrigationMonth}`;
   const monthDates = irrigationMonthDates(monthPrefix, daysInMonth);
+  const comparisonCutoffDay = irrigationComparisonCutoffDay(monthPrefix, daysInMonth);
+  const comparisonDateLabel = irrigationComparisonDateLabel(monthPrefix, comparisonCutoffDay);
   const dayClassMap = new Map(monthDates.map((date) => [date, irrigationDayClass(date)]));
   ensureIrrigationEvaporationData(monthPrefix, daysInMonth);
   const stationRows = irrigationStationBandejaRows(monthPrefix);
@@ -12728,11 +12748,19 @@ function renderIrrigation() {
     const day = String(index + 1).padStart(2, "0");
     return Number(historicalEvaporationMap.get(day)) || 0;
   }).reduce((sum, value) => sum + value, 0);
+  const historicalComparisonEvaporationTotal = Array.from({ length: comparisonCutoffDay }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return Number(historicalEvaporationMap.get(day)) || 0;
+  }).reduce((sum, value) => sum + value, 0);
   const bandejaHistoricalEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
     const day = String(index + 1).padStart(2, "0");
     return Number(bandejaHistoricalEvaporationMap.get(day)) || 0;
   }).reduce((sum, value) => sum + value, 0);
   const monthEvaporationTotal = Array.from({ length: daysInMonth }, (_, index) => {
+    const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
+    return Number(evaporationMap.get(date)?.evaporation) || 0;
+  }).reduce((sum, value) => sum + value, 0);
+  const monthComparisonEvaporationTotal = Array.from({ length: comparisonCutoffDay }, (_, index) => {
     const date = `${monthPrefix}-${String(index + 1).padStart(2, "0")}`;
     return Number(evaporationMap.get(date)?.evaporation) || 0;
   }).reduce((sum, value) => sum + value, 0);
@@ -12750,6 +12778,8 @@ function renderIrrigation() {
   const programMonthTotals = irrigationMonthTotals(irrigationProgramHours, filteredBlocks, monthPrefix, daysInMonth);
   const realHoursSource = irrigationRealHoursSource();
   const realMonthTotals = irrigationMonthTotals(realHoursSource, filteredBlocks, monthPrefix, daysInMonth);
+  const programComparisonTotals = irrigationMonthTotals(irrigationProgramHours, filteredBlocks, monthPrefix, daysInMonth, comparisonCutoffDay);
+  const realComparisonTotals = irrigationMonthTotals(realHoursSource, filteredBlocks, monthPrefix, daysInMonth, comparisonCutoffDay);
   const bandejaRows = irrigationBandejaRows(monthPrefix, daysInMonth, bandejaEvaporationMap, bandejaHistoricalEvaporationMap);
   const balanceBlockRows = irrigationBalanceBlockRows(filteredBlocks, monthPrefix, daysInMonth);
   const showIrrigationFilterDrawer = irrigationTab !== "satellite";
@@ -12858,7 +12888,7 @@ function renderIrrigation() {
         year: irrigationYear
       }) : `
       ${renderIrrigationProgramTool(filteredBlocks, monthLabel)}
-      <div class="irrigation-compare-wrap">
+      <div class="irrigation-compare-wrap" style="--irrigation-visible-blocks:${Math.max(1, filteredBlocks.length)}">
         <div class="irrigation-section-title">
           <strong>Programa</strong>
           <span>Bandeja historica promedio ${monthLabel.toLowerCase()} · total ${irrigationBandejaLabel(historicalEvaporationTotal)}</span>
@@ -12939,8 +12969,8 @@ function renderIrrigation() {
           </div>
           <div class="irrigation-total-head">Total</div>
           <div class="irrigation-reposition-head" title="((Total horas bloque x precipitacion bloque) / suma bandeja mensual) x 100">Repos. %</div>
-          <div class="irrigation-difference-head irrigation-difference-hours" title="Horas reales menos horas programadas">Dif. hrs</div>
-          <div class="irrigation-difference-head irrigation-difference-reposition" title="(Reposicion real - reposicion programa) / reposicion programa">Dif. repos.</div>
+          <div class="irrigation-difference-head irrigation-difference-hours" title="Acumulado al ${htmlAttr(comparisonDateLabel)}: horas reales menos horas programadas">Dif. hrs</div>
+          <div class="irrigation-difference-head irrigation-difference-reposition" title="Acumulado al ${htmlAttr(comparisonDateLabel)}: reposición real frente al programa">Dif. repos.</div>
         </div>
         ${blockGroups.map((group) => `
           <div class="irrigation-potrero-group irrigation-potrero-group-compact">
@@ -12950,11 +12980,14 @@ function renderIrrigation() {
           ${group.blocks.map((block) => {
           const blockTotal = realMonthTotals.get(block.id) || 0;
           const programTotal = programMonthTotals.get(block.id) || 0;
-          const programReposition = irrigationReposicion(programTotal, block.precipitation, historicalEvaporationTotal);
+          const comparisonProgramTotal = programComparisonTotals.get(block.id) || 0;
+          const comparisonRealTotal = realComparisonTotals.get(block.id) || 0;
+          const programReposition = irrigationReposicion(comparisonProgramTotal, block.precipitation, historicalComparisonEvaporationTotal);
           const reposition = irrigationReposicion(blockTotal, block.precipitation, monthEvaporationTotal);
-          const hoursDiff = irrigationDifferencePercent(blockTotal, programTotal);
-          const hoursDifference = blockTotal - programTotal;
-          const repositionDiff = irrigationDifferencePercent(reposition, programReposition);
+          const comparisonRealReposition = irrigationReposicion(comparisonRealTotal, block.precipitation, monthComparisonEvaporationTotal);
+          const hoursDiff = irrigationDifferencePercent(comparisonRealTotal, comparisonProgramTotal);
+          const hoursDifference = comparisonRealTotal - comparisonProgramTotal;
+          const repositionDiff = irrigationDifferencePercent(comparisonRealReposition, programReposition);
           const calicataKey = calicataBlockKey(block.potrero, block.block);
           const calicatas = calicataIndex.byBlock.get(calicataKey) || [];
           const calicata = calicataIndex.summaryByBlock.get(calicataKey) || EMPTY_CALICATA_SUMMARY;
@@ -12979,8 +13012,8 @@ function renderIrrigation() {
               </div>
               <div class="irrigation-total" data-block-total="${block.id}">${number(blockTotal)}</div>
               <div class="irrigation-reposition" data-block-reposition="${block.id}" title="Precipitacion ${irrigationBandejaLabel(block.precipitation)} / Bandeja mes ${irrigationBandejaLabel(monthEvaporationTotal)}">${irrigationReposicionLabel(reposition)}</div>
-              <div class="irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}" data-block-hours-diff="${block.id}" title="Horas reales ${number(blockTotal)} vs programa ${number(programTotal)}">${irrigationHoursDifferenceLabel(hoursDifference)}</div>
-              <div class="irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}" data-block-reposition-diff="${block.id}" title="Reposicion real ${irrigationReposicionLabel(reposition)} vs programa ${irrigationReposicionLabel(programReposition)}">${irrigationDifferenceLabel(repositionDiff)}</div>
+              <div class="irrigation-difference irrigation-difference-hours ${irrigationDifferenceClass(hoursDiff)}" data-block-hours-diff="${block.id}" title="Acumulado al ${htmlAttr(comparisonDateLabel)}: horas reales ${number(comparisonRealTotal)} vs programa ${number(comparisonProgramTotal)}">${irrigationHoursDifferenceLabel(hoursDifference)}</div>
+              <div class="irrigation-difference irrigation-difference-reposition ${irrigationDifferenceClass(repositionDiff)}" data-block-reposition-diff="${block.id}" title="Acumulado al ${htmlAttr(comparisonDateLabel)}: reposición real ${irrigationReposicionLabel(comparisonRealReposition)} vs programa ${irrigationReposicionLabel(programReposition)}">${irrigationDifferenceLabel(repositionDiff)}</div>
             </div>
             <div class="irrigation-row calicata-row">
               <div class="irrigation-block-label calicata-label">
@@ -13179,11 +13212,7 @@ function renderIrrigation() {
       updateIrrigationComparisonCells(
         context.blockId,
         daysInMonth,
-        monthPrefix,
-        historicalEvaporationTotal,
-        monthEvaporationTotal,
-        programTotal,
-        realMonthTotals.get(context.blockId) || 0
+        monthPrefix
       );
       if (irrigationCellPopoverTarget === target) showIrrigationCellPopover(target, context, block);
       scheduleIrrigationProgramCellSave(context.blockId, context.date, requestedValue);
@@ -13220,11 +13249,7 @@ function renderIrrigation() {
     updateIrrigationComparisonCells(
       context.blockId,
       daysInMonth,
-      monthPrefix,
-      historicalEvaporationTotal,
-      monthEvaporationTotal,
-      programMonthTotals.get(context.blockId) || 0,
-      blockTotal
+      monthPrefix
     );
     if (irrigationCellPopoverTarget === target) showIrrigationCellPopover(target, context, block);
   };
