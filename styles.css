@@ -7570,11 +7570,11 @@ td span,
   background: #dc2626;
 }
 
-.irrigation-hour-cell.has-fip-alert {
+.irrigation-hour-cell.has-fip-status {
   position: relative;
 }
 
-.irrigation-hour-cell.has-fip-alert::after {
+.irrigation-hour-cell.has-fip-status::after {
   content: "F";
   position: absolute;
   top: 1px;
@@ -7591,6 +7591,14 @@ td span,
   font-size: 7px;
   font-weight: 950;
   line-height: 1;
+}
+
+.irrigation-hour-cell.has-fip-alert::after {
+  background: #dc2626;
+}
+
+.irrigation-hour-cell.has-fip-ok::after {
+  background: #16845e;
 }
 
 .irrigation-cell-popover {
@@ -7847,6 +7855,21 @@ td span,
 
 .irrigation-wiseconn-alert-card.is-fip > b {
   background: #16845e;
+}
+
+.irrigation-wiseconn-alert-card.is-fip.is-risk {
+  border-color: #e37b72;
+  border-left-color: #c9362a;
+  background: #fff0ed;
+  color: #8e1d15;
+}
+
+.irrigation-wiseconn-alert-card.is-fip.is-risk > b {
+  background: #c9362a;
+}
+
+.irrigation-wiseconn-alert-card.is-fip.is-risk p {
+  color: #773b35;
 }
 
 .irrigation-wiseconn-alert-card.is-fip p {

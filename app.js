@@ -259,6 +259,7 @@ const WISECONN_FARM_ID = 4212;
 const WISECONN_TIME_ZONE = "America/Santiago";
 const WISECONN_REFRESH_TTL_MS = 5 * 60 * 1000;
 const WISECONN_IRRIGATION_START_DATE = "2026-01-01";
+const WISECONN_FIP_ALERT_THRESHOLD_PERCENT = 30;
 const IRRIGATION_SATELLITE_LAYER_STYLES = Object.freeze({
   native: {
     name: "Estándar",
@@ -3349,7 +3350,7 @@ function irrigationWiseconnDiagnostics(blockId, date, sourceInfo = null, realVal
       scheduled,
       actual,
       percent,
-      risk: !actual || (Number.isFinite(percent) && percent <= -30)
+      risk: !actual || (Number.isFinite(percent) && Math.abs(percent) >= WISECONN_FIP_ALERT_THRESHOLD_PERCENT)
     };
   });
   const fipRisk = fipComparisons.some((item) => item.risk);
@@ -3364,7 +3365,7 @@ function irrigationWiseconnDiagnostics(blockId, date, sourceInfo = null, realVal
 }
 
 function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
-  if (!diagnostics?.hydraulic && !diagnostics?.fipRisk && !diagnostics?.actualFips?.length) return "";
+  if (!diagnostics?.hydraulic && !diagnostics?.fipComparisons?.length) return "";
   const signedPercent = Number.isFinite(diagnostics.balance?.percent)
     ? `${diagnostics.balance.percent > 0 ? "+" : ""}${number(diagnostics.balance.percent, 1)}%`
     : "";
@@ -3377,33 +3378,21 @@ function irrigationWiseconnDiagnosticCardsHtml(diagnostics) {
         <p>${escapeHtml(diagnostics.hydraulic.description)}</p>
       </div>
     </article>` : "";
-  const fipTime = (item) => {
-    const start = String(item?.firstStart || "").slice(11, 16);
-    const end = String(item?.lastEnd || "").slice(11, 16);
-    return start && end ? `${start}-${end}` : "Horario no informado";
-  };
-  const actualFipRows = diagnostics.actualFips.map((item) => {
-    const volume = Number(item.volume) > 0 ? `${number(item.volume, 1)} ${escapeHtml(item.unit || "L")}` : `0 ${escapeHtml(item.unit || "L")}`;
-    const types = item.types.length ? ` · ${escapeHtml(item.types.join(", "))}` : "";
-    return `<span><b>${escapeHtml(wiseconnFipLabel(item))}</b><small>ID ${escapeHtml(item.tankId)} · Real ${volume} · ${escapeHtml(fipTime(item))}${types}</small></span>`;
-  }).join("");
   const scheduledFipRows = diagnostics.fipComparisons.map((item) => {
     const plannedVolume = `${number(item.scheduled.volume, 1)} ${escapeHtml(item.scheduled.unit || "L")}`;
     const actualVolume = item.actual ? `${number(item.actual.volume, 1)} ${escapeHtml(item.actual.unit || item.scheduled.unit || "L")}` : "Sin ejecución detectada";
     const difference = Number.isFinite(item.percent) ? `${item.percent > 0 ? "+" : ""}${number(item.percent, 1)}%` : "Sin comparación";
     return `<span class="${item.risk ? "is-risk" : "is-ok"}"><b>${escapeHtml(wiseconnFipLabel(item.scheduled))}</b><small>ID ${escapeHtml(item.tankId)} · Programado ${plannedVolume} · Real ${actualVolume} · ${difference}</small></span>`;
   }).join("");
-  const hasFipData = diagnostics.actualFips.length || diagnostics.scheduledFips.length;
-  const fipCard = hasFipData ? `
+  const fipCard = diagnostics.fipComparisons.length ? `
     <article class="irrigation-wiseconn-alert-card is-fip ${diagnostics.fipRisk ? "is-risk" : "is-ok"}">
       <b aria-hidden="true">F</b>
       <div>
-        <span><strong>${diagnostics.fipRisk ? "Alerta FIP DropControl" : "Fertirriego DropControl"}</strong><em>${diagnostics.fipRisk ? `${diagnostics.fipComparisons.filter((item) => item.risk).length} con diferencia` : "Detectado"}</em></span>
-        <h4>${diagnostics.fipRisk ? "Fertilizante bajo lo programado" : "FIP ejecutados durante el riego"}</h4>
-        <p>${diagnostics.fipRisk ? "Uno o más FIP quedaron 30% o más bajo el volumen programado, o no registraron ejecución." : "El riego real contiene fertirrigaciones informadas directamente por WiseConn."}</p>
-        ${scheduledFipRows ? `<strong class="irrigation-wiseconn-fip-subtitle">Programado vs real en DropControl</strong><div class="irrigation-wiseconn-fip-list">${scheduledFipRows}</div>` : ""}
-        <strong class="irrigation-wiseconn-fip-subtitle">FIP reales de DropControl</strong>
-        <div class="irrigation-wiseconn-fip-list">${actualFipRows || '<span class="is-risk"><b>Sin FIP ejecutado</b><small>DropControl no devolvió una fertirrigación real para esta programación.</small></span>'}</div>
+        <span><strong>${diagnostics.fipRisk ? "Alerta de fertilizante" : "Fertilizante dentro de rango"}</strong><em>${diagnostics.fipRisk ? `${diagnostics.fipComparisons.filter((item) => item.risk).length} fuera de rango` : "Todos cumplen"}</em></span>
+        <h4>${diagnostics.fipRisk ? "Diferencia alta en uno o más FIP" : "Aplicación de fertilizante correcta"}</h4>
+        <p>${diagnostics.fipRisk ? `La alerta se activa cuando la diferencia alcanza o supera ±${WISECONN_FIP_ALERT_THRESHOLD_PERCENT}% o no existe ejecución real.` : `Todos los FIP están dentro del umbral permitido de ±${WISECONN_FIP_ALERT_THRESHOLD_PERCENT}%.`}</p>
+        <strong class="irrigation-wiseconn-fip-subtitle">Programado vs real en DropControl</strong>
+        <div class="irrigation-wiseconn-fip-list">${scheduledFipRows}</div>
       </div>
     </article>` : "";
   return `<div class="irrigation-wiseconn-alerts">${hydraulicCard}${fipCard}</div>`;
@@ -3426,12 +3415,17 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const eventCount = irrigationEventCount + Number(Boolean(diagnostics?.fipRisk));
   const eventClass = irrigationEventCount ? "has-event" : "";
   const activeEventClass = diagnostics?.hydraulic || cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
-  const fipAlertClass = diagnostics?.fipRisk ? "has-fip-alert" : "";
+  const fipStatusClass = diagnostics?.fipComparisons?.length
+    ? `has-fip-status ${diagnostics.fipRisk ? "has-fip-alert" : "has-fip-ok"}`
+    : "";
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
-  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${fertigationClass ? ", con fertirriego" : ""}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
+  const fipStatusLabel = diagnostics?.fipComparisons?.length
+    ? `, fertilizante ${diagnostics.fipRisk ? "fuera de rango" : "dentro de rango"}`
+    : "";
+  const label = `${kind === "program" ? "Programa" : "Riego real"} ${potreroLabel(block.potrero)} bloque ${block.block} dia ${dayIndex + 1}${fertigationClass ? ", con fertirriego" : ""}${fipStatusLabel}${eventCount ? `, ${eventCount} alerta${eventCount === 1 ? "" : "s"}` : ""}`;
   const displayValue = value === "" || value === null || value === undefined ? "" : value;
-  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${fertigationClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${fipAlertClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
+  return `<button class="irrigation-hour-input irrigation-hour-cell ${kind === "program" ? "irrigation-program-input" : ""} ${irrigationDayClass(date)} ${auditClass} ${wiseconnClass} ${fertigationClass} ${manualClass} ${observationClass} ${eventClass} ${activeEventClass} ${fipStatusClass} ${selectedClass} ${Number(value) > 0 ? "has-hours" : ""}" type="button" aria-label="${htmlAttr(label)}" data-grid-kind="${kind}" data-row-index="${rowIndex}" data-day-index="${dayIndex}" ${idAttribute} data-date="${date}" data-event-count="${eventCount}" data-source="${htmlAttr(sourceInfo.source)}" data-value="${htmlAttr(displayValue)}" value="${htmlAttr(displayValue)}">${escapeHtml(displayValue)}</button>`;
 }
 
 function applyIrrigationObservationRecords(rows = [], options = {}) {
@@ -4095,11 +4089,23 @@ function showIrrigationCellPopover(input, context, block) {
   const width = Math.min(470, window.innerWidth - (viewportPadding * 2));
   popover.style.width = `${width}px`;
   const measuredHeight = popover.offsetHeight || 180;
-  const left = Math.min(window.innerWidth - width - viewportPadding, Math.max(viewportPadding, rect.left + rect.width / 2 - width / 2));
-  const above = rect.top - measuredHeight - 10;
-  const top = above >= viewportPadding
-    ? above
-    : Math.min(window.innerHeight - measuredHeight - viewportPadding, rect.bottom + 10);
+  const horizontalGap = 18;
+  const rightPosition = rect.right + horizontalGap;
+  const leftPosition = rect.left - width - horizontalGap;
+  const fitsRight = rightPosition + width <= window.innerWidth - viewportPadding;
+  const fitsLeft = leftPosition >= viewportPadding;
+  const opensBeside = fitsRight || fitsLeft;
+  const left = fitsRight
+    ? rightPosition
+    : fitsLeft
+      ? leftPosition
+      : Math.min(window.innerWidth - width - viewportPadding, Math.max(viewportPadding, rect.left + rect.width / 2 - width / 2));
+  const above = rect.top - measuredHeight - 12;
+  const top = opensBeside
+    ? Math.min(window.innerHeight - measuredHeight - viewportPadding, Math.max(viewportPadding, rect.top - 24))
+    : above >= viewportPadding
+      ? above
+      : Math.min(window.innerHeight - measuredHeight - viewportPadding, rect.bottom + 12);
   popover.style.left = `${left}px`;
   popover.style.top = `${Math.max(viewportPadding, top)}px`;
 }
