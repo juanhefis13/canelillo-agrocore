@@ -11787,17 +11787,110 @@ function irrigationFilteredEvents(filteredBlocks, monthPrefix) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || Number(a.status === "resuelto") - Number(b.status === "resuelto") || String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+function irrigationAutomaticAlerts(filteredBlocks, monthPrefix) {
+  const irrigation = [];
+  const fertilizer = [];
+  const daysInMonth = new Date(Number(monthPrefix.slice(0, 4)), Number(monthPrefix.slice(5, 7)), 0).getDate();
+  filteredBlocks.forEach((block) => {
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${monthPrefix}-${String(day).padStart(2, "0")}`;
+      const sourceInfo = irrigationRealSourceInfo(block.id, date);
+      if (sourceInfo.source !== "wiseconn") continue;
+      const diagnostics = irrigationWiseconnDiagnostics(block.id, date, sourceInfo, irrigationRealHoursValue(block.id, date));
+      if (diagnostics.hydraulic) {
+        irrigation.push({
+          id: `riego-${block.id}-${date}`,
+          date,
+          block,
+          type: diagnostics.hydraulic.title,
+          description: diagnostics.hydraulic.description,
+          severity: diagnostics.hydraulic.severity,
+          percent: diagnostics.balance.percent,
+          realVolume: Number(sourceInfo.meta?.volumeM3),
+          programmedVolume: Number(sourceInfo.meta?.scheduledVolumeM3),
+          realValue: diagnostics.balance.realHours,
+          programmedValue: diagnostics.balance.programmedHours,
+          unit: "h"
+        });
+      }
+      diagnostics.fipComparisons.filter((item) => item.risk).forEach((comparison) => {
+        const actualVolume = Number(comparison.actual?.volume) || 0;
+        const programmedVolume = Number(comparison.scheduled?.volume) || 0;
+        const unit = comparison.actual?.unit || comparison.scheduled?.unit || "L";
+        fertilizer.push({
+          id: `fip-${block.id}-${date}-${comparison.tankId}`,
+          date,
+          block,
+          type: !comparison.actual
+            ? "FIP sin ejecución real"
+            : Number(comparison.percent) < 0
+              ? "FIP bajo lo programado"
+              : "FIP sobre lo programado",
+          description: wiseconnFipLabel(comparison.scheduled),
+          percent: comparison.percent,
+          realVolume: actualVolume,
+          programmedVolume,
+          realValue: actualVolume,
+          programmedValue: programmedVolume,
+          unit
+        });
+      });
+    }
+  });
+  const sortAlerts = (a, b) => String(b.date).localeCompare(String(a.date))
+    || comparePotrero(a.block?.potrero, b.block?.potrero)
+    || String(a.block?.block || "").localeCompare(String(b.block?.block || ""), "es", { numeric: true });
+  irrigation.sort(sortAlerts);
+  fertilizer.sort(sortAlerts);
+  return { irrigation, fertilizer };
+}
+
+function irrigationAutomaticAlertCardHtml(item, kind) {
+  const isFertilizer = kind === "fertilizer";
+  const percentLabel = Number.isFinite(Number(item.percent))
+    ? `${Number(item.percent) > 0 ? "+" : ""}${number(item.percent, 1)}%`
+    : "Sin comparación";
+  const volumeUnit = isFertilizer ? escapeHtml(item.unit || "L") : "m3";
+  const realVolume = Number.isFinite(Number(item.realVolume)) ? `${number(item.realVolume, 1)} ${volumeUnit}` : "Sin dato";
+  const programmedVolume = Number(item.programmedVolume) > 0 ? `${number(item.programmedVolume, 1)} ${volumeUnit}` : "Sin dato";
+  const programReal = isFertilizer
+    ? `${programmedVolume} / ${realVolume}`
+    : `${Number(item.programmedValue) > 0 ? `${number(item.programmedValue, 2)} h` : "Sin dato"} / ${Number.isFinite(Number(item.realValue)) ? `${number(item.realValue, 2)} h` : "Sin dato"}`;
+  return `
+    <article class="irrigation-auto-alert-card ${isFertilizer ? "is-fertilizer" : "is-irrigation"} ${item.severity === "critical" ? "is-critical" : ""}">
+      <div class="irrigation-auto-alert-marker" aria-hidden="true">${isFertilizer ? "F" : "!"}</div>
+      <div class="irrigation-auto-alert-content">
+        <header>
+          <span>${escapeHtml(irrigationEventDateLabel(item.date))}</span>
+          <strong>${escapeHtml(potreroLabel(item.block?.potrero))} · B${escapeHtml(item.block?.block || "-")}</strong>
+        </header>
+        <h4>${escapeHtml(item.type)}</h4>
+        ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
+        <div class="irrigation-auto-alert-metrics">
+          <span><small>Volumen real</small><b>${realVolume}</b></span>
+          <span><small>Diferencia</small><b>${escapeHtml(percentLabel)}</b></span>
+          <span><small>Programa / real</small><b>${programReal}</b></span>
+        </div>
+      </div>
+    </article>`;
+}
+
 function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, year }) {
   const events = irrigationFilteredEvents(filteredBlocks, monthPrefix);
+  const automaticAlerts = irrigationAutomaticAlerts(filteredBlocks, monthPrefix);
   const activeCount = events.filter((item) => item.status === "activo").length;
-  const affectedBlocks = new Set(events.map((item) => item.fieldId)).size;
+  const affectedBlocks = new Set([
+    ...events.map((item) => String(item.fieldId)),
+    ...automaticAlerts.irrigation.map((item) => String(item.block?.id || "")),
+    ...automaticAlerts.fertilizer.map((item) => String(item.block?.id || ""))
+  ].filter(Boolean)).size;
   const canEdit = irrigationEventsCanEdit();
   return `
     <section class="irrigation-events-panel">
       <header class="irrigation-events-head">
         <div>
           <span class="irrigation-events-eyebrow">${escapeHtml(monthLabel)} ${escapeHtml(year)}</span>
-          <h2>Eventos de riego</h2>
+          <h2>Eventos y alertas</h2>
         </div>
         ${canEdit ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento</button>' : ""}
       </header>
@@ -11806,9 +11899,35 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
           <strong>Falta habilitar Eventos en Supabase</strong>
           <span>Ejecuta <code>supabase_riego_eventos.sql</code> una vez.</span>
         </div>` : ""}
+      ${wiseconnSyncState.loading ? `
+        <div class="irrigation-events-loading" role="status" aria-live="polite">
+          <i aria-hidden="true"></i><span>Actualizando alertas desde WiseConn...</span>
+        </div>` : wiseconnSyncState.error ? `
+        <div class="irrigation-events-source-error" role="alert">
+          <strong>No se pudieron actualizar las alertas</strong><span>${escapeHtml(wiseconnSyncState.error)}</span>
+        </div>` : ""}
       <div class="irrigation-event-kpis" aria-label="Resumen de eventos">
-        <span><small>Activos</small><strong>${activeCount}</strong></span>
+        <span class="is-alert"><small>Alertas de riego</small><strong>${automaticAlerts.irrigation.length}</strong></span>
+        <span class="is-fertilizer"><small>Alertas fertilizante</small><strong>${automaticAlerts.fertilizer.length}</strong></span>
+        <span><small>Eventos activos</small><strong>${activeCount}</strong></span>
         <span><small>Bloques afectados</small><strong>${affectedBlocks}</strong></span>
+      </div>
+      <div class="irrigation-alerts-dashboard">
+        <section class="irrigation-alert-group is-irrigation ${automaticAlerts.irrigation.length ? "has-alerts" : "is-clear"}">
+          <header><span class="irrigation-alert-group-icon" aria-hidden="true">!</span><div><strong>Alertas de riego</strong><small>Diferencias hidráulicas detectadas por WiseConn</small></div><b>${automaticAlerts.irrigation.length}</b></header>
+          <div class="irrigation-auto-alert-list">
+            ${automaticAlerts.irrigation.map((item) => irrigationAutomaticAlertCardHtml(item, "irrigation")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de riego</strong><span>No hay diferencias hidráulicas para los filtros seleccionados.</span></div>'}
+          </div>
+        </section>
+        <section class="irrigation-alert-group is-fertilizer ${automaticAlerts.fertilizer.length ? "has-alerts" : "is-clear"}">
+          <header><span class="irrigation-alert-group-icon" aria-hidden="true">F</span><div><strong>Alertas de fertilizante</strong><small>FIP fuera del umbral permitido de ±30%</small></div><b>${automaticAlerts.fertilizer.length}</b></header>
+          <div class="irrigation-auto-alert-list">
+            ${automaticAlerts.fertilizer.map((item) => irrigationAutomaticAlertCardHtml(item, "fertilizer")).join("") || '<div class="irrigation-alert-empty"><strong>Sin alertas de fertilizante</strong><span>Todos los FIP comparables están dentro del umbral.</span></div>'}
+          </div>
+        </section>
+      </div>
+      <div class="irrigation-registered-head">
+        <div><strong>Eventos registrados</strong><small>Sucesos ingresados manualmente desde terreno.</small></div>
         <label>Estado
           <select id="irrigationEventStatusFilter">
             <option value="Todos" ${irrigationEventStatusFilter === "Todos" ? "selected" : ""}>Todos</option>
@@ -12132,8 +12251,10 @@ function renderIrrigation() {
       </label>
       ${irrigationTab === "gantt" ? `
         <button class="secondary-button" type="button" data-action="open-irrigation-base-hours-dialog">Horas base</button>
-        <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>
-        <button class="secondary-button irrigation-wiseconn-refresh" type="button" data-action="refresh-wiseconn-irrigation" ${wiseconnSyncState.loading ? "disabled" : ""}>${wiseconnSyncState.loading ? "Actualizando..." : "Actualizar WiseConn"}</button>
+        <button class="primary-button" type="button" data-action="open-irrigation-program-dialog">Editar programa</button>` : ""}
+      ${["gantt", "events"].includes(irrigationTab) ? `
+        <button class="secondary-button irrigation-wiseconn-refresh" type="button" data-action="refresh-wiseconn-irrigation" ${wiseconnSyncState.loading ? "disabled" : ""}>${wiseconnSyncState.loading ? "Actualizando..." : "Actualizar WiseConn"}</button>` : ""}
+      ${irrigationTab === "gantt" ? `
         <button class="secondary-button" type="button" data-action="open-selected-irrigation-observation" title="Selecciona una celda y usa Alt + O">Observacion</button>
         <button class="secondary-button" type="button" data-action="clear-irrigation-hours">Limpiar</button>` : ""}
     </div>`;

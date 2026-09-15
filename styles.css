@@ -8055,9 +8055,47 @@ td span,
   font-weight: 900;
 }
 
+.irrigation-events-loading,
+.irrigation-events-source-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid #b8d8cc;
+  border-radius: 6px;
+  background: #eff8f4;
+  color: #245f4d;
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+
+.irrigation-events-loading i {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #a8d2c3;
+  border-top-color: #16845e;
+  border-radius: 50%;
+  animation: irrigationEventsSpin 700ms linear infinite;
+}
+
+@keyframes irrigationEventsSpin {
+  to { transform: rotate(360deg); }
+}
+
+.irrigation-events-source-error {
+  align-items: flex-start;
+  border-color: #e8aaa4;
+  background: #fff2f0;
+  color: #8e1d15;
+}
+
+.irrigation-events-source-error span {
+  color: #7b4944;
+}
+
 .irrigation-event-kpis {
   display: grid;
-  grid-template-columns: 110px 150px minmax(150px, 220px);
+  grid-template-columns: repeat(4, minmax(110px, 160px));
   gap: 7px;
 }
 
@@ -8084,7 +8122,284 @@ td span,
   font-size: 1rem;
 }
 
+.irrigation-event-kpis > span.is-alert {
+  border-color: #efb0aa;
+  background: #fff4f2;
+}
+
+.irrigation-event-kpis > span.is-alert strong {
+  color: #b42318;
+}
+
+.irrigation-event-kpis > span.is-fertilizer {
+  border-color: #e7a39c;
+  background: #fff2f0;
+}
+
+.irrigation-event-kpis > span.is-fertilizer strong {
+  color: #a91d16;
+}
+
 .irrigation-event-kpis select {
+  min-height: 28px;
+  padding: 3px 6px;
+}
+
+.irrigation-alerts-dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+
+.irrigation-alert-group {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.irrigation-alert-group > header {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  padding: 7px 8px;
+  border-bottom: 2px solid #e4aaa4;
+}
+
+.irrigation-alert-group > header > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.irrigation-alert-group > header strong {
+  color: #173c31;
+  font-size: 0.72rem;
+}
+
+.irrigation-alert-group > header small {
+  overflow: hidden;
+  color: #61766e;
+  font-size: 0.56rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.irrigation-alert-group > header > b {
+  min-width: 22px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: #fff;
+  color: #a91d16;
+  font-size: 0.67rem;
+  text-align: center;
+}
+
+.irrigation-alert-group-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 5px;
+  background: #c9362a;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.irrigation-alert-group.is-fertilizer > header {
+  border-bottom-color: #d7a29c;
+}
+
+.irrigation-alert-group.is-fertilizer {
+  padding-left: 8px;
+  border-left: 1px solid #dce8e4;
+}
+
+.irrigation-alert-group.is-clear .irrigation-alert-group-icon {
+  background: #16845e;
+}
+
+.irrigation-alert-group.is-clear > header {
+  border-bottom-color: #9bcfb9;
+}
+
+.irrigation-alert-group.is-clear > header > b {
+  color: #16845e;
+}
+
+.irrigation-auto-alert-list {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  max-height: 220px;
+  min-height: 70px;
+  padding: 6px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.irrigation-auto-alert-card {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #ecc1bc;
+  border-left: 3px solid #d05a4f;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.irrigation-auto-alert-card.is-critical {
+  border-color: #e5968e;
+  border-left-color: #ad1f16;
+  background: #fff7f6;
+}
+
+.irrigation-auto-alert-marker {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border-radius: 5px;
+  background: #c9362a;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 950;
+}
+
+.irrigation-auto-alert-content {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.irrigation-auto-alert-content > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64786f;
+  font-size: 0.56rem;
+  font-weight: 800;
+}
+
+.irrigation-auto-alert-content > header strong {
+  overflow-wrap: anywhere;
+  color: #263f36;
+  text-align: right;
+}
+
+.irrigation-auto-alert-content h4,
+.irrigation-auto-alert-content p {
+  margin: 0;
+}
+
+.irrigation-auto-alert-content h4 {
+  color: #8e1d15;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.irrigation-auto-alert-content p {
+  color: #50665d;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.irrigation-auto-alert-card.is-fertilizer h4 {
+  color: #a5271e;
+}
+
+.irrigation-auto-alert-metrics {
+  display: grid;
+  grid-template-columns: 0.85fr 0.7fr 1.45fr;
+  gap: 4px;
+}
+
+.irrigation-auto-alert-metrics > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  padding: 4px 5px;
+  border: 1px solid #e3ebe7;
+  border-radius: 5px;
+  background: #f8fbfa;
+}
+
+.irrigation-auto-alert-metrics small {
+  color: #71847d;
+  font-size: 0.51rem;
+  font-weight: 800;
+}
+
+.irrigation-auto-alert-metrics b {
+  overflow-wrap: anywhere;
+  color: #29483d;
+  font-size: 0.59rem;
+}
+
+.irrigation-auto-alert-metrics > span:nth-child(2) b {
+  color: #b42318;
+}
+
+.irrigation-alert-empty {
+  display: grid;
+  min-height: 60px;
+  place-content: center;
+  gap: 2px;
+  padding: 10px;
+  color: #537067;
+  text-align: center;
+}
+
+.irrigation-alert-empty strong {
+  color: #16845e;
+  font-size: 0.69rem;
+}
+
+.irrigation-alert-empty span {
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+.irrigation-registered-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+  border-top: 1px solid #d9e6e1;
+}
+
+.irrigation-registered-head > div {
+  display: grid;
+  gap: 1px;
+}
+
+.irrigation-registered-head > div strong {
+  color: #173c31;
+  font-size: 0.76rem;
+}
+
+.irrigation-registered-head > div small,
+.irrigation-registered-head label {
+  color: #61766e;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.irrigation-registered-head label {
+  display: grid;
+  grid-template-columns: auto minmax(100px, 140px);
+  gap: 6px;
+  align-items: center;
+}
+
+.irrigation-registered-head select {
   min-height: 28px;
   padding: 3px 6px;
 }
@@ -8265,8 +8580,35 @@ td span,
     grid-template-columns: 1fr 1fr;
   }
 
-  .irrigation-event-kpis > label {
+  .irrigation-alerts-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .irrigation-alert-group.is-fertilizer {
+    padding-top: 5px;
+    padding-left: 0;
+    border-top: 1px solid #dce8e4;
+    border-left: 0;
+  }
+
+  .irrigation-auto-alert-list {
+    max-height: 260px;
+  }
+
+  .irrigation-auto-alert-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .irrigation-auto-alert-metrics > span:last-child {
     grid-column: 1 / -1;
+  }
+
+  .irrigation-registered-head {
+    align-items: stretch;
+  }
+
+  .irrigation-registered-head label {
+    grid-template-columns: 1fr;
   }
 
   .irrigation-event-card {
