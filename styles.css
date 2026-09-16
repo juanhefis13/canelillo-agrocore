@@ -30283,3 +30283,43 @@ body.auth-locked {
     font-size: 0.52rem;
   }
 }
+
+/* Riego v465: ninguna altura de ventana puede recortar bloques de la Gantt. */
+.app-shell:has(#irrigation.active-view) .panel.irrigation-panel-gantt {
+  height: auto !important;
+  max-height: none !important;
+  min-height: calc(100dvh - 39px);
+  overflow: visible !important;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-compare-wrap {
+  grid-template-rows: auto max-content auto max-content !important;
+  align-content: start;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-real {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  overflow-y: visible !important;
+  contain: layout style;
+  scrollbar-gutter: auto;
+}
+
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-real {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-program,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-real {
+    overflow-x: auto !important;
+  }
+}
