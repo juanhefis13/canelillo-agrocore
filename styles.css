@@ -30323,3 +30323,72 @@ body.auth-locked {
     overflow-x: auto !important;
   }
 }
+
+/* Riego v466: identificador y datos del bloque compactos en una sola linea. */
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-content: center;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 2px 5px;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) > strong {
+  display: block;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
+  font-size: 0.68rem;
+  line-height: 1;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) > span {
+  flex: 0 0 auto;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) .irrigation-block-data {
+  display: flex !important;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) .irrigation-block-metric {
+  display: flex !important;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  overflow: hidden !important;
+}
+
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row:not(.calicata-row) :is(
+    .irrigation-date-cell,
+    .irrigation-hour-input,
+    .irrigation-hour-cell,
+    .irrigation-program-cell,
+    .irrigation-block-head,
+    .irrigation-block-label,
+    .irrigation-total-head,
+    .irrigation-total,
+    .irrigation-reposition-head,
+    .irrigation-reposition,
+    .irrigation-difference-head,
+    .irrigation-difference,
+    .irrigation-program-compare-slot
+  ) {
+    height: 26px !important;
+    min-height: 26px !important;
+  }
+}
