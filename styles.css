@@ -30324,71 +30324,41 @@ body.auth-locked {
   }
 }
 
-/* Riego v466: identificador y datos del bloque compactos en una sola linea. */
-.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) {
-  display: flex !important;
-  grid-template-columns: none !important;
+/* Riego v467: promedio de calicata compacto, centrado y sin recorte vertical. */
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+  box-sizing: border-box;
+  height: 20px !important;
+  min-height: 20px !important;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1px !important;
+  overflow: hidden;
+  font-size: 0.56rem !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
+  letter-spacing: 0;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-label {
   align-content: center;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: 4px;
-  padding: 2px 5px;
+  padding-block: 1px !important;
 }
 
-.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) > strong {
-  display: block;
-  flex: 0 0 auto;
-  min-width: max-content;
-  max-width: none;
-  overflow: visible;
-  font-size: 0.68rem;
-  line-height: 1;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-
-.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) > span {
-  flex: 0 0 auto;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) .irrigation-block-data {
-  display: flex !important;
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  align-items: center;
-  overflow: hidden;
-}
-
-.app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label:not(.calicata-label) .irrigation-block-metric {
-  display: flex !important;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-  overflow: hidden !important;
-}
-
-@media (min-width: 1101px) {
-  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row:not(.calicata-row) :is(
-    .irrigation-date-cell,
-    .irrigation-hour-input,
-    .irrigation-hour-cell,
-    .irrigation-program-cell,
-    .irrigation-block-head,
-    .irrigation-block-label,
-    .irrigation-total-head,
-    .irrigation-total,
-    .irrigation-reposition-head,
-    .irrigation-reposition,
-    .irrigation-difference-head,
-    .irrigation-difference,
-    .irrigation-program-compare-slot
-  ) {
-    height: 26px !important;
-    min-height: 26px !important;
+@media (max-width: 760px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+    height: 24px !important;
+    min-height: 24px !important;
   }
 }
