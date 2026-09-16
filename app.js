@@ -4438,7 +4438,18 @@ async function deleteCloudIrrigationMonth(blocks, year, month) {
 }
 
 function calicataBlockKey(potrero, block) {
-  return `${String(potrero || "").trim()}__${String(block || "").trim()}`;
+  const normalizedPotrero = normalizePotreroOrderName(potrero)
+    .replace(/^potrero\s+/i, "")
+    .replace(/^p\s*(?=\d)/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalizedBlock = String(block || "")
+    .trim()
+    .replace(/^bloque\s*/i, "")
+    .replace(/^b(?=\d)/i, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+  return `${normalizedPotrero}__${normalizedBlock}`;
 }
 
 function calicatasForBlock(block) {
@@ -4447,7 +4458,19 @@ function calicatasForBlock(block) {
 }
 
 function calicataDate(item) {
-  return String(item.createdAt || "").slice(0, 10);
+  const raw = String(item?.date || item?.fecha || item?.createdAt || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(parsed);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function average(values) {
