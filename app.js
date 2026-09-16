@@ -12989,8 +12989,6 @@ function renderIrrigation() {
           const hoursDifference = comparisonRealTotal - comparisonProgramTotal;
           const repositionDiff = irrigationDifferencePercent(comparisonRealReposition, programReposition);
           const calicataKey = calicataBlockKey(block.potrero, block.block);
-          const calicatas = calicataIndex.byBlock.get(calicataKey) || [];
-          const calicata = calicataIndex.summaryByBlock.get(calicataKey) || EMPTY_CALICATA_SUMMARY;
           const rowIndex = blockRowIndexMap.get(block.id) ?? 0;
           return `
             <div class="irrigation-row">
@@ -13017,17 +13015,8 @@ function renderIrrigation() {
             </div>
             <div class="irrigation-row calicata-row">
               <div class="irrigation-block-label calicata-label">
-                ${calicatas.length ? `
-                  <button class="calicata-summary-trigger" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" title="Abrir detalle de las ${calicatas.length} calicata(s) del bloque">
-                    <strong>Calicatas</strong>
-                    <span>${calicata.general === null ? "Promedio -" : `Promedio ${number(calicata.general)}`}</span>
-                    <b>Ver detalle</b>
-                  </button>` : `
-                  <div class="calicata-summary-empty">
-                    <strong>Calicatas</strong>
-                    <span>Promedio -</span>
-                    <b>Sin datos</b>
-                  </div>`}
+                <strong>Calicatas</strong>
+                <span>Promedio diario</span>
               </div>
               <div class="irrigation-days calicata-days">
                 ${Array.from({ length: daysInMonth }, (_, index) => {
@@ -13036,14 +13025,12 @@ function renderIrrigation() {
                   const dayCalicatas = calicataIndex.byDay.get(dayKey) || [];
                   if (!dayCalicatas.length) return `<span class="calicata-day-cell ${dayClassMap.get(date) || ""}"></span>`;
                   const daySummary = calicataIndex.summaryByDay.get(dayKey) || EMPTY_CALICATA_SUMMARY;
-                  const label = daySummary.general === null ? dayCalicatas.length : number(daySummary.general);
+                  const label = daySummary.general === null ? "-" : number(daySummary.general);
                   const style = daySummary.general === null ? "" : ` style="${htmlAttr(calicataColorStyle(daySummary.general))}"`;
-                  return `<button class="calicata-day-cell ${dayClassMap.get(date) || ""} has-calicata" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" data-date="${date}"${style} title="Ver ${dayCalicatas.length} calicata(s) · promedio ${daySummary.general === null ? "-" : number(daySummary.general)}">${label}</button>`;
+                  return `<button class="calicata-day-cell ${dayClassMap.get(date) || ""} has-calicata" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" data-date="${date}"${style} aria-label="Abrir calicata del ${date}, promedio ${label}" title="Promedio ${label} · Abrir calicata del ${date}">${label}</button>`;
                 }).join("")}
               </div>
-              <div class="irrigation-total calicata-label">
-                ${calicatas.length ? `<button class="calicata-detail-trigger" type="button" data-action="open-irrigation-calicata-detail" data-key="${htmlAttr(calicataKey)}" title="Ver historial de calicatas">${calicatas.length} registro${calicatas.length === 1 ? "" : "s"}</button>` : `<span class="calicata-no-records">Sin datos</span>`}
-              </div>
+              <div class="irrigation-total calicata-label" aria-hidden="true"></div>
               <div class="irrigation-reposition calicata-label"></div>
               <div class="irrigation-difference irrigation-difference-hours calicata-label"></div>
               <div class="irrigation-difference irrigation-difference-reposition calicata-label"></div>
