@@ -29502,6 +29502,54 @@ body.auth-locked {
   font: 900 0.62rem/1 inherit;
 }
 
+.calicata-summary-trigger,
+.calicata-summary-empty {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-height: 22px;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: #315c50;
+  font-family: inherit;
+  text-align: left;
+}
+
+.calicata-summary-trigger {
+  cursor: pointer;
+}
+
+.calicata-summary-trigger:hover,
+.calicata-summary-trigger:focus-visible {
+  background: #e6f3ee;
+  outline: 2px solid #27886b;
+  outline-offset: -2px;
+}
+
+.calicata-summary-trigger span,
+.calicata-summary-empty span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calicata-summary-trigger b,
+.calicata-summary-empty b {
+  color: #176da4;
+  font-size: 0.54rem;
+  white-space: nowrap;
+}
+
+.calicata-summary-empty b {
+  color: #7a8b85;
+}
+
 .calicata-no-records {
   color: #7a8b85;
   font-size: 0.58rem;
@@ -30210,7 +30258,7 @@ body.auth-locked {
   }
 
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt {
-    gap: 1px;
+    gap: 0;
     padding-bottom: 1px;
   }
 
@@ -30233,8 +30281,8 @@ body.auth-locked {
     .irrigation-difference,
     .irrigation-program-compare-slot
   ) {
-    height: 20px;
-    min-height: 20px !important;
+    height: 18px;
+    min-height: 18px !important;
   }
 
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label {
@@ -30266,8 +30314,8 @@ body.auth-locked {
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
-    height: 12px;
-    min-height: 12px !important;
+    height: 16px;
+    min-height: 16px !important;
   }
 
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .irrigation-block-label {
@@ -30275,7 +30323,19 @@ body.auth-locked {
   }
 
   .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row :is(strong, span, button) {
-    font-size: 0.42rem;
+    font-size: 0.48rem;
     line-height: 1;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-summary-trigger,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-summary-empty {
+    gap: 3px;
+    min-height: 16px;
+    padding: 1px 3px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-summary-trigger b,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-summary-empty b {
+    font-size: 0.45rem;
   }
 }
