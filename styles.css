@@ -6451,6 +6451,14 @@ td span,
   color: var(--calicata-cell-text, var(--calicata-color, var(--info)));
 }
 
+.irrigation-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
 .irrigation-calicata-color-legend {
   display: flex;
   min-width: 0;
@@ -7583,12 +7591,13 @@ td span,
 
 .irrigation-hour-cell.has-event {
   position: relative;
+  overflow: visible;
 }
 
 .irrigation-hour-cell.has-event::before {
   content: "!";
   position: absolute;
-  top: 1px;
+  top: -5px;
   right: 1px;
   z-index: 3;
   display: grid;
@@ -7610,12 +7619,13 @@ td span,
 
 .irrigation-hour-cell.has-fip-status {
   position: relative;
+  overflow: visible;
 }
 
 .irrigation-hour-cell.has-fip-status::after {
   content: "F";
   position: absolute;
-  top: 1px;
+  top: -5px;
   left: 1px;
   z-index: 3;
   display: grid;
@@ -7635,9 +7645,6 @@ td span,
   background: #dc2626;
 }
 
-.irrigation-hour-cell.has-fip-ok::after {
-  background: #16845e;
-}
 
 .irrigation-cell-popover {
   position: fixed;
@@ -19096,7 +19103,7 @@ textarea:focus {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   margin-bottom: 0;
 }
 

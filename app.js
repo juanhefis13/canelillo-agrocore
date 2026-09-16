@@ -3514,8 +3514,8 @@ function renderIrrigationHourCell(kind, block, date, value, rowIndex, dayIndex) 
   const eventCount = irrigationEventCount + Number(Boolean(diagnostics?.fipRisk));
   const eventClass = irrigationEventCount ? "has-event" : "";
   const activeEventClass = diagnostics?.hydraulic || cellEvents.some((item) => item.status === "activo") ? "has-active-event" : "";
-  const fipStatusClass = diagnostics?.fipComparisons?.length
-    ? `has-fip-status ${diagnostics.fipRisk ? "has-fip-alert" : "has-fip-ok"}`
+  const fipStatusClass = diagnostics?.fipRisk
+    ? "has-fip-status has-fip-alert"
     : "";
   const selectedClass = irrigationObservationContext?.kind === kind && irrigationObservationContext?.blockId === block.id && irrigationObservationContext?.date === date ? "is-selected" : "";
   const idAttribute = kind === "program" ? `data-program-block-id="${htmlAttr(block.id)}"` : `data-block-id="${htmlAttr(block.id)}"`;
@@ -7663,6 +7663,107 @@ function wireIrrigationSatellitePanel(blocks, monthPrefix) {
   }
 }
 
+async function downloadIrrigationRecordsPdf(title, rows, filename) {
+  if (!window.PDFLib) throw new Error("Generador PDF no disponible");
+  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  doc.setTitle(title);
+  let page, y, missingPhotos = 0;
+  const newPage = () => {
+    page = doc.addPage([595.28, 841.89]);
+    page.drawText(pdfSafeText(`AgroCore - ${title}`), { x: 32, y: 806, size: 14, font: bold, color: rgb(0.08, 0.28, 0.48) });
+    page.drawText(pdfSafeText(`${rows.length} registros | ${filename} | Pagina ${doc.getPageCount()}`), { x: 32, y: 788, size: 8, font });
+    y = 763;
+  };
+  const line = (text, strong = false) => {
+    for (const part of pdfTextLines(strong ? bold : font, text, 10, 525, Number.MAX_SAFE_INTEGER)) {
+      if (y < 45) newPage();
+      page.drawText(part, { x: 32, y, size: 10, font: strong ? bold : font });
+      y -= 14;
+    }
+  };
+  newPage();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (y < 180) newPage();
+    line(`${i + 1}. ${row.Potrero || ""} - Bloque ${row.Bloque || "-"} - ${row.Fecha || row["Fecha y hora inicio"] || ""}`, true);
+    const depths = ["20 cm", "40 cm", "60 cm", "80 cm", "Promedio"];
+    if (Object.hasOwn(row, "20 cm")) {
+      depths.forEach((key, index) => {
+        page.drawRectangle({ x: 32 + index * 105, y: y - 33, width: 105, height: 39, color: rgb(0.93, 0.96, 0.98) });
+        page.drawText(key, { x: 38 + index * 105, y: y - 5, size: 9, font: bold });
+        page.drawText(pdfSafeText(String(row[key] === "" ? "Sin lectura" : row[key])), { x: 38 + index * 105, y: y - 22, size: 10, font });
+      });
+      y -= 48;
+    }
+    for (const [key, value] of Object.entries(row)) {
+      if (["Foto", "Potrero", "Bloque", "Fecha", "Fecha y hora inicio", ...depths].includes(key) || value === "" || value == null) continue;
+      line(`${key}: ${value}`);
+    }
+    if (row.Foto) {
+      try {
+        const response = await fetch(row.Foto, { signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error("Foto no disponible");
+        const bytes = await response.arrayBuffer();
+        let photo;
+        try { photo = await doc.embedJpg(bytes); } catch { photo = await doc.embedPng(bytes); }
+        const size = photo.scaleToFit(525, 190);
+        if (y - size.height < 45) newPage();
+        page.drawImage(photo, { x: 32, y: y - size.height, width: size.width, height: size.height });
+        y -= size.height + 12;
+      } catch {
+        missingPhotos++;
+        line("Foto no disponible. Consultar enlace en el reporte Excel.");
+      }
+    }
+    y -= 18;
+    if (i % 10 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  downloadText(`${filename}.pdf`, await doc.save(), "application/pdf");
+  showToast(missingPhotos ? `PDF generado; ${missingPhotos} fotos no pudieron cargarse` : "PDF generado");
+}
+
+async function exportCalicatasReport(button, format) {
+  const blocks = state.blocks.filter((block) => block.active !== false
+    && (calicataSpeciesFilter === "Todas" || block.crop === calicataSpeciesFilter)
+    && (calicataPotreroFilter === "Todos" || block.potrero === calicataPotreroFilter));
+  const records = filteredIrrigationCalicatas(blocks, `${calicataYear}-${calicataMonth}`);
+  if (!records.length) return showToast("No hay calicatas para los filtros seleccionados");
+  setButtonBusy(button, true, "Generando...");
+  try {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const rows = records.map((item) => ({
+      "Fecha": calicataDate(item), "Fecha y hora registro": calicataDateTimeLabel(item.createdAt),
+      "Potrero": potreroLabel(item.potrero), "Bloque": item.block || "", "Responsable": item.workerName || "",
+      "20 cm": calicataDepthNumber(item.depth20) ?? "", "40 cm": calicataDepthNumber(item.depth40) ?? "",
+      "60 cm": calicataDepthNumber(item.depth60) ?? "", "80 cm": calicataDepthNumber(item.depth80) ?? "",
+      "Promedio": calicataAverageValue(item) ?? "", "Estado": item.empty ? "Sin lectura" : "Con lectura",
+      "Observacion": item.observation || "", "Latitud": item.latitude ?? "", "Longitud": item.longitude ?? "", "Foto": item.photoUrl || ""
+    }));
+    const filename = `calicatas_${calicataYear}-${calicataMonth}`;
+    if (format === "pdf") return await downloadIrrigationRecordsPdf("Calicatas", rows, filename);
+    if (!window.XLSX) throw new Error("Exportador Excel no disponible");
+    const sheet = window.XLSX.utils.json_to_sheet(rows);
+    const photoColumn = Object.keys(rows[0]).indexOf("Foto");
+    rows.forEach((row, index) => {
+      if (/^https?:\/\//i.test(row.Foto)) sheet[window.XLSX.utils.encode_cell({ r: index + 1, c: photoColumn })].l = { Target: row.Foto, Tooltip: "Abrir foto de calicata" };
+    });
+    sheet["!cols"] = Object.keys(rows[0]).map((key) => ({ wch: key === "Foto" ? 55 : key === "Observacion" ? 45 : 20 }));
+    sheet["!autofilter"] = { ref: sheet["!ref"] };
+    const book = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(book, sheet, "Calicatas");
+    window.XLSX.writeFile(book, `${filename}.xlsx`);
+    showToast("Excel generado con enlaces a las fotos");
+  } catch (error) {
+    console.error("Error exportando calicatas", error);
+    showToast(`No se pudo generar el reporte: ${error.message}`);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 function renderIrrigationProgramTool(blocks, monthLabel) {
   return "";
 }
@@ -7692,6 +7793,10 @@ function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = 
         </div>
       </div>
       ${calicataColorLegend()}
+      <div class="irrigation-report-actions">
+        <button class="secondary-button" type="button" data-action="export-calicatas-excel">Exportar Excel</button>
+        <button class="secondary-button" type="button" data-action="export-calicatas-pdf">Exportar PDF</button>
+      </div>
       <div class="irrigation-calicatas-layout">
         <div id="irrigationCalicataMap" class="geo-map agricultural-map harvest-map irrigation-calicata-map" data-agro-map="calicatas">
           <span>Cargando mapa de calicatas...</span>
@@ -12318,8 +12423,8 @@ async function saveIrrigationAlertAttention(event) {
   }
 }
 
-async function exportIrrigationIncidentsExcel(button = null) {
-  if (!window.XLSX) {
+async function exportIrrigationIncidentsExcel(button = null, format = "excel") {
+  if (format === "excel" && !window.XLSX) {
     showToast("No se pudo cargar el exportador Excel");
     return;
   }
@@ -12358,7 +12463,7 @@ async function exportIrrigationIncidentsExcel(button = null) {
       "Origen": "Evento externo",
       "Estado": item.status === "resuelto" ? "Resuelto" : item.status === "en_revision" ? "En revisión" : "Activo",
       "Prioridad": item.priority || "",
-      "Fecha": item.date,
+      "Fecha y hora inicio": item.date,
       "Potrero": potreroLabel(item.potrero),
       "Bloque": item.block || "",
       "Problema": irrigationEventTypeLabel(item.type),
@@ -12377,6 +12482,10 @@ async function exportIrrigationIncidentsExcel(button = null) {
     const rows = [...alertRows, ...eventRows]
       .sort((a, b) => String(b._orden_fecha).localeCompare(String(a._orden_fecha)) || String(a.Prioridad).localeCompare(String(b.Prioridad)))
       .map(({ _orden_fecha, ...row }) => row);
+    if (format === "pdf") {
+      await downloadIrrigationRecordsPdf("Alertas y eventos de riego", rows, `alertas_eventos_riego_${irrigationYear}-${irrigationMonth}`);
+      return;
+    }
     const workbook = window.XLSX.utils.book_new();
     const sheet = window.XLSX.utils.json_to_sheet(rows);
     sheet["!cols"] = [20, 14, 14, 12, 18, 10, 28, 42, 42, 14, 17, 14, 18, 15, 10, 42, 24, 22].map((wch) => ({ wch }));
@@ -12384,6 +12493,9 @@ async function exportIrrigationIncidentsExcel(button = null) {
     window.XLSX.utils.book_append_sheet(workbook, sheet, "Alertas y eventos");
     window.XLSX.writeFile(workbook, `alertas_eventos_riego_${irrigationYear}-${irrigationMonth}.xlsx`);
     showToast("Reporte de alertas y eventos generado");
+  } catch (error) {
+    console.error("Error al exportar incidencias", error);
+    showToast(`No se pudo generar el reporte: ${error.message}`);
   } finally {
     setButtonBusy(button, false);
   }
@@ -12505,6 +12617,7 @@ function renderIrrigationEventsPanel({ filteredBlocks, monthPrefix, monthLabel, 
         </div>
         <div class="irrigation-events-actions">
           <button class="secondary-button" type="button" data-action="export-irrigation-incidents">Exportar Excel</button>
+          <button class="secondary-button" type="button" data-action="export-irrigation-incidents-pdf">Exportar PDF</button>
           ${canEdit && !alertsView ? '<button class="primary-button" type="button" data-action="open-irrigation-event-dialog">Registrar evento externo</button>' : ""}
         </div>
       </header>
@@ -30281,6 +30394,12 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "export-irrigation-incidents") {
     await exportIrrigationIncidentsExcel(actionTarget);
+  }
+  if (action === "export-irrigation-incidents-pdf") {
+    await exportIrrigationIncidentsExcel(actionTarget, "pdf");
+  }
+  if (action === "export-calicatas-excel" || action === "export-calicatas-pdf") {
+    await exportCalicatasReport(actionTarget, action.endsWith("pdf") ? "pdf" : "excel");
   }
   if (action === "set-irrigation-events-view") {
     irrigationEventsView = actionTarget.dataset.view === "registered" ? "registered" : "alerts";
