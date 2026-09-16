@@ -7663,12 +7663,81 @@ function wireIrrigationSatellitePanel(blocks, monthPrefix) {
   }
 }
 
+async function calicataReportMapImage(row) {
+  if (row.Latitud === "" || row.Longitud === "" || row.Latitud == null || row.Longitud == null) throw new Error("Sin coordenadas");
+  const lat = Number(row.Latitud), lng = Number(row.Longitud);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new Error("Coordenadas invalidas");
+  geoJsonCache ||= await loadGeoJson();
+  const features = geoJsonCache?.bloques?.features || [];
+  const rings = features.flatMap((feature) => {
+    const g = feature.geometry;
+    return g?.type === "Polygon" ? g.coordinates : g?.type === "MultiPolygon" ? g.coordinates.flat() : [];
+  });
+  if (!rings.length) throw new Error("Sin limites");
+  const canvas = document.createElement("canvas");
+  canvas.width = 768; canvas.height = 570;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#eff6f3"; ctx.fillRect(0, 0, 768, 570);
+  const scale = Math.cos(lat * Math.PI / 180);
+  const nearby = rings.filter((ring) => ring.some(([x, y]) => Math.abs((x - lng) * scale) < 0.006 && Math.abs(y - lat) < 0.004));
+  const points = [[lng, lat], ...nearby.flat()];
+  const xs = points.map(([x]) => (x - lng) * scale), ys = points.map(([, y]) => y - lat);
+  const span = Math.max(0.003, Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * 768 / 490) * 1.18;
+  const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const project = ([x, y]) => [384 + (((x - lng) * scale) - cx) * 700 / span, 265 - ((y - lat) - cy) * 700 / span];
+  ctx.strokeStyle = "#33836b"; ctx.fillStyle = "#d2e9dc"; ctx.lineWidth = 2;
+  for (const ring of rings) {
+    ctx.beginPath(); ring.forEach((point, i) => { const [x,y] = project(point); i ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  const [x,y] = project([lng,lat]);
+  ctx.beginPath(); ctx.arc(x,y,12,0,Math.PI*2); ctx.fillStyle="#b91c1c"; ctx.fill(); ctx.strokeStyle="#ffffff"; ctx.lineWidth=4; ctx.stroke();
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,515,768,55);
+  ctx.fillStyle="#143d31"; ctx.font="bold 23px Arial"; ctx.fillText(`${row.Potrero} / Bloque ${row.Bloque}`,18,548);
+  ctx.font="20px Arial"; ctx.fillText("N ↑",710,30);
+  return canvas.toDataURL("image/png");
+}
+
+function writeCalicataColoredExcel(book, rows, filename) {
+  const xlsx = window.XLSX;
+  const zip = xlsx.CFB.read(new Uint8Array(xlsx.write(book, { type: "array", bookType: "xlsx" })), { type: "buffer" });
+  const decode = (name) => new TextDecoder().decode(new Uint8Array(zip.FileIndex[zip.FullPaths.indexOf(`Root Entry/${name}`)].content));
+  const parser = new DOMParser();
+  const styles = parser.parseFromString(decode("xl/styles.xml"), "application/xml");
+  const fills = styles.getElementsByTagName("fills")[0];
+  const xfs = styles.getElementsByTagName("cellXfs")[0];
+  const ids = new Map();
+  for (const band of [...CALICATA_VALUE_BANDS, EMPTY_CALICATA_VALUE_BAND]) {
+    const fillId = fills.children.length;
+    const fill = parser.parseFromString(`<fill xmlns="${styles.documentElement.namespaceURI}"><patternFill patternType="solid"><fgColor rgb="FF${band.background.slice(1)}"/><bgColor indexed="64"/></patternFill></fill>`, "application/xml").documentElement;
+    fills.appendChild(styles.importNode(fill, true));
+    const xf = xfs.children[0].cloneNode(true);
+    xf.setAttribute("fillId", fillId); xf.setAttribute("applyFill", "1");
+    ids.set(band.key, xfs.children.length); xfs.appendChild(xf);
+  }
+  fills.setAttribute("count", fills.children.length); xfs.setAttribute("count", xfs.children.length);
+  const sheet = parser.parseFromString(decode("xl/worksheets/sheet1.xml"), "application/xml");
+  const keys = Object.keys(rows[0]);
+  for (const cell of sheet.getElementsByTagName("c")) {
+    const pos = xlsx.utils.decode_cell(cell.getAttribute("r"));
+    if (pos.r > 0 && ["20 cm", "40 cm", "60 cm", "80 cm", "Promedio"].includes(keys[pos.c])) cell.setAttribute("s", ids.get(calicataValueBand(rows[pos.r - 1][keys[pos.c]]).key));
+  }
+  const serializer = new XMLSerializer();
+  for (const [path, xml] of [["xl/styles.xml", styles], ["xl/worksheets/sheet1.xml", sheet]]) {
+    const entry = zip.FileIndex[zip.FullPaths.indexOf(`Root Entry/${path}`)];
+    entry.content = new TextEncoder().encode(serializer.serializeToString(xml));
+    entry.size = entry.content.length;
+  }
+  downloadText(`${filename}.xlsx`, xlsx.CFB.write(zip, { type: "array", fileType: "zip" }), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
 async function downloadIrrigationRecordsPdf(title, rows, filename) {
   if (!window.PDFLib) throw new Error("Generador PDF no disponible");
   const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const pdfColor = (hex) => rgb(...hex.replace("#", "").match(/../g).map((part) => parseInt(part, 16) / 255));
   doc.setTitle(title);
   let page, y, missingPhotos = 0;
   const newPage = () => {
@@ -7692,9 +7761,10 @@ async function downloadIrrigationRecordsPdf(title, rows, filename) {
     const depths = ["20 cm", "40 cm", "60 cm", "80 cm", "Promedio"];
     if (Object.hasOwn(row, "20 cm")) {
       depths.forEach((key, index) => {
-        page.drawRectangle({ x: 32 + index * 105, y: y - 33, width: 105, height: 39, color: rgb(0.93, 0.96, 0.98) });
-        page.drawText(key, { x: 38 + index * 105, y: y - 5, size: 9, font: bold });
-        page.drawText(pdfSafeText(String(row[key] === "" ? "Sin lectura" : row[key])), { x: 38 + index * 105, y: y - 22, size: 10, font });
+        const band = calicataValueBand(row[key]);
+        page.drawRectangle({ x: 32 + index * 105, y: y - 33, width: 105, height: 39, color: pdfColor(band.color) });
+        page.drawText(key, { x: 38 + index * 105, y: y - 5, size: 9, font: bold, color: pdfColor(band.cellText) });
+        page.drawText(pdfSafeText(String(row[key] === "" ? "Sin lectura" : number(row[key], 1))), { x: 38 + index * 105, y: y - 22, size: 10, font, color: pdfColor(band.cellText) });
       });
       y -= 48;
     }
@@ -7702,21 +7772,33 @@ async function downloadIrrigationRecordsPdf(title, rows, filename) {
       if (["Foto", "Potrero", "Bloque", "Fecha", "Fecha y hora inicio", ...depths].includes(key) || value === "" || value == null) continue;
       line(`${key}: ${value}`);
     }
-    if (row.Foto) {
+    if (Object.hasOwn(row, "20 cm")) {
+      if (y < 250) { newPage(); line(`${row.Potrero} - Bloque ${row.Bloque} - ${row.Fecha}`, true); }
+      const imageTop = y - 18;
+      page.drawText("Foto de calicata", { x: 32, y, size: 10, font: bold });
+      page.drawText("Ubicacion en el campo", { x: 301, y, size: 10, font: bold });
+      try {
+        const map = await calicataReportMapImage(row);
+        const embedded = await doc.embedPng(map);
+        page.drawImage(embedded, { x: 301, y: imageTop - 190, width: 256, height: 190 });
+      } catch {
+        page.drawText("Sin ubicacion cartografica disponible", { x: 301, y: imageTop - 20, size: 9, font });
+      }
+      if (row.Foto) {
       try {
         const response = await fetch(row.Foto, { signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error("Foto no disponible");
         const bytes = await response.arrayBuffer();
         let photo;
         try { photo = await doc.embedJpg(bytes); } catch { photo = await doc.embedPng(bytes); }
-        const size = photo.scaleToFit(525, 190);
-        if (y - size.height < 45) newPage();
-        page.drawImage(photo, { x: 32, y: y - size.height, width: size.width, height: size.height });
-        y -= size.height + 12;
+        const size = photo.scaleToFit(256, 190);
+        page.drawImage(photo, { x: 32, y: imageTop - size.height, width: size.width, height: size.height });
       } catch {
         missingPhotos++;
-        line("Foto no disponible. Consultar enlace en el reporte Excel.");
+        page.drawText("Foto no disponible", { x: 32, y: imageTop - 20, size: 9, font });
       }
+      } else page.drawText("Sin foto registrada", { x: 32, y: imageTop - 20, size: 9, font });
+      y = imageTop - 202;
     }
     y -= 18;
     if (i % 10 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
@@ -7729,13 +7811,17 @@ async function exportCalicatasReport(button, format) {
   const blocks = state.blocks.filter((block) => block.active !== false
     && (calicataSpeciesFilter === "Todas" || block.crop === calicataSpeciesFilter)
     && (calicataPotreroFilter === "Todos" || block.potrero === calicataPotreroFilter));
-  const records = filteredIrrigationCalicatas(blocks, `${calicataYear}-${calicataMonth}`);
+  const records = filteredIrrigationCalicatas(blocks, `${calicataYear}-${calicataMonth}`)
+    .sort((a, b) => calicataDate(b).localeCompare(calicataDate(a))
+      || comparePotrero(a.potrero, b.potrero)
+      || String(a.block || "").localeCompare(String(b.block || ""), "es", { numeric: true })
+      || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   if (!records.length) return showToast("No hay calicatas para los filtros seleccionados");
   setButtonBusy(button, true, "Generando...");
   try {
     await new Promise((resolve) => requestAnimationFrame(resolve));
     const rows = records.map((item) => ({
-      "Fecha": calicataDate(item), "Fecha y hora registro": calicataDateTimeLabel(item.createdAt),
+      "Fecha": item.createdAt ? new Date(item.createdAt).toLocaleString("es-CL", { timeZone: "America/Santiago", hour12: false }) : calicataDate(item),
       "Potrero": potreroLabel(item.potrero), "Bloque": item.block || "", "Responsable": item.workerName || "",
       "20 cm": calicataDepthNumber(item.depth20) ?? "", "40 cm": calicataDepthNumber(item.depth40) ?? "",
       "60 cm": calicataDepthNumber(item.depth60) ?? "", "80 cm": calicataDepthNumber(item.depth80) ?? "",
@@ -7754,7 +7840,7 @@ async function exportCalicatasReport(button, format) {
     sheet["!autofilter"] = { ref: sheet["!ref"] };
     const book = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(book, sheet, "Calicatas");
-    window.XLSX.writeFile(book, `${filename}.xlsx`);
+    writeCalicataColoredExcel(book, rows, filename);
     showToast("Excel generado con enlaces a las fotos");
   } catch (error) {
     console.error("Error exportando calicatas", error);
