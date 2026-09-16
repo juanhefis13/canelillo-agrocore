@@ -4505,19 +4505,31 @@ function mixColor(start, end, ratio) {
   return `#${toHex(sr + (er - sr) * t)}${toHex(sg + (eg - sg) * t)}${toHex(sb + (eb - sb) * t)}`;
 }
 
-function calicataValueColor(value) {
+const CALICATA_VALUE_BANDS = Object.freeze([
+  Object.freeze({ key: "critical", label: "1,0 a 2,0", color: "#b91c1c", background: "#fee2e2", border: "#991b1b", cellText: "#ffffff", iconText: "#ffffff" }),
+  Object.freeze({ key: "warning", label: "2,1 a 2,9", color: "#eab308", background: "#fef9c3", border: "#a16207", cellText: "#422006", iconText: "#422006" }),
+  Object.freeze({ key: "optimal", label: "3,0 a 3,5", color: "#16a34a", background: "#dcfce7", border: "#15803d", cellText: "#ffffff", iconText: "#ffffff" }),
+  Object.freeze({ key: "high", label: "3,6 a 5,0", color: "#1d4ed8", background: "#dbeafe", border: "#1e40af", cellText: "#ffffff", iconText: "#ffffff" })
+]);
+
+const EMPTY_CALICATA_VALUE_BAND = Object.freeze({
+  key: "empty",
+  label: "Sin lectura",
+  color: "#64748b",
+  background: "#f1f5f9",
+  border: "#94a3b8",
+  cellText: "#ffffff",
+  iconText: "#ffffff"
+});
+
+function calicataValueBand(value) {
+  if (value === null || value === undefined || value === "") return EMPTY_CALICATA_VALUE_BAND;
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "#94a3b8";
-  const clamped = clamp(numeric, 1, 5);
-  if (clamped >= 4.75) return "#0b1f5e";
-  if (clamped >= 4.25) return "#1d4ed8";
-  if (clamped >= 3.75) return "#60a5fa";
-  if (clamped >= 3.25) return "#ca8a04";
-  if (clamped >= 2.75) return "#facc15";
-  if (clamped >= 2.25) return "#c2410c";
-  if (clamped >= 1.75) return "#fb923c";
-  if (clamped >= 1.25) return "#f87171";
-  return "#7f1d1d";
+  if (!Number.isFinite(numeric)) return EMPTY_CALICATA_VALUE_BAND;
+  if (numeric <= 2) return CALICATA_VALUE_BANDS[0];
+  if (numeric < 3) return CALICATA_VALUE_BANDS[1];
+  if (numeric < 3.6) return CALICATA_VALUE_BANDS[2];
+  return CALICATA_VALUE_BANDS[3];
 }
 
 function calicataAverageValue(item) {
@@ -4525,8 +4537,21 @@ function calicataAverageValue(item) {
 }
 
 function calicataColorStyle(value) {
-  const color = calicataValueColor(value);
-  return `--calicata-color:${color};--calicata-bg:${color}22;--calicata-border:${color}99;`;
+  const band = calicataValueBand(value);
+  return `--calicata-color:${band.color};--calicata-bg:${band.background};--calicata-border:${band.border};--calicata-cell-bg:${band.color};--calicata-cell-text:${band.cellText};`;
+}
+
+function calicataColorLegend() {
+  return `
+    <div class="irrigation-calicata-color-legend" aria-label="Rangos de color de calicatas">
+      <strong>Rangos</strong>
+      ${CALICATA_VALUE_BANDS.map((band) => `
+        <span style="--calicata-band-color:${band.color};--calicata-band-text:${band.cellText}">
+          <i aria-hidden="true"></i>${band.label}
+        </span>
+      `).join("")}
+    </div>
+  `;
 }
 
 function calicataSummary(calicatas) {
@@ -7666,6 +7691,7 @@ function renderIrrigationCalicatasPanel(blocks, monthPrefix, monthLabel, year = 
           </label>
         </div>
       </div>
+      ${calicataColorLegend()}
       <div class="irrigation-calicatas-layout">
         <div id="irrigationCalicataMap" class="geo-map agricultural-map harvest-map irrigation-calicata-map" data-agro-map="calicatas">
           <span>Cargando mapa de calicatas...</span>
@@ -24262,7 +24288,8 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
     records.forEach((item) => {
       const position = { lat: Number(item.latitude), lng: Number(item.longitude) };
       const averageValue = calicataAverageValue(item);
-      const icon = irrigationCalicataMarkerIcon(maps, calicataValueColor(averageValue));
+      const valueBand = calicataValueBand(averageValue);
+      const icon = irrigationCalicataMarkerIcon(maps, valueBand.color, valueBand.iconText);
       const marker = new maps.Marker({
         position,
         map: irrigationCalicataMap,
@@ -24281,11 +24308,11 @@ async function renderIrrigationCalicatasMap(blocks, monthPrefix) {
   }
 }
 
-function irrigationCalicataMarkerIcon(maps, color = "#1f6f4a") {
+function irrigationCalicataMarkerIcon(maps, color = "#1f6f4a", glyphColor = "#ffffff") {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">
       <circle cx="17" cy="17" r="15" fill="${color}" stroke="#ffffff" stroke-width="3"/>
-      <path d="M20.8 8.5l4.5 4.5-2.2 2.2-1.2-1.2-8.4 8.4 1.6 1.6-4.8 1.8-2.6-2.6 1.8-4.8 1.6 1.6 8.4-8.4-1.1-1.1 1.9-2z" fill="#ffffff"/>
+      <path d="M20.8 8.5l4.5 4.5-2.2 2.2-1.2-1.2-8.4 8.4 1.6 1.6-4.8 1.8-2.6-2.6 1.8-4.8 1.6 1.6 8.4-8.4-1.1-1.1 1.9-2z" fill="${glyphColor}"/>
     </svg>`;
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
@@ -24298,6 +24325,7 @@ function showIrrigationCalicataInfo(item, marker, maps) {
   if (!item || !marker || !maps || !irrigationCalicataMap) return;
   irrigationCalicataInfoWindow ||= new maps.InfoWindow({ maxWidth: 310, disableAutoPan: true });
   const averageValue = calicataAverageValue(item);
+  const valueBand = calicataValueBand(averageValue);
   irrigationCalicataInfoWindow.setContent(`
     <div class="harvest-map-info irrigation-calicata-info">
       <div class="harvest-map-info-head">
@@ -24312,6 +24340,7 @@ function showIrrigationCalicataInfo(item, marker, maps) {
         ${harvestInfoField("60 cm", calicataDepthLabel(item.depth60))}
         ${harvestInfoField("80 cm", calicataDepthLabel(item.depth80))}
         ${harvestInfoField("Promedio", averageValue === null ? "-" : number(averageValue))}
+        ${harvestInfoField("Rango", averageValue === null ? "Sin lectura" : valueBand.label)}
         ${harvestInfoField("Estado", item.empty ? "Vacia" : "Con lectura")}
       </div>
       ${item.observation ? `<p class="irrigation-calicata-observation">${escapeHtml(item.observation)}</p>` : ""}

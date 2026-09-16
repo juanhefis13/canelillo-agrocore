@@ -6447,8 +6447,46 @@ td span,
 
 .calicata-day-cell.has-calicata {
   border-color: var(--calicata-border, rgba(37, 99, 168, 0.35));
-  background: var(--calicata-bg, #eaf2ff);
-  color: var(--calicata-color, var(--info));
+  background: var(--calicata-cell-bg, var(--calicata-bg, #eaf2ff));
+  color: var(--calicata-cell-text, var(--calicata-color, var(--info)));
+}
+
+.irrigation-calicata-color-legend {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(15, 76, 92, 0.16);
+  border-radius: 7px;
+  background: #f8fbfc;
+  color: var(--ink);
+  scrollbar-width: thin;
+}
+
+.irrigation-calicata-color-legend > strong {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  font-size: 0.68rem;
+}
+
+.irrigation-calicata-color-legend > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.irrigation-calicata-color-legend i {
+  width: 14px;
+  height: 14px;
+  border: 1px solid color-mix(in srgb, var(--calicata-band-color) 78%, #000000);
+  border-radius: 4px;
+  background: var(--calicata-band-color);
 }
 
 .calicata-toggle {
@@ -19058,7 +19096,7 @@ textarea:focus {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   margin-bottom: 0;
 }
 
