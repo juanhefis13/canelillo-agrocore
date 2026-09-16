@@ -30497,3 +30497,139 @@ body.auth-locked {
     line-height: 1;
   }
 }
+
+/* Riego v469: usa el alto disponible sin estirar vacios ni sacrificar legibilidad. */
+.app-shell:has(#irrigation.active-view) .panel.irrigation-panel-gantt {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+@media (min-width: 761px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt {
+    padding: 7px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filter-bar {
+    margin-bottom: 6px;
+    padding: 7px 8px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-compare-wrap {
+    align-content: start;
+    gap: 5px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-section-title {
+    min-height: 28px;
+    padding: 4px 8px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-section-title strong {
+    font-size: 0.82rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-section-title span {
+    font-size: 0.64rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt {
+    gap: 2px;
+    padding-bottom: 4px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row {
+    gap: 2px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-row:not(.calicata-row) :is(
+    .irrigation-date-cell,
+    .irrigation-hour-input,
+    .irrigation-hour-cell,
+    .irrigation-program-cell,
+    .irrigation-block-head,
+    .irrigation-block-label,
+    .irrigation-total-head,
+    .irrigation-total,
+    .irrigation-reposition-head,
+    .irrigation-reposition,
+    .irrigation-difference-head,
+    .irrigation-difference,
+    .irrigation-program-compare-slot
+  ) {
+    height: 30px !important;
+    min-height: 30px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label {
+    padding: 3px 6px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label > strong {
+    font-size: 0.76rem;
+    line-height: 1.1;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-label > span {
+    font-size: 0.6rem;
+    line-height: 1.1;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-block-metric span {
+    padding: 1px 4px;
+    font-size: 0.58rem;
+    line-height: 1.1;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group-compact {
+    min-height: 24px;
+    padding: 3px 7px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-potrero-group-compact :is(strong, span) {
+    font-size: 0.62rem;
+    line-height: 1.1;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row > div,
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+    height: 24px !important;
+    min-height: 24px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-day-cell {
+    font-size: 0.62rem !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row .calicata-label {
+    padding-block: 2px !important;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .calicata-row :is(strong, span) {
+    font-size: 0.6rem;
+    line-height: 1.1;
+  }
+}
+
+@media (min-width: 1101px) {
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filter-bar .irrigation-filter-fields {
+    grid-template-columns: 78px minmax(140px, 0.8fr) minmax(150px, 1fr) minmax(180px, 1.1fr);
+    gap: 7px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filter-bar .irrigation-filter-actions {
+    gap: 6px;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filter-bar :is(input, select, button) {
+    min-height: 32px;
+    padding: 5px 8px;
+    font-size: 0.68rem;
+  }
+
+  .app-shell:has(#irrigation.active-view) .irrigation-panel-gantt .irrigation-gantt-filter-bar label {
+    gap: 3px;
+    font-size: 0.58rem;
+    line-height: 1.1;
+  }
+}
